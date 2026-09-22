@@ -1,0 +1,26 @@
+# 构建产物
+__pycache__/
+*.py[cod]
+*.fpk
+fpk/app/server/
+fpk/app/www/
+
+# 打包暂存
+.fpk-build/
+
+# 虚拟环境
+.venv/
+venv/
+
+# 编辑器 / 系统
+.vs/
+.idea/
+.vscode/
+*.user
+.DS_Store
+Thumbs.db
+
+# Agent 构建输出
+pc-agent/**/bin/
+pc-agent/**/obj/
+publish/

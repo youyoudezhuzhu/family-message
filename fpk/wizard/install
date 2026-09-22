@@ -1,0 +1,36 @@
+[
+    {
+        "stepTitle": "访问口令",
+        "items": [
+            {
+                "type": "password",
+                "field": "wizard_web_password",
+                "label": "家庭控制台访问口令（可留空）",
+                "initValue": "",
+                "helpText": "留空则家庭内网直接打开网页即可使用。填写后，任何浏览器访问控制台都需要先输入这个口令。"
+            },
+            {
+                "type": "text",
+                "field": "wizard_enroll_token",
+                "label": "设备注册口令",
+                "initValue": "family-2026",
+                "helpText": "PC 端 Family Agent 首次接入时填写这个口令，防止陌生设备注册进系统。安装后可在应用设置里修改。",
+                "rules": [
+                    { "required": true, "message": "请填写设备注册口令" }
+                ]
+            }
+        ]
+    },
+    {
+        "stepTitle": "发送昵称",
+        "items": [
+            {
+                "type": "text",
+                "field": "wizard_senders",
+                "label": "可选发送人昵称（英文逗号分隔）",
+                "initValue": "振辉,妈妈,爸爸,爷爷,奶奶",
+                "helpText": "昵称只是发消息时选择的显示名称，不是账号。所有人共用同一个网页入口，不会因为昵称不同而产生不同用户。"
+            }
+        ]
+    }
+]

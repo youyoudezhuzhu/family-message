@@ -1,0 +1,12 @@
+{
+    "data-share": {
+        "shares": [
+            {
+                "name": "family-message/data",
+                "permission": {
+                    "rw": ["family-message"]
+                }
+            }
+        ]
+    }
+}

@@ -1,0 +1,3 @@
+#!/bin/bash
+### config_init — 用户在设置页修改配置前调用
+exit 0

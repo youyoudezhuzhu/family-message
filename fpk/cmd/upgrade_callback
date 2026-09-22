@@ -1,0 +1,14 @@
+#!/bin/bash
+### upgrade_callback — 升级后：保留数据与配置，只补齐依赖
+GNOME="${TRIM_PKGHOME:-/vol1/@apphome/family-message}"
+export PATH="/var/apps/python312/target/bin:$PATH"
+echo "$(date '+%Y-%m-%d %H:%M:%S') - upgrade_callback" >> "$TRIM_APPDEST/info.log" 2>/dev/null
+
+VENV="$GNOME/venv"
+if [ ! -x "$VENV/bin/python" ]; then
+    python3 -m venv "$VENV" || { echo "升级后重建运行环境失败" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+fi
+"$VENV/bin/pip" install -q --upgrade fastapi uvicorn websockets pyyaml httpx \
+    || { echo "升级后依赖安装失败" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+# config.yaml / data 目录保持不动
+exit 0

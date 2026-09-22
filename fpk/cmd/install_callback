@@ -1,0 +1,85 @@
+#!/bin/bash
+### install_callback — 安装后初始化：建 venv、装依赖、按向导生成 config.yaml
+
+LOGF="$TRIM_TEMP_LOGFILE"
+APP="$TRIM_APPDEST"
+GNOME="${TRIM_PKGHOME:-/vol1/@apphome/family-message}"
+export PATH="/var/apps/python312/target/bin:$PATH"
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$APP/info.log" 2>/dev/null; echo "$1" >&2; }
+
+mkdir -p "$GNOME" "$GNOME/data"
+
+# 1. venv（放 TRIM_PKGHOME，升级保留）
+VENV="$GNOME/venv"
+if [ ! -x "$VENV/bin/python" ]; then
+    log "创建 Python 运行环境..."
+    python3 -m venv "$VENV" || { echo "创建 Python venv 失败" > "$LOGF"; exit 1; }
+fi
+
+# 2. 依赖
+log "安装依赖（fastapi/uvicorn/websockets/pyyaml/httpx）..."
+"$VENV/bin/pip" install -q --upgrade pip >/dev/null 2>&1 || true
+"$VENV/bin/pip" install -q fastapi uvicorn websockets pyyaml httpx \
+    || { echo "依赖安装失败，请检查 NAS 网络后重试安装。" > "$LOGF"; exit 1; }
+
+# 3. 生成 config.yaml（已存在则保留用户配置）
+CFG="$GNOME/config.yaml"
+if [ ! -f "$CFG" ]; then
+    log "生成初始配置..."
+    "$VENV/bin/python" - "$CFG" "${wizard_web_password:-}" "${wizard_enroll_token:-family-2026}" "${wizard_senders:-振辉,妈妈,爸爸,爷爷,奶奶}" <<'PY'
+import sys
+from pathlib import Path
+
+cfg_path, pwd, enroll, senders = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+names = [s.strip() for s in senders.split(",") if s.strip()] or ["振辉"]
+
+content = f"""# ============================================================
+# 家庭消息与设备控制 · 服务端配置
+# 修改后请在「应用中心 → 家庭消息 → 设置」里保存以重启生效
+# ============================================================
+
+server:
+  host: 0.0.0.0
+  port: 18801
+
+data_dir: "{Path(cfg_path).parent}/data"
+
+# Web Sender 身份模型：所有浏览器共用同一个发送入口，
+# 这里只是「发送时可选用的昵称」列表，昵称不是账号。
+senders:
+{chr(10).join('  - ' + n for n in names)}
+
+web:
+  # 留空 = 家庭内网打开即用；填写后访问控制台需先输入该口令
+  password: "{pwd}"
+  session_hours: 720
+
+device:
+  # PC Agent 首次接入时填写的注册口令
+  enroll_token: "{enroll}"
+  auto_register: true
+  offline_after_seconds: 45
+
+message:
+  # 0 表示弹窗必须手动点「知道了」才关闭
+  popup_auto_close_seconds: 0
+  max_targets: 20
+
+xiaomi:
+  enabled: false
+  username: ""
+  password: ""
+  region: "cn"
+  refresh_ahead_seconds: 86400
+"""
+Path(cfg_path).write_text(content, encoding="utf-8")
+print("config.yaml written:", cfg_path)
+PY
+    [ -f "$CFG" ] || { echo "生成配置文件失败" > "$LOGF"; exit 1; }
+else
+    log "已存在用户配置，保留不覆盖：$CFG"
+fi
+
+log "install_callback 完成"
+exit 0

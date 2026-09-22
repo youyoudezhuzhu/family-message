@@ -1,0 +1,55 @@
+name: Build Windows Agent
+
+# Windows Agent 必须用 Windows 工具链编译（WPF 无法在 Linux 上构建），
+# 所以统一走 GitHub Actions，本地不需要装 .NET SDK / Windows SDK。
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'pc-agent/**'
+      - '.github/workflows/build-windows-agent.yml'
+  pull_request:
+    paths:
+      - 'pc-agent/**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Publish (win-x64, self-contained, single file)
+        run: >
+          dotnet publish pc-agent/FamilyAgent/FamilyAgent.csproj
+          -c Release -r win-x64 --self-contained true -o publish
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish/FamilyAgent.exe `
+            -DestinationPath FamilyAgent-win-x64.zip -Force
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FamilyAgent-win-x64
+          path: FamilyAgent-win-x64.zip
+          if-no-files-found: error
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: FamilyAgent-win-x64.zip
