@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +24,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
-        // 单实例：重复启动（例如开机自启 + 手动双击）时直接退出
+        // 单实例：重复启动（开机自启 + 手动双击）时直接退出
         _singleInstance = new Mutex(true, @"Global\FamilyAgent.SingleInstance", out var isNew);
         if (!isNew)
         {
@@ -40,6 +41,8 @@ public partial class App : Application
         Client.ConnectionChanged += OnConnectionChanged;
         Client.MessageReceived += OnMessageReceived;
         Client.ScreenshotRequested += OnScreenshotRequested;
+        Client.ReplyAcked += OnReplyAcked;
+        Client.HistoryReceived += OnHistoryReceived;
 
         AutoStart.Apply(Config.AutoStart);
         Client.Start();
@@ -59,6 +62,34 @@ public partial class App : Application
                 return true;
         }
         return false;
+    }
+
+    // ---------------- 弹窗（全局复用同一个窗口）----------------
+
+    private PopupWindow EnsurePopup()
+    {
+        if (_popup is not null)
+            return _popup;
+
+        var popup = new PopupWindow();
+        popup.Acknowledged += id => _ = Client.AckAsync(id, "read");
+        popup.RetryAck += id => _ = Client.AckAsync(id, "read");
+        popup.ReplyRequested += OnReplyRequested;
+        _popup = popup;
+
+        return popup;
+    }
+
+    private void OnReplyRequested(string content)
+    {
+        if (!Client.Connected)
+        {
+            _popup?.MarkReplyFailed("未连接到服务端");
+            return;
+        }
+
+        var clientId = Guid.NewGuid().ToString("N")[..12];
+        _ = Client.ReplyAsync(content, clientId);
     }
 
     // ---------------- 服务端事件 ----------------
@@ -89,26 +120,43 @@ public partial class App : Application
                 ? aEl.GetInt32()
                 : 0;
 
-            // 上一条还没关就被新消息顶掉时，先关掉旧的
-            if (_popup is not null)
+            var history = new List<HistoryItem>();
+            if (el.TryGetProperty("history", out var hEl) && hEl.ValueKind == JsonValueKind.Array)
             {
-                try { _popup.ForceClose(); } catch { }
-                _popup = null;
+                foreach (var h in hEl.EnumerateArray())
+                    history.Add(HistoryItem.FromJson(h, messageId));
             }
 
-            var popup = new PopupWindow();
-            popup.Acknowledged += id =>
-            {
-                _popup = null;
-                _ = Client.AckAsync(id, "read");
-            };
-            popup.RetryAck += id => _ = Client.AckAsync(id, "read");
-
-            _popup = popup;
-            popup.ShowMessage(messageId, sender, content, created, autoClose);
+            EnsurePopup().AppendMessage(messageId, sender, content, created, autoClose, history);
 
             // 弹窗已经显示在屏幕上 → 回报 popup_displayed
             _ = Client.AckAsync(messageId, "popup_displayed");
+        });
+    }
+
+    private void OnReplyAcked(JsonElement el)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            var status = el.TryGetProperty("status", out var sEl) ? sEl.GetString() : "";
+            if (status == "ok")
+                _popup?.MarkReplyDelivered();
+            else
+                _popup?.MarkReplyFailed(status ?? "未知错误");
+        });
+    }
+
+    private void OnHistoryReceived(JsonElement el)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            var items = new List<HistoryItem>();
+            if (el.TryGetProperty("messages", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var h in arr.EnumerateArray())
+                    items.Add(HistoryItem.FromJson(h, 0));
+            }
+            _popup?.ReplaceHistory(items);
         });
     }
 
@@ -134,6 +182,7 @@ public partial class App : Application
         };
 
         var menu = new WinForms.ContextMenuStrip();
+        menu.Items.Add("打开对话窗口", null, (_, _) => ShowConversation());
         menu.Items.Add("设置…", null, (_, _) => ShowSettings());
         menu.Items.Add("重新连接", null, (_, _) => Client.Restart());
         menu.Items.Add("打开控制台", null, (_, _) => OpenConsole());
@@ -141,19 +190,20 @@ public partial class App : Application
         menu.Items.Add("退出", null, (_, _) => ExitApp());
 
         _tray.ContextMenuStrip = menu;
-        _tray.DoubleClick += (_, _) => ShowSettings();
+        _tray.DoubleClick += (_, _) => ShowConversation();
+    }
+
+    /// <summary>从托盘打开对话窗口：没有待处理消息也能看历史并回复。</summary>
+    private void ShowConversation()
+    {
+        IsSystemShuttingDown = false;
+        EnsurePopup().PresentIdle();
+        _ = Client.RequestHistoryAsync(50);
     }
 
     private void OpenConsole()
     {
-        var url = (Config.ServerUrl ?? "").Trim().TrimEnd('/');
-        if (url.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
-            url = "http://" + url[5..];
-        else if (url.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
-            url = "https://" + url[6..];
-        if (url.EndsWith("/ws"))
-            url = url[..^3];
-
+        var url = ConsoleUrl();
         try
         {
             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url)
@@ -165,6 +215,18 @@ public partial class App : Application
         {
             // 打不开浏览器就算了，不影响 Agent
         }
+    }
+
+    private static string ConsoleUrl()
+    {
+        var url = (Config.ServerUrl ?? "").Trim().TrimEnd('/');
+        if (url.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
+            url = "http://" + url[5..];
+        else if (url.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
+            url = "https://" + url[6..];
+        if (url.EndsWith("/ws"))
+            url = url[..^3];
+        return url;
     }
 
     private void ShowSettings()
@@ -192,6 +254,7 @@ public partial class App : Application
     private void Cleanup()
     {
         try { Client?.Stop(); } catch { }
+        try { _popup?.ForceClose(); } catch { }
         if (_tray is not null)
         {
             _tray.Visible = false;

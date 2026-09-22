@@ -103,7 +103,7 @@ function renderDevices() {
       </div>
       <div class="dev-meta"></div>
       <div class="dev-acts">
-        <button data-act="msg">发送消息</button>
+        <button data-act="conv">对话</button>
         <button data-act="shot" ${d.online ? '' : 'disabled'}>查看桌面</button>
         <button data-act="wake" ${d.online ? 'disabled' : ''}>远程开机</button>
       </div>`;
@@ -139,11 +139,8 @@ function renderTargets() {
 
 /* ── 设备动作 ─────────────────────────────────── */
 async function deviceAction(d, act) {
-  if (act === 'msg') {
-    state.selected = new Set([d.device_id]);
-    renderTargets();
-    $('content').focus();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (act === 'conv') {
+    openConversation(d);
   } else if (act === 'shot') {
     openModal(`${d.name} · 桌面截图`, '正在请求截图……');
     try {
@@ -213,12 +210,18 @@ function renderMessages() {
   box.innerHTML = '';
   state.messages.forEach((m) => {
     const el = document.createElement('div');
-    el.className = 'msg';
+    el.className = 'msg' + (m.sender_kind === 'device' ? ' reply' : '');
     const head = document.createElement('div');
     head.className = 'msg-head';
     const left = document.createElement('span');
     left.className = 'msg-sender';
     left.textContent = m.sender_name;
+    if (m.sender_kind === 'device') {
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = '设备回复';
+      left.appendChild(badge);
+    }
     const right = document.createElement('span');
     right.textContent = m.created_at;
     head.append(left, right);
@@ -229,18 +232,86 @@ function renderMessages() {
 
     const tags = document.createElement('div');
     tags.className = 'tags';
-    (m.targets || []).forEach((t) => {
-      const dev = state.devices.find((d) => d.device_id === t.device_id);
-      const tag = document.createElement('span');
-      const rank = STATE_ORDER.indexOf(t.status);
-      tag.className = 'tag' + (rank >= 3 ? ' s-done' : (rank < 2 ? ' s-fail' : ''));
-      tag.textContent = `${dev ? dev.name : t.device_id} · ${STATE_LABEL[t.status] || t.status}`;
-      tags.appendChild(tag);
-    });
+    // 设备回复的接收方是「Web Sender」统一入口，没有逐设备投递状态
+    if (m.sender_kind !== 'device') {
+      (m.targets || []).forEach((t) => {
+        const dev = state.devices.find((d) => d.device_id === t.device_id);
+        const tag = document.createElement('span');
+        const rank = STATE_ORDER.indexOf(t.status);
+        tag.className = 'tag' + (rank >= 3 ? ' s-done' : (rank < 2 ? ' s-fail' : ''));
+        tag.textContent = `${dev ? dev.name : t.device_id} · ${STATE_LABEL[t.status] || t.status}`;
+        tags.appendChild(tag);
+      });
+    }
 
     el.append(head, body, tags);
     box.appendChild(el);
   });
+}
+
+/* ── 对话视图（Web Sender ⇄ 某台设备）──────────── */
+let convDevice = null;
+
+async function openConversation(device) {
+  convDevice = device;
+  $('conv-title').textContent = `对话 · ${device.name}`;
+  $('conv-state').textContent = device.online ? '🟢 在线' : '⚪ 离线（消息会在它上线后补投）';
+  if ($('conv-sender').options.length === 0) {
+    state.config.senders.forEach((s) => $('conv-sender').add(new Option(s, s)));
+  }
+  $('conv').classList.add('show');
+  $('conv-text').focus();
+  await refreshConversation();
+}
+
+async function refreshConversation() {
+  if (!convDevice) return;
+  try {
+    const list = await api(`/api/conversations/${convDevice.device_id}?limit=100`);
+    const box = $('conv-body');
+    box.innerHTML = '';
+    if (list.length === 0) {
+      const p = document.createElement('p');
+      p.className = 'empty';
+      p.textContent = '还没有消息往来。';
+      box.appendChild(p);
+    }
+    list.forEach((m) => {
+      const b = document.createElement('div');
+      // in = 网页发出去的（靠左）；out = 设备回复的（靠右）
+      b.className = 'bubble ' + (m.sender_kind === 'device' ? 'out' : 'in');
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = `${m.sender_name} · ${m.created_at}`;
+      const text = document.createElement('span');
+      text.textContent = m.content;
+      b.append(meta, text);
+      box.appendChild(b);
+    });
+    box.scrollTop = box.scrollHeight;
+  } catch (e) {
+    $('conv-body').textContent = '加载失败：' + e.message;
+  }
+}
+
+async function sendFromConversation() {
+  if (!convDevice) return;
+  const text = $('conv-text').value.trim();
+  if (!text) return;
+  try {
+    await api('/api/messages', {
+      method: 'POST',
+      body: JSON.stringify({
+        sender_name: $('conv-sender').value,
+        content: text,
+        targets: [convDevice.device_id],
+      }),
+    });
+    $('conv-text').value = '';
+    await refreshConversation();
+  } catch (e) {
+    $('conv-state').textContent = '发送失败：' + e.message;
+  }
 }
 
 /* ── WebSocket 实时事件 ───────────────────────── */
@@ -258,6 +329,13 @@ function connectWS() {
       loadDevices();
     } else if (d.type === 'message') {
       upsertMessage(d.message);
+      // 对话窗开着且这条属于当前设备 → 实时刷新
+      if (convDevice) {
+        const m = d.message;
+        const mine = m.sender_device_id === convDevice.device_id ||
+          (m.targets || []).some((t) => t.device_id === convDevice.device_id);
+        if (mine) refreshConversation();
+      }
     } else if (d.type === 'message_status') {
       const m = state.messages.find((x) => x.id === d.message_id);
       if (m) {
@@ -296,6 +374,12 @@ $('btn-refresh').onclick = () => Promise.all([loadDevices(), loadMessages()]);
 $('btn-history').onclick = () => { state.limit += 30; loadMessages(); };
 $('modal-close').onclick = () => $('modal').classList.remove('show');
 $('modal').onclick = (e) => { if (e.target.id === 'modal') $('modal').classList.remove('show'); };
+$('conv-close').onclick = () => { $('conv').classList.remove('show'); convDevice = null; };
+$('conv').onclick = (e) => { if (e.target.id === 'conv') { $('conv').classList.remove('show'); convDevice = null; } };
+$('conv-send').onclick = sendFromConversation;
+$('conv-text').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); sendFromConversation(); }
+});
 $('content').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
 });

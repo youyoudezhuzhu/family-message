@@ -42,6 +42,8 @@ message:
   popup_auto_close_seconds: 0
   # 一条消息最多同时发给几个设备
   max_targets: 20
+  # 推给 PC Agent 的弹窗右侧历史对话条数
+  history_limit: 30
 
 xiaomi:
   enabled: false

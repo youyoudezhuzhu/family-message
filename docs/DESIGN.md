@@ -300,6 +300,54 @@ GitHub Actions 构建镜像 → push 到 ghcr.io → NAS 用 trim-cli docker ima
 ## 后续 Phase 路线
 
 - **Phase 2** 设备管理完善：重命名、删除、米家插座绑定 UI、截图历史
-- **Phase 3** 米家：真实账号联调、设备发现、插座开关验证、开机闭环
-- **Phase 4** 消息完善：历史分页、图片/文件、广播组、Web 端已读回执
-- **Phase 5** 多平台 Agent：Android / Linux / macOS，以及 `Device → Server` 反向消息
+- **Phase 3（已完成）** 双向对话：PC 端弹窗回复、消息堆叠、历史弹幕流
+- **Phase 4** 米家：真实账号联调、设备发现、插座开关验证、开机闭环
+- **Phase 5** 消息完善：历史分页、图片/文件、广播组；多平台 Agent（Android / Linux / macOS）
+
+---
+
+## 附：双向对话的实现（v0.2.0 增补）
+
+### 数据模型
+
+`messages` 增加两列，不改表方向：
+
+| 列 | 说明 |
+|---|---|
+| `sender_kind` | `web` = 网页发出；`device` = 设备回复 |
+| `sender_device_id` | 回复时记录来源设备 |
+
+老库启动时自动 `ALTER TABLE` 补列（`_migrate()`），索引建在迁移之后
+（放前面会让 `CREATE TABLE IF NOT EXISTS` 之后的 `CREATE INDEX` 在旧库上直接报错）。
+
+设备回复**不写 `message_targets`**——它的接收方是「Web Sender」这个统一入口，
+不是某台设备。对话串由 `conversation()` 双向查询拼出：
+
+```sql
+WHERE (sender_kind='device' AND sender_device_id=?)
+   OR (sender_kind='web' AND EXISTS (SELECT 1 FROM message_targets t
+                                     WHERE t.message_id=m.id AND t.device_id=?))
+```
+
+### 协议扩展
+
+```
+设备 → 服务器   {"type":"reply","content","client_id"}
+服务器 → 设备   {"type":"reply_ack","client_id","message_id","status"}
+服务器 → 设备   {"type":"message", ..., "history":[{"message_id","sender_name",
+                 "content","created_at","direction":"in|out"}]}
+设备 → 服务器   {"type":"history_request","request_id","limit"}
+服务器 → 设备   {"type":"history_response","request_id","messages":[...]}
+```
+
+消息推送**直接内嵌最近 N 条历史**（`message.history_limit`），弹窗右栏一次渲染完成，
+不需要额外往返。`direction` 已按设备视角翻转：`in` = 发给这台设备的，`out` = 它自己发的。
+
+### PC 弹窗
+
+- 窗口**只创建一次、反复复用**。v0.1.0 每来一条消息都 `ForceClose()` + `new PopupWindow()`，
+  连发时会反复销毁重建 → 闪屏。现在新消息只是往堆叠区追加。
+- 消息堆叠：字号按距最新的级数递减（`0.80^distance`，下限 0.45），透明度同步递减。
+- 入场动画：淡入 + 下方 46px 滑入 + 0.97→1.0 微放大，360ms `CubicEase.EaseOut`。
+- 右栏历史改成弹幕流（窄条、无卡片、顶部透明度蒙版渐隐）。
+- 「知道了」= 对堆叠内所有未读消息各回报一次 `read`，然后清空堆叠。

@@ -20,7 +20,7 @@ _DEFAULTS: dict = {
         "auto_register": True,
         "offline_after_seconds": 45,
     },
-    "message": {"popup_auto_close_seconds": 0, "max_targets": 20},
+    "message": {"popup_auto_close_seconds": 0, "max_targets": 20, "history_limit": 30},
     "xiaomi": {
         "enabled": False,
         "username": "",

@@ -114,6 +114,26 @@ button.ghost.small{padding:5px 11px; font-size:12px}
 .modal-body img{max-width:88vw; max-height:70vh; display:block; border-radius:8px}
 .modal-foot{padding:10px 16px; border-top:1px solid var(--line); font-size:12px; color:var(--dim)}
 
+/* 设备回复气泡 */
+.msg.reply{border-left:3px solid var(--warn)}
+.msg.reply .msg-sender{color:var(--warn)}
+.badge{font-size:11px; border-radius:5px; padding:1px 6px; margin-left:8px;
+  background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn)}
+
+/* 对话视图 */
+.conv-box{width:min(560px, 94vw); height:min(620px, 86vh)}
+.conv-body{flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:12px}
+.bubble{max-width:80%; padding:9px 13px; border-radius:12px; font-size:15px;
+  white-space:pre-wrap; word-break:break-word; line-height:1.45}
+.bubble .meta{display:block; font-size:11px; opacity:.75; margin-bottom:3px}
+.bubble.in{align-self:flex-start; background:var(--bg); border:1px solid var(--line)}
+.bubble.out{align-self:flex-end; background:color-mix(in srgb,var(--accent) 22%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent) 45%,transparent)}
+.conv-input{display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line)}
+.conv-input select{width:auto; min-width:96px; padding:9px 10px}
+.conv-input input{flex:1}
+button.primary.small{padding:9px 18px; font-size:14px}
+
 @media (max-width:600px){
   .brand .sub{display:none}
   main{padding:0 10px}

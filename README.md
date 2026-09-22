@@ -85,6 +85,39 @@ created → server_received → device_received → popup_displayed → read
 
 状态单调前进。设备离线时消息不会丢——保留在 `server_received`，**设备下次上线自动补投**。
 
+## 双向对话（PC ⇄ 网页）
+
+PC 端不是单向喇叭：收到消息的弹窗里可以直接回复，回复会落库并实时出现在网页控制台。
+
+```
+网页 ──发送──▶ Server ──▶ PC 弹窗（左侧消息堆叠）
+网页 ◀──广播── Server ◀──回复── PC 弹窗（右侧回复框）
+```
+
+**PC 弹窗布局**
+
+- 左栏：**消息堆叠**——最早发的在最上面、最晚发的最下面，永不重排。
+  字号按「距最新的级数」递减（每级 ×0.80，最低 0.45 倍），最新一条带蓝色描边高亮。
+  新消息插入时播「淡入 + 从下方 46px 滑入 + 0.97→1.0 微放大」，360ms 缓出。
+  连续来消息是**接着往下堆**，不会关闭再弹（窗口只创建一次、反复复用）。
+- 右栏：**弹幕式对话流**——窄条、无边框无卡片无滚动条，文字往上流，
+  顶部用透明度蒙版渐隐。家里发来的青色、自己回复的金色。
+- 底部：回复框（Enter 直接发送）+「知道了（N）」一次清空整堆并回报已读。
+
+**协议**
+
+```
+设备 → 服务器   {"type":"reply","content":"...","client_id":"..."}
+服务器 → 设备   {"type":"reply_ack","client_id","message_id","status"}
+服务器 → 设备   {"type":"message", ..., "history":[{...}]}   # 弹窗右侧直接渲染，省一次往返
+设备 → 服务器   {"type":"history_request","request_id","limit"}
+服务器 → 设备   {"type":"history_response","request_id","messages":[...]}
+```
+
+消息表用 `sender_kind`（`web` / `device`）+ `sender_device_id` 区分方向，
+对话串由双向查询拼出；老库启动时自动 `ALTER TABLE` 补列。这也正是设计文档里
+预留的 `Sender → Server → Receiver` 模型——加手机 Agent 时不用改表结构。
+
 ## 远程开机（米家）
 
 在服务端 `config.yaml` 里打开 `xiaomi.enabled` 并填账号，程序会：
@@ -143,9 +176,9 @@ Windows Agent 由 GitHub Actions 云编译（`.github/workflows/build-windows-ag
 
 - [x] **Phase 1** 服务端 + 网页发送 + 全屏弹窗 + 在线状态 + ACK
 - [x] **Phase 2** 设备管理：桌面截图、设备列表、远程开机
-- [ ] **Phase 3** 米家真实账号联调、设备发现、插座绑定 UI
-- [ ] **Phase 4** 消息历史分页、图片/文件、广播组、Web 端已读回执
-- [ ] **Phase 5** Android / Linux / macOS Agent，以及 `Device → Server` 反向消息
+- [x] **Phase 3** 双向对话：PC 端弹窗回复、消息堆叠、历史弹幕流
+- [ ] **Phase 4** 米家真实账号联调、设备发现、插座绑定 UI
+- [ ] **Phase 5** 消息历史分页、图片/文件、广播组、Android/Linux/macOS Agent
 
 ## 许可
 

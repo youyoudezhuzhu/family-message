@@ -43,11 +43,13 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    sender_name  TEXT NOT NULL,
-    content      TEXT NOT NULL,
-    message_type TEXT NOT NULL DEFAULT 'text',
-    created_at   TEXT NOT NULL
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_name      TEXT NOT NULL,
+    content          TEXT NOT NULL,
+    message_type     TEXT NOT NULL DEFAULT 'text',
+    created_at       TEXT NOT NULL,
+    sender_kind      TEXT NOT NULL DEFAULT 'web',
+    sender_device_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS message_targets (
@@ -95,6 +97,27 @@ CREATE INDEX IF NOT EXISTS idx_targets_dev ON message_targets(device_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 """
 
+# 已有安装的增量迁移（老库没有 sender_kind / sender_device_id）
+MIGRATIONS = [
+    ("messages", "sender_kind", "ALTER TABLE messages ADD COLUMN sender_kind TEXT NOT NULL DEFAULT 'web'"),
+    ("messages", "sender_device_id", "ALTER TABLE messages ADD COLUMN sender_device_id TEXT"),
+]
+
+# 依赖迁移后才能建的索引（老库在 CREATE TABLE IF NOT EXISTS 时不会补列）
+POST_MIGRATION_DDL = [
+    "CREATE INDEX IF NOT EXISTS idx_messages_sender_dev ON messages(sender_device_id)",
+]
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, column, ddl in MIGRATIONS:
+        cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            conn.execute(ddl)
+    for ddl in POST_MIGRATION_DDL:
+        conn.execute(ddl)
+    conn.commit()
+
 
 def get_conn() -> sqlite3.Connection:
     global _conn
@@ -108,6 +131,7 @@ def get_conn() -> sqlite3.Connection:
             _conn.execute("PRAGMA synchronous=NORMAL")
             _conn.execute("PRAGMA foreign_keys=ON")
             _conn.executescript(SCHEMA)
+            _migrate(_conn)
             _conn.commit()
         return _conn
 
