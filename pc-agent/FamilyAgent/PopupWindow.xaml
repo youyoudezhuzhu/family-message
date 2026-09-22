@@ -12,81 +12,215 @@
 
     <Grid>
         <Grid.Background>
-            <RadialGradientBrush Center="0.5,0.35" RadiusX="1.2" RadiusY="1.2">
-                <GradientStop Color="#1B2537" Offset="0"/>
+            <RadialGradientBrush Center="0.35,0.3" RadiusX="1.3" RadiusY="1.3">
+                <GradientStop Color="#182133" Offset="0"/>
                 <GradientStop Color="#0B0F17" Offset="1"/>
             </RadialGradientBrush>
         </Grid.Background>
 
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="1400">
+        <Grid.ColumnDefinitions>
+            <!-- 左：新消息堆叠 + 回复 -->
+            <ColumnDefinition Width="73*"/>
+            <!-- 右：弹幕式对话流（窄条） -->
+            <ColumnDefinition Width="27*"/>
+        </Grid.ColumnDefinitions>
 
-            <TextBlock x:Name="SenderText"
-                       Text="妈妈"
-                       FontSize="72"
-                       FontWeight="SemiBold"
-                       Foreground="#5AC8FA"
-                       HorizontalAlignment="Center"
-                       TextWrapping="Wrap"
-                       TextAlignment="Center"/>
+        <!-- ══════════ 左侧：消息堆叠 + 回复 ══════════ -->
+        <Grid Grid.Column="0" Margin="56,40,40,40">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
 
-            <TextBlock x:Name="ContentText"
-                       Text="下来吃饭了"
-                       FontSize="112"
-                       FontWeight="Bold"
-                       Foreground="#F2F6FF"
-                       HorizontalAlignment="Center"
-                       TextWrapping="Wrap"
-                       TextAlignment="Center"
-                       Margin="0,28,0,0"
-                       LineHeight="132"/>
+            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
+                <TextBlock Text="家庭消息"
+                           FontSize="26"
+                           FontWeight="SemiBold"
+                           Foreground="#E8EDF7"/>
+                <Border x:Name="CountBadge"
+                        Background="#1D3550"
+                        CornerRadius="9"
+                        Padding="10,3"
+                        Margin="14,0,0,0"
+                        VerticalAlignment="Center"
+                        Visibility="Collapsed">
+                    <TextBlock x:Name="CountText"
+                               Text="1 条新消息"
+                               FontSize="16"
+                               Foreground="#5AC8FA"/>
+                </Border>
+            </StackPanel>
 
-            <TextBlock x:Name="TimeText"
-                       Text="12:31"
-                       FontSize="34"
-                       Foreground="#8FA0BC"
-                       HorizontalAlignment="Center"
-                       Margin="0,34,0,0"/>
+            <!-- 消息堆叠区：最早的在上，最新的在下 -->
+            <ScrollViewer x:Name="MessageScroll"
+                          Grid.Row="1"
+                          VerticalScrollBarVisibility="Auto"
+                          HorizontalScrollBarVisibility="Disabled">
+                <StackPanel x:Name="MessageStack" VerticalAlignment="Bottom"/>
+            </ScrollViewer>
 
-            <Button x:Name="OkButton"
-                    Content="知道了"
-                    Click="OkButton_Click"
-                    HorizontalAlignment="Center"
-                    Margin="0,72,0,0"
-                    Padding="78,22"
-                    FontSize="34"
-                    FontWeight="SemiBold"
-                    Foreground="#06121C"
-                    Cursor="Hand">
-                <Button.Style>
-                    <Style TargetType="Button">
-                        <Setter Property="Background" Value="#5AC8FA"/>
-                        <Setter Property="BorderThickness" Value="0"/>
-                        <Setter Property="Template">
-                            <Setter.Value>
-                                <ControlTemplate TargetType="Button">
-                                    <Border CornerRadius="22" Background="{TemplateBinding Background}"
-                                            Padding="{TemplateBinding Padding}">
-                                        <ContentPresenter HorizontalAlignment="Center"
-                                                          VerticalAlignment="Center"/>
-                                    </Border>
-                                </ControlTemplate>
-                            </Setter.Value>
-                        </Setter>
-                        <Style.Triggers>
-                            <Trigger Property="IsMouseOver" Value="True">
-                                <Setter Property="Background" Value="#8FDCFF"/>
-                            </Trigger>
-                        </Style.Triggers>
-                    </Style>
-                </Button.Style>
-            </Button>
+            <!-- 回复区 -->
+            <StackPanel Grid.Row="2" Margin="0,20,0,0">
+                <TextBlock Text="回复"
+                           FontSize="20"
+                           Foreground="#8FA0BC"
+                           Margin="0,0,0,10"/>
 
-            <TextBlock x:Name="HintText"
-                       Text="点击「知道了」关闭"
-                       FontSize="20"
-                       Foreground="#5C6B85"
-                       HorizontalAlignment="Center"
-                       Margin="0,26,0,0"/>
-        </StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBox x:Name="ReplyBox"
+                             Grid.Column="0"
+                             FontSize="26"
+                             Padding="18,14"
+                             Background="#1B2130"
+                             Foreground="#E8EDF7"
+                             CaretBrush="#5AC8FA"
+                             BorderBrush="#2A3243"
+                             BorderThickness="1"
+                             MaxLength="2000"
+                             AcceptsReturn="False"
+                             KeyDown="ReplyBox_KeyDown"/>
+
+                    <Button x:Name="SendButton"
+                            Grid.Column="1"
+                            Content="回复"
+                            Click="SendButton_Click"
+                            Margin="14,0,0,0"
+                            Padding="44,0"
+                            FontSize="26"
+                            FontWeight="SemiBold"
+                            Foreground="#06121C"
+                            Cursor="Hand">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Background" Value="#5AC8FA"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border CornerRadius="12"
+                                                    Background="{TemplateBinding Background}"
+                                                    Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter HorizontalAlignment="Center"
+                                                                  VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#8FDCFF"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </Grid>
+
+                <Grid Margin="0,20,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+
+                    <Button x:Name="OkButton"
+                            Grid.Column="0"
+                            Content="知道了"
+                            Click="OkButton_Click"
+                            Padding="52,14"
+                            FontSize="24"
+                            FontWeight="SemiBold"
+                            Foreground="#E8EDF7"
+                            Cursor="Hand">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Background" Value="#243044"/>
+                                <Setter Property="BorderThickness" Value="0"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="Button">
+                                            <Border CornerRadius="12"
+                                                    Background="{TemplateBinding Background}"
+                                                    Padding="{TemplateBinding Padding}">
+                                                <ContentPresenter HorizontalAlignment="Center"
+                                                                  VerticalAlignment="Center"/>
+                                            </Border>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                                <Style.Triggers>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter Property="Background" Value="#32425C"/>
+                                    </Trigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+
+                    <TextBlock x:Name="HintText"
+                               Grid.Column="1"
+                               Text="Enter 直接回复"
+                               FontSize="18"
+                               Foreground="#5C6B85"
+                               VerticalAlignment="Center"
+                               Margin="20,0,0,0"/>
+                </Grid>
+            </StackPanel>
+        </Grid>
+
+        <!-- ══════════ 右侧：弹幕式对话流 ══════════ -->
+        <!-- 不画面板边框、不做卡片，就让文字像直播弹幕一样往上流，
+             顶部用透明度蒙版渐隐，越往上越淡。 -->
+        <Grid Grid.Column="1" Margin="8,40,40,40">
+            <ScrollViewer x:Name="HistoryScroll"
+                          VerticalScrollBarVisibility="Hidden"
+                          HorizontalScrollBarVisibility="Disabled"
+                          Opacity="0.95">
+                <ScrollViewer.OpacityMask>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#00000000" Offset="0"/>
+                        <GradientStop Color="#66000000" Offset="0.10"/>
+                        <GradientStop Color="#FF000000" Offset="0.42"/>
+                        <GradientStop Color="#FF000000" Offset="1"/>
+                    </LinearGradientBrush>
+                </ScrollViewer.OpacityMask>
+
+                <ItemsControl x:Name="HistoryList" VerticalAlignment="Bottom">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Margin="0,0,0,18">
+                                <TextBlock Text="{Binding Header}"
+                                           FontSize="15"
+                                           FontWeight="SemiBold"
+                                           TextWrapping="Wrap">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Foreground" Value="#4FA9D6"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsOut}" Value="True">
+                                                    <Setter Property="Foreground" Value="#C9A24D"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+
+                                <TextBlock Text="{Binding Content}"
+                                           FontSize="21"
+                                           Foreground="#D7E1F2"
+                                           TextWrapping="Wrap"
+                                           LineHeight="27"
+                                           Margin="0,3,0,0"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Grid>
     </Grid>
 </Window>

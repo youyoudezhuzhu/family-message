@@ -26,7 +26,9 @@ def create_message(sender_name: str, content: str, targets: Iterable[str],
                    message_type: str = "text") -> dict:
     targets = [t for t in dict.fromkeys(targets) if t]
     msg_id = db.execute(
-        "INSERT INTO messages (sender_name, content, message_type, created_at) VALUES (?,?,?,?)",
+        """INSERT INTO messages (sender_name, content, message_type, created_at,
+                                 sender_kind, sender_device_id)
+           VALUES (?,?,?,?, 'web', NULL)""",
         (sender_name, content, message_type, db.now_iso()),
     )
     for dev in targets:
@@ -115,3 +117,57 @@ def pending_for_device(device_id: str) -> list[dict]:
         (device_id,),
     )
     return rows
+
+
+# ============================================================
+# 双向对话：Device → Server
+# ============================================================
+
+def create_reply(device_id: str, sender_name: str, content: str) -> dict:
+    """设备（PC Agent）发出的消息。
+
+    不写 message_targets —— 它的接收方是「Web Sender」这个统一入口，
+    不是某台设备。对话串由 conversation() 双向查询拼出来。
+    """
+    msg_id = db.execute(
+        """INSERT INTO messages (sender_name, content, message_type, created_at,
+                                 sender_kind, sender_device_id)
+           VALUES (?,?,?,?, 'device', ?)""",
+        (sender_name, content, "text", db.now_iso(), device_id),
+    )
+    db.log_event(device_id, "reply", content[:120])
+    return get_message(msg_id) or {}
+
+
+def conversation(device_id: str, limit: int = 50) -> list[dict]:
+    """一台设备与 Web Sender 之间的双向对话，按时间正序返回。"""
+    rows = db.query(
+        """SELECT m.* FROM messages m
+           WHERE (m.sender_kind = 'device' AND m.sender_device_id = ?)
+              OR (m.sender_kind = 'web' AND EXISTS (
+                    SELECT 1 FROM message_targets t
+                    WHERE t.message_id = m.id AND t.device_id = ?))
+           ORDER BY m.id DESC LIMIT ?""",
+        (device_id, device_id, limit),
+    )
+    rows.reverse()
+    for m in rows:
+        m["targets"] = db.query(
+            "SELECT * FROM message_targets WHERE message_id=? ORDER BY id", (m["id"],)
+        )
+    return rows
+
+
+def history_for_device(device_id: str, limit: int = 30) -> list[dict]:
+    """给 PC Agent 用的历史（视角已翻转：direction 表示对这台设备是收到还是发出）。"""
+    out = []
+    for m in conversation(device_id, limit=limit):
+        is_device = m.get("sender_kind") == "device"
+        out.append({
+            "message_id": m["id"],
+            "sender_name": m["sender_name"],
+            "content": m["content"],
+            "created_at": m["created_at"],
+            "direction": "out" if is_device else "in",
+        })
+    return out

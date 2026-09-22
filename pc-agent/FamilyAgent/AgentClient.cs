@@ -25,6 +25,8 @@ public sealed class AgentClient
     public event Action<bool, string>? ConnectionChanged;
     public event Action<JsonElement>? MessageReceived;
     public event Action<string>? ScreenshotRequested;
+    public event Action<JsonElement>? ReplyAcked;
+    public event Action<JsonElement>? HistoryReceived;
     public event Action<string>? Log;
 
     public AgentClient(AgentConfig config) => _config = config;
@@ -223,6 +225,14 @@ public sealed class AgentClient
                 }
                 break;
 
+            case "reply_ack":
+                ReplyAcked?.Invoke(root.Clone());
+                break;
+
+            case "history_response":
+                HistoryReceived?.Invoke(root.Clone());
+                break;
+
             case "heartbeat_ack":
                 break;
         }
@@ -262,6 +272,14 @@ public sealed class AgentClient
 
     public Task AckAsync(long messageId, string status) =>
         SendJsonAsync(new { type = "ack", message_id = messageId, status });
+
+    /// <summary>把弹窗里的回复发给服务端。</summary>
+    public Task ReplyAsync(string content, string clientId) =>
+        SendJsonAsync(new { type = "reply", content, client_id = clientId });
+
+    /// <summary>主动拉一次历史对话（从托盘打开对话窗口时用）。</summary>
+    public Task RequestHistoryAsync(int limit = 30) =>
+        SendJsonAsync(new { type = "history_request", request_id = Guid.NewGuid().ToString("N")[..12], limit });
 
     public Task SendScreenshotAsync(string requestId, string? base64, int width, int height,
                                     string? error)

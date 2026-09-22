@@ -5,6 +5,9 @@ __pycache__/
 fpk/app/server/
 fpk/app/www/
 
+# 发布产物（走 GitHub Release，不进仓库）
+release/
+
 # 打包暂存
 .fpk-build/
 

@@ -65,6 +65,8 @@ message:
   # 0 表示弹窗必须手动点「知道了」才关闭
   popup_auto_close_seconds: 0
   max_targets: 20
+  # 弹窗右侧历史对话条数
+  history_limit: 30
 
 xiaomi:
   enabled: false

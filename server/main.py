@@ -212,6 +212,29 @@ def _public(row: Optional[dict]) -> dict:
     return row
 
 
+def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dict:
+    """推给 PC Agent 的消息体。
+
+    附带该设备与 Web Sender 的最近往来，Agent 弹窗右侧直接渲染，
+    不需要再多一次往返请求。
+    """
+    payload = {
+        "type": "message",
+        "message_id": msg["id"],
+        "sender_name": msg["sender_name"],
+        "content": msg["content"],
+        "message_type": msg["message_type"],
+        "created_at": msg["created_at"],
+        "auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
+        "history": msg_svc.history_for_device(
+            device_id, limit=int(CONFIG["message"].get("history_limit", 30))
+        ),
+    }
+    if redelivered:
+        payload["redelivered"] = True
+    return payload
+
+
 # ============================================================
 # 消息
 # ============================================================
@@ -239,16 +262,7 @@ async def api_send_message(body: MessageBody):
 
     delivered, failed = [], []
     for dev_id in targets:
-        payload = {
-            "type": "message",
-            "message_id": msg["id"],
-            "sender_name": msg["sender_name"],
-            "content": msg["content"],
-            "message_type": msg["message_type"],
-            "created_at": msg["created_at"],
-            "auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
-        }
-        ok = await HUB.send_to_device(dev_id, payload)
+        ok = await HUB.send_to_device(dev_id, _device_payload(msg, dev_id))
         if ok:
             msg_svc.advance(msg["id"], dev_id, "device_received")
             delivered.append(dev_id)
@@ -263,6 +277,14 @@ async def api_send_message(body: MessageBody):
 @app.get("/api/messages", dependencies=[WebAuth])
 async def api_messages(limit: int = 50, device_id: Optional[str] = None):
     return msg_svc.list_messages(limit=min(limit, 200), device_id=device_id)
+
+
+@app.get("/api/conversations/{device_id}", dependencies=[WebAuth])
+async def api_conversation(device_id: str, limit: int = 50):
+    """某台设备与 Web Sender 的双向对话（含 PC 端回复）。"""
+    if not dev_svc.get_device(device_id):
+        raise HTTPException(404, "设备不存在")
+    return msg_svc.conversation(device_id, limit=min(limit, 200))
 
 
 @app.post("/api/messages/{message_id}/read", dependencies=[WebAuth])
@@ -406,16 +428,7 @@ async def ws_device(websocket: WebSocket, device_id: str):
     try:
         # 补投离线期间未送达的消息
         for m in msg_svc.pending_for_device(device_id):
-            ok = await HUB.send_to_device(device_id, {
-                "type": "message",
-                "message_id": m["id"],
-                "sender_name": m["sender_name"],
-                "content": m["content"],
-                "message_type": m["message_type"],
-                "created_at": m["created_at"],
-                "auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
-                "redelivered": True,
-            })
+            ok = await HUB.send_to_device(device_id, _device_payload(m, device_id, redelivered=True))
             if ok:
                 msg_svc.advance(m["id"], device_id, "device_received")
 
@@ -456,6 +469,34 @@ async def handle_device_message(device_id: str, data: dict) -> None:
         rid = data.get("request_id", "")
         if rid:
             HUB.resolve(rid, data)
+
+    elif mtype == "reply":
+        # ★ 双向对话：PC 端在弹窗里回复 → 落库 → 广播给所有浏览器
+        content = (data.get("content") or "").strip()
+        if not content:
+            return
+        client_id = data.get("client_id") or ""
+        dev = dev_svc.get_device(device_id)
+        sender_name = (dev or {}).get("name") or device_id
+        msg = msg_svc.create_reply(device_id, sender_name, content[:2000])
+        await HUB.send_to_device(device_id, {
+            "type": "reply_ack",
+            "client_id": client_id,
+            "message_id": msg.get("id"),
+            "status": "ok",
+            "created_at": msg.get("created_at"),
+        })
+        await HUB.broadcast_web({"type": "message", "message": msg, "reply": True})
+
+    elif mtype == "history_request":
+        rid = data.get("request_id") or ""
+        limit = int(data.get("limit") or 30)
+        await HUB.send_to_device(device_id, {
+            "type": "history_response",
+            "request_id": rid,
+            "device_id": device_id,
+            "messages": msg_svc.history_for_device(device_id, limit=min(limit, 200)),
+        })
 
     elif mtype == "event":
         db.log_event(device_id, str(data.get("kind", "event")), str(data.get("detail", ""))[:500])

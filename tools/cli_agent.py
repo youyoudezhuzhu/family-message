@@ -24,6 +24,7 @@ import platform
 import socket
 import sys
 import time
+import uuid
 from pathlib import Path
 
 try:
@@ -143,6 +144,7 @@ class Agent:
     def __init__(self, cfg: dict):
         self.cfg = cfg
         self.ws = None
+        self.pending_replies: dict[str, str] = {}
 
     @property
     def url(self) -> str:
@@ -172,16 +174,46 @@ class Agent:
                     self.ws = ws
                     delay = 2
                     hb = asyncio.create_task(self.heartbeat_loop())
+                    stdin = asyncio.create_task(self.stdin_loop())
                     try:
                         async for raw in ws:
                             await self.on_message(json.loads(raw))
                     finally:
                         hb.cancel()
+                        stdin.cancel()
             except Exception as e:
                 print(f"[agent] 断开: {type(e).__name__}: {e} — {delay}s 后重连", flush=True)
             self.ws = None
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
+
+    async def stdin_loop(self) -> None:
+        """终端里输入一行 = 在「弹窗」里回复一条。"""
+        loop = asyncio.get_running_loop()
+        while True:
+            line = await loop.run_in_executor(None, sys.stdin.readline)
+            if not line:
+                return
+            text = line.strip()
+            if not text:
+                continue
+            await self.reply(text)
+
+    async def reply(self, text: str) -> None:
+        if self.ws is None:
+            print("[agent] 未连接，回复未发出", flush=True)
+            return
+        cid = uuid.uuid4().hex[:12]
+        self.pending_replies[cid] = text
+        await self.ws.send(json.dumps({"type": "reply", "content": text, "client_id": cid}))
+        print(f"[agent] ↑ 已回复: {text}", flush=True)
+
+    async def request_history(self, limit: int = 30) -> None:
+        if self.ws is None:
+            return
+        await self.ws.send(json.dumps(
+            {"type": "history_request", "request_id": uuid.uuid4().hex[:12], "limit": limit}
+        ))
 
     async def heartbeat_loop(self) -> None:
         while True:
@@ -206,15 +238,37 @@ class Agent:
         elif mtype == "screenshot_request":
             await self.handle_screenshot(data.get("request_id", ""))
 
+        elif mtype == "reply_ack":
+            cid = data.get("client_id", "")
+            sent = self.pending_replies.pop(cid, None)
+            print(f"[agent] ✓ 服务器已接收回复（#{data.get('message_id')}）{sent or ''}", flush=True)
+
+        elif mtype == "history_response":
+            print(f"[agent] ↓ 历史对话（{len(data.get('messages', []))} 条）", flush=True)
+            for h in data.get("messages", []):
+                arrow = "→" if h["direction"] == "in" else "←"
+                print(f"    {arrow} [{h['created_at']}] {h['sender_name']}: {h['content']}", flush=True)
+
     async def show_popup(self, data: dict) -> None:
-        """控制台全屏「弹窗」：Windows Agent 用的是真·全屏无边框置顶窗口。"""
+        """控制台全屏「弹窗」：Windows Agent 用的是真·全屏无边框置顶窗口，
+        右侧渲染历史对话、底部是回复输入框。"""
         msg_id = data.get("message_id")
         await self.ack(msg_id, "popup_displayed")
-        print("\n" + "=" * 60, flush=True)
-        print(f"  {data.get('sender_name')}  →  {self.cfg['device_name']}", flush=True)
-        print(f"  {data.get('content')}", flush=True)
-        print(f"  {data.get('created_at')}", flush=True)
-        print("=" * 60, flush=True)
+
+        history = data.get("history") or []
+        print("\n" + "═" * 64, flush=True)
+        print(f"  【左侧】新消息   来自 {data.get('sender_name')} → {self.cfg['device_name']}", flush=True)
+        print(f"     {data.get('content')}", flush=True)
+        print(f"     {data.get('created_at')}", flush=True)
+        print("─" * 64, flush=True)
+        print(f"  【右侧】历史对话（{len(history)} 条）", flush=True)
+        for h in history:
+            arrow = "←" if h["direction"] == "in" else "→"
+            mark = " ◀ 本次" if h.get("message_id") == msg_id else ""
+            print(f"     {arrow} [{h['created_at']}] {h['sender_name']}: {h['content']}{mark}",
+                  flush=True)
+        print("═" * 64, flush=True)
+        print("  （直接输入一行文字 + 回车 = 回复）", flush=True)
         await self.ack(msg_id, "read")
 
     async def ack(self, message_id, status: str) -> None:
