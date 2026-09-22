@@ -1,0 +1,45 @@
+#!/bin/bash
+### config_callback — 用户保存设置后：回写 config.yaml 并重启服务
+
+GNOME="${TRIM_PKGHOME:-/vol1/@apphome/family-message}"
+VAR="$TRIM_PKGVAR"
+PID_FILE="$VAR/family-message.pid"
+CFG="$GNOME/config.yaml"
+PY="$GNOME/venv/bin/python"
+
+if [ -x "$PY" ] && [ -f "$CFG" ]; then
+    "$PY" - "$CFG" "${wizard_web_password:-}" "${wizard_enroll_token:-}" "${wizard_senders:-}" <<'PY'
+import re
+import sys
+
+cfg_path, pwd, enroll, senders = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+text = open(cfg_path, encoding="utf-8").read()
+
+def set_scalar(src, key, value):
+    if value == "":
+        return src
+    return re.sub(rf'(^\s*{key}:\s*)("?)[^"\n]*\2', rf'\g<1>"{value}"', src, count=1, flags=re.M)
+
+if pwd:
+    text = set_scalar(text, "password", pwd)
+if enroll:
+    text = set_scalar(text, "enroll_token", enroll)
+if senders:
+    names = [s.strip() for s in senders.split(",") if s.strip()]
+    if names:
+        block = "senders:\n" + "\n".join("  - " + n for n in names)
+        text = re.sub(r"senders:\n(?:  - .*\n?)*", block + "\n", text, count=1)
+open(cfg_path, "w", encoding="utf-8").write(text)
+print("config.yaml updated")
+PY
+fi
+
+# 重启服务（由 fnOS 在回调后重新拉起）
+if [ -f "$PID_FILE" ]; then
+    pid=$(head -n1 "$PID_FILE" | tr -d '[:space:]')
+    kill -TERM "$pid" 2>/dev/null
+    sleep 2
+    kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null
+    rm -f "$PID_FILE"
+fi
+exit 0

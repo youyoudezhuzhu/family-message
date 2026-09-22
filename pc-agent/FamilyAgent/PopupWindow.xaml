@@ -1,0 +1,92 @@
+<Window x:Class="FamilyAgent.PopupWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="家庭消息"
+        WindowStyle="None"
+        ResizeMode="NoResize"
+        ShowInTaskbar="False"
+        Topmost="True"
+        AllowsTransparency="False"
+        WindowStartupLocation="Manual"
+        Background="#0B0F17">
+
+    <Grid>
+        <Grid.Background>
+            <RadialGradientBrush Center="0.5,0.35" RadiusX="1.2" RadiusY="1.2">
+                <GradientStop Color="#1B2537" Offset="0"/>
+                <GradientStop Color="#0B0F17" Offset="1"/>
+            </RadialGradientBrush>
+        </Grid.Background>
+
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" MaxWidth="1400">
+
+            <TextBlock x:Name="SenderText"
+                       Text="妈妈"
+                       FontSize="72"
+                       FontWeight="SemiBold"
+                       Foreground="#5AC8FA"
+                       HorizontalAlignment="Center"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"/>
+
+            <TextBlock x:Name="ContentText"
+                       Text="下来吃饭了"
+                       FontSize="112"
+                       FontWeight="Bold"
+                       Foreground="#F2F6FF"
+                       HorizontalAlignment="Center"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"
+                       Margin="0,28,0,0"
+                       LineHeight="132"/>
+
+            <TextBlock x:Name="TimeText"
+                       Text="12:31"
+                       FontSize="34"
+                       Foreground="#8FA0BC"
+                       HorizontalAlignment="Center"
+                       Margin="0,34,0,0"/>
+
+            <Button x:Name="OkButton"
+                    Content="知道了"
+                    Click="OkButton_Click"
+                    HorizontalAlignment="Center"
+                    Margin="0,72,0,0"
+                    Padding="78,22"
+                    FontSize="34"
+                    FontWeight="SemiBold"
+                    Foreground="#06121C"
+                    Cursor="Hand">
+                <Button.Style>
+                    <Style TargetType="Button">
+                        <Setter Property="Background" Value="#5AC8FA"/>
+                        <Setter Property="BorderThickness" Value="0"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="Button">
+                                    <Border CornerRadius="22" Background="{TemplateBinding Background}"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"/>
+                                    </Border>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Background" Value="#8FDCFF"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Button.Style>
+            </Button>
+
+            <TextBlock x:Name="HintText"
+                       Text="点击「知道了」关闭"
+                       FontSize="20"
+                       Foreground="#5C6B85"
+                       HorizontalAlignment="Center"
+                       Margin="0,26,0,0"/>
+        </StackPanel>
+    </Grid>
+</Window>

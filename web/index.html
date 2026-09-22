@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>家庭消息 · 控制台</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="ws-dot"></span>
+    <h1>家庭消息</h1>
+    <span class="sub" id="server-time"></span>
+  </div>
+  <button class="ghost" id="btn-refresh">刷新</button>
+</header>
+
+<main>
+
+  <!-- ── 发送区 ───────────────────────────────── -->
+  <section class="card">
+    <div class="card-head"><h2>发送消息</h2></div>
+
+    <label class="field">
+      <span>发送人</span>
+      <select id="sender"></select>
+    </label>
+
+    <div class="field">
+      <span>发送给</span>
+      <div class="targets" id="targets"></div>
+    </div>
+
+    <label class="field">
+      <span>消息内容</span>
+      <textarea id="content" rows="3" placeholder="输入消息，例如：下来吃饭了"></textarea>
+    </label>
+
+    <div class="quick" id="quick"></div>
+
+    <div class="actions">
+      <button class="primary" id="btn-send">发送</button>
+      <span class="hint" id="send-hint"></span>
+    </div>
+  </section>
+
+  <!-- ── 设备 ─────────────────────────────────── -->
+  <section class="card">
+    <div class="card-head">
+      <h2>设备</h2>
+      <span class="hint" id="dev-count"></span>
+    </div>
+    <div class="devices" id="devices"></div>
+    <p class="empty" id="dev-empty">还没有设备接入。在 PC 上运行 Family Agent 后会自动出现在这里。</p>
+  </section>
+
+  <!-- ── 消息记录 ─────────────────────────────── -->
+  <section class="card">
+    <div class="card-head">
+      <h2>消息记录</h2>
+      <button class="ghost small" id="btn-history">加载更早</button>
+    </div>
+    <div class="log" id="log"></div>
+  </section>
+
+</main>
+
+<div class="modal" id="modal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <strong id="modal-title">桌面截图</strong>
+      <button class="ghost small" id="modal-close">关闭</button>
+    </div>
+    <div class="modal-body"><img id="modal-img" alt="桌面截图"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div>
+</div>
+
+<script src="static/app.js"></script>
+</body>
+</html>

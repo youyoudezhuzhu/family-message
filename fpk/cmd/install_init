@@ -1,0 +1,7 @@
+#!/bin/bash
+### install_init — 安装前检查：确保 python312 运行时存在
+if [ ! -x "/var/apps/python312/target/bin/python3" ]; then
+    echo "缺少 python312 运行时，无法安装本应用。" > "$TRIM_TEMP_LOGFILE"
+    exit 1
+fi
+exit 0
