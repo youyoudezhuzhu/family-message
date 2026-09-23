@@ -23,7 +23,6 @@ export TRIM_TEMP_LOGFILE="$SIM/install-error.log"
 export PATH="/var/apps/python312/target/bin:$PATH"
 export wizard_web_password=""
 export wizard_enroll_token="family-2026"
-export wizard_senders="振辉,妈妈,爸爸,爷爷,奶奶"
 
 CMD="$SIM/work/cmd"
 

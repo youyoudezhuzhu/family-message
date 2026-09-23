@@ -19,6 +19,7 @@ public partial class App : Application
     private WinForms.NotifyIcon? _tray;
     private SettingsWindow? _settings;
     private PopupWindow? _popup;
+    private string? _pendingReplyClientId;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -36,7 +37,10 @@ public partial class App : Application
         SessionEnding += (_, _) => IsSystemShuttingDown = true;
         Exit += (_, _) => Cleanup();
 
+        AgentLog.Rotate();
+
         Config = AgentConfig.Load();
+        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} ===");
         Client = new AgentClient(Config);
         Client.ConnectionChanged += OnConnectionChanged;
         Client.MessageReceived += OnMessageReceived;
@@ -75,27 +79,58 @@ public partial class App : Application
         popup.Acknowledged += id => _ = Client.AckAsync(id, "read");
         popup.RetryAck += id => _ = Client.AckAsync(id, "read");
         popup.ReplyRequested += OnReplyRequested;
+        popup.ReplyNameChanged += OnReplyNameChanged;
+        popup.SetReplyNames(Config.ReplyNames, Config.ReplyName);
         _popup = popup;
 
         return popup;
     }
 
-    private void OnReplyRequested(string content)
+    private void OnReplyRequested(string senderName, string content)
     {
-        if (!Client.Connected)
-        {
-            _popup?.MarkReplyFailed("未连接到服务端");
-            return;
-        }
-
         var clientId = Guid.NewGuid().ToString("N")[..12];
-        _ = Client.ReplyAsync(content, clientId);
+        _pendingReplyClientId = clientId;
+
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (!Client.Connected)
+                    throw new InvalidOperationException("未连接到服务端");
+
+                await Client.ReplyAsync(senderName, content, clientId);
+
+                // 服务端迟迟不回执时给个明确提示，别让界面永远停在「发送中…」
+                await Task.Delay(TimeSpan.FromSeconds(10));
+                if (_pendingReplyClientId == clientId)
+                {
+                    AgentLog.Write("✗ 回复 10 秒内未收到 reply_ack");
+                    Dispatcher.Invoke(() =>
+                        _popup?.MarkReplyFailed("10 秒内没收到服务端确认，详见日志"));
+                }
+            }
+            catch (Exception ex)
+            {
+                AgentLog.Write($"✗ 回复失败：{ex.GetType().Name} {ex.Message}");
+                Dispatcher.Invoke(() => _popup?.MarkReplyFailed(ex.Message));
+            }
+        });
+    }
+
+    /// <summary>弹窗里换了回复昵称 → 存到本地配置（服务端不参与）。</summary>
+    private void OnReplyNameChanged(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+            return;
+        Config.ReplyName = name;
+        Config.Save();
     }
 
     // ---------------- 服务端事件 ----------------
 
     private void OnConnectionChanged(bool connected, string message)
     {
+        AgentLog.Write(connected ? "== 已连接 ==" : $"== 断开：{message} ==");
         Dispatcher.Invoke(() =>
         {
             _settings?.UpdateStatus(connected, message);
@@ -138,9 +173,12 @@ public partial class App : Application
     {
         Dispatcher.Invoke(() =>
         {
+            _pendingReplyClientId = null;
             var status = el.TryGetProperty("status", out var sEl) ? sEl.GetString() : "";
             if (status == "ok")
                 _popup?.MarkReplyDelivered();
+            else if (status == "empty")
+                _popup?.MarkReplyFailed("内容为空");
             else
                 _popup?.MarkReplyFailed(status ?? "未知错误");
         });
@@ -199,6 +237,13 @@ public partial class App : Application
         IsSystemShuttingDown = false;
         EnsurePopup().PresentIdle();
         _ = Client.RequestHistoryAsync(50);
+    }
+
+    /// <summary>设置窗口改了昵称列表后，同步到弹窗的下拉框。</summary>
+    public static void RefreshReplyNames()
+    {
+        if (Current is App app && app._popup is not null)
+            app._popup.SetReplyNames(Config.ReplyNames, Config.ReplyName);
     }
 
     private void OpenConsole()

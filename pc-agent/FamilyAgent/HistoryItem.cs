@@ -15,7 +15,7 @@ public sealed class HistoryItem
     public bool IsCurrent { get; init; }
 
     public string Header =>
-        (IsOut ? "我" : SenderName) + (string.IsNullOrEmpty(Time) ? "" : " · " + Time);
+        SenderName + (string.IsNullOrEmpty(Time) ? "" : " · " + Time);
 
     public static HistoryItem FromJson(System.Text.Json.JsonElement el, long currentId)
     {
@@ -35,9 +35,9 @@ public sealed class HistoryItem
         };
     }
 
-    public static HistoryItem Sent(string content, DateTime at) => new()
+    public static HistoryItem Sent(string senderName, string content, DateTime at) => new()
     {
-        SenderName = "我",
+        SenderName = senderName,
         Content = content,
         Time = at.ToString("HH:mm:ss"),
         IsOut = true,

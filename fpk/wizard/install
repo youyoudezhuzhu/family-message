@@ -22,14 +22,14 @@
         ]
     },
     {
-        "stepTitle": "发送昵称",
+        "stepTitle": "说明",
         "items": [
             {
                 "type": "text",
-                "field": "wizard_senders",
-                "label": "可选发送人昵称（英文逗号分隔）",
-                "initValue": "振辉,妈妈,爸爸,爷爷,奶奶",
-                "helpText": "昵称只是发消息时选择的显示名称，不是账号。所有人共用同一个网页入口，不会因为昵称不同而产生不同用户。"
+                "field": "wizard_note",
+                "label": "发送昵称在网页里随时维护（这里不用填）",
+                "initValue": "装好后打开 http://<NAS的IP>:18801 即可添加/修改昵称",
+                "helpText": "昵称是纯本地概念：网页端存在浏览器里，PC 端存在 Agent 配置里，服务端不参与管理。"
             }
         ]
     }

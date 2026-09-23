@@ -205,7 +205,13 @@ class Agent:
             return
         cid = uuid.uuid4().hex[:12]
         self.pending_replies[cid] = text
-        await self.ws.send(json.dumps({"type": "reply", "content": text, "client_id": cid}))
+        await self.ws.send(json.dumps({
+            "type": "reply",
+            "content": text,
+            "client_id": cid,
+            # 昵称由本机本地维护；Windows 端可在设置里随时增删改
+            "sender_name": self.cfg.get("reply_name") or self.cfg["device_name"],
+        }))
         print(f"[agent] ↑ 已回复: {text}", flush=True)
 
     async def request_history(self, limit: int = 30) -> None:
@@ -301,6 +307,7 @@ def main() -> None:
     ap.add_argument("--device-id")
     ap.add_argument("--device-name")
     ap.add_argument("--enroll-token")
+    ap.add_argument("--reply-name", help="回复时用的昵称（纯本地）")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -312,6 +319,8 @@ def main() -> None:
         cfg["device_name"] = args.device_name
     if args.enroll_token:
         cfg["enroll_token"] = args.enroll_token
+    if args.reply_name:
+        cfg["reply_name"] = args.reply_name
     save_config(cfg)
     print(f"[agent] 配置: {CONFIG_FILE}")
     asyncio.run(Agent(cfg).run())

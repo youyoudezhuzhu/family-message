@@ -2,17 +2,17 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Family Agent 弹窗 · 消息堆叠 + 弹幕对话</title>
+<title>Family Agent 弹窗 · 聊天式对话</title>
 <style>
   /* 按 PopupWindow.xaml 的比例/配色/字号规则 1:1 复刻，用于预览弹窗外观。
-     真实的 Windows 端是 WPF 渲染，这里给出等价的 HTML 预览。 */
+     真实 Windows 端是 WPF 渲染，这里给出等价的 HTML 预览。 */
   *{box-sizing:border-box;margin:0;padding:0}
   body{width:1920px;height:1080px;overflow:hidden;
        font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
        background:radial-gradient(circle at 35% 30%, #182133 0%, #0B0F17 100%);
        color:#E8EDF7;display:flex}
 
-  /* ── 左栏 73% ── */
+  /* ── 左栏 73%：聊天式主对话区 ── */
   .left{width:73%;padding:40px 40px 40px 56px;display:flex;flex-direction:column}
 
   .head{display:flex;align-items:center;gap:14px;margin-bottom:16px}
@@ -20,21 +20,33 @@
   .badge{background:#1D3550;color:#5AC8FA;font-size:16px;
          border-radius:9px;padding:3px 10px}
 
-  .stack{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
-         gap:12px;overflow:hidden}
-  .card{border-radius:14px;padding:16px 22px;background:#131A26;
-        border:2px solid transparent}
-  .card .who{color:#5AC8FA;font-weight:600}
-  .card .msg{color:#F2F6FF;font-weight:700;line-height:1.2}
-  .card .at{color:#7686A3}
+  .thread{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
+          gap:14px;overflow:hidden}
 
-  /* 最新一条最大最亮；往上逐级 ×0.80 */
-  .card.newest{background:#16223A;border-color:#5AC8FA;opacity:1}
-  .card.d1{opacity:.88}
-  .card.d2{opacity:.76}
+  .row{display:flex;align-items:flex-start;max-width:100%}
+  .row.in{justify-content:flex-start}
+  .row.out{justify-content:flex-end}
 
-  .reply-label{font-size:20px;color:#8FA0BC;margin:20px 0 10px}
-  .reply-row{display:flex;gap:14px;align-items:stretch}
+  .avatar{width:44px;height:44px;border-radius:50%;flex:0 0 44px;
+          display:flex;align-items:center;justify-content:center;
+          font-size:19px;font-weight:600;margin:0 12px}
+  .in .avatar{background:#1B2A42;color:#5AC8FA}
+  .out .avatar{background:#243324;color:#C9A24D}
+
+  .bubble{background:#161D2B;border:2px solid transparent;border-radius:14px;
+          padding:12px 18px 10px;max-width:640px}
+  .out .bubble{background:#142C42}
+  .bubble.newest{background:#16223A;border-color:#5AC8FA}
+  .out .bubble.newest{background:#17304A;border-color:#C9A24D}
+
+  .who{font-size:14px;font-weight:600;color:#5AC8FA;margin-bottom:4px}
+  .out .who{color:#C9A24D}
+  .msg{color:#ECF2FC;line-height:1.35}
+  .at{font-size:12px;color:#7484A1;text-align:right;margin-top:5px}
+
+  .reply-row{display:flex;gap:12px;align-items:stretch;margin-top:20px}
+  .name-box{font-size:20px;padding:12px 14px;background:#1B2130;border:1px solid #2A3243;
+            color:#E8EDF7;display:flex;align-items:center;gap:26px;min-width:150px}
   .reply-box{flex:1;font-size:26px;padding:14px 18px;background:#1B2130;
              border:1px solid #2A3243;color:#5C6B85;display:flex;align-items:center}
   .btn-reply{font-size:26px;font-weight:600;color:#06121C;background:#5AC8FA;
@@ -45,8 +57,7 @@
           border-radius:12px;padding:14px 52px}
   .hint{font-size:18px;color:#5C6B85;margin-left:20px}
 
-  /* ── 右栏 27%：弹幕式对话流 ──────────────────────────
-     无面板、无卡片、无滚动条，文字往上流，顶部渐隐 */
+  /* ── 右栏 27%：弹幕式历史流 ── */
   .danmaku{width:27%;padding:40px 40px 40px 8px;display:flex;flex-direction:column;
            justify-content:flex-end;overflow:hidden;opacity:.95;
            -webkit-mask-image:linear-gradient(to bottom,
@@ -67,51 +78,87 @@
       <span class="badge">3 条新消息</span>
     </div>
 
-    <!-- 最早发的在最上面 → 最晚发的最下面 -->
-    <div class="stack">
-      <div class="card d2">
-        <div class="who" style="font-size:15px">妈妈</div>
-        <div class="msg" style="font-size:37px">晚上想吃什么</div>
-        <div class="at" style="font-size:12px">18:02:11</div>
+    <!-- 主对话区：网页发来的靠左，本机回复的靠右，最下面的最新 -->
+    <div class="thread">
+      <div class="row in">
+        <div class="avatar">妈</div>
+        <div class="bubble">
+          <div class="who">妈妈</div>
+          <div class="msg" style="font-size:23px">晚上想吃什么</div>
+          <div class="at">18:02</div>
+        </div>
       </div>
 
-      <div class="card d1">
-        <div class="who" style="font-size:18px">爸爸</div>
-        <div class="msg" style="font-size:46px">把阳台的衣服收一下</div>
-        <div class="at" style="font-size:13px">18:05:40</div>
+      <div class="row out">
+        <div class="bubble">
+          <div class="who">书房电脑</div>
+          <div class="msg" style="font-size:23px">随便，你做什么我吃什么</div>
+          <div class="at">18:03</div>
+        </div>
+        <div class="avatar">书</div>
       </div>
 
-      <div class="card newest">
-        <div class="who" style="font-size:23px">妈妈</div>
-        <div class="msg" style="font-size:58px">下来吃饭了</div>
-        <div class="at" style="font-size:15px">18:12:07</div>
+      <div class="row in">
+        <div class="avatar">爸</div>
+        <div class="bubble">
+          <div class="who">爸爸</div>
+          <div class="msg" style="font-size:25px">把阳台的衣服收一下</div>
+          <div class="at">18:05</div>
+        </div>
+      </div>
+
+      <div class="row out">
+        <div class="bubble">
+          <div class="who">书房电脑</div>
+          <div class="msg" style="font-size:25px">好，马上</div>
+          <div class="at">18:06</div>
+        </div>
+        <div class="avatar">书</div>
+      </div>
+
+      <div class="row in">
+        <div class="avatar">妈</div>
+        <div class="bubble">
+          <div class="who">妈妈</div>
+          <div class="msg" style="font-size:27px">快递放门口了</div>
+          <div class="at">18:11</div>
+        </div>
+      </div>
+
+      <div class="row in">
+        <div class="avatar">妈</div>
+        <div class="bubble newest">
+          <div class="who">妈妈</div>
+          <div class="msg" style="font-size:30px">下来吃饭了</div>
+          <div class="at">18:12</div>
+        </div>
       </div>
     </div>
 
-    <div class="reply-label">回复</div>
+    <!-- 回复区：左边是昵称下拉（本机维护），右边是输入框 -->
     <div class="reply-row">
+      <div class="name-box">书房电脑 <span style="color:#5C6B85;font-size:14px">▾</span></div>
       <div class="reply-box">输入回复内容，按 Enter 发送</div>
       <div class="btn-reply">回复</div>
     </div>
 
     <div class="bottom">
-      <div class="btn-ok">知道了（3）</div>
-      <div class="hint">Enter 直接回复 · 点「知道了」关闭</div>
+      <div class="btn-ok">关闭窗口</div>
+      <div class="hint">Enter 直接回复</div>
     </div>
   </div>
 
-  <!-- 弹幕流：旧的往上淡出 -->
   <div class="danmaku">
     <div class="dm"><div class="h">妈妈 · 17:38</div><div class="c">今晚几点回来</div></div>
-    <div class="dm out"><div class="h">我 · 17:39</div><div class="c">大概七点</div></div>
+    <div class="dm out"><div class="h">书房电脑 · 17:39</div><div class="c">大概七点</div></div>
     <div class="dm"><div class="h">妈妈 · 17:40</div><div class="c">路上买袋米</div></div>
-    <div class="dm out"><div class="h">我 · 17:41</div><div class="c">好</div></div>
+    <div class="dm out"><div class="h">书房电脑 · 17:41</div><div class="c">好</div></div>
     <div class="dm"><div class="h">爸爸 · 17:52</div><div class="c">把路由器重启一下</div></div>
-    <div class="dm out"><div class="h">我 · 17:54</div><div class="c">已经重启了</div></div>
+    <div class="dm out"><div class="h">书房电脑 · 17:54</div><div class="c">已经重启了</div></div>
     <div class="dm"><div class="h">妈妈 · 18:02</div><div class="c">晚上想吃什么</div></div>
-    <div class="dm out"><div class="h">我 · 18:03</div><div class="c">随便，你做什么我吃什么</div></div>
+    <div class="dm out"><div class="h">书房电脑 · 18:03</div><div class="c">随便，你做什么我吃什么</div></div>
     <div class="dm"><div class="h">爸爸 · 18:05</div><div class="c">把阳台的衣服收一下</div></div>
-    <div class="dm out"><div class="h">我 · 18:06</div><div class="c">马上去</div></div>
+    <div class="dm out"><div class="h">书房电脑 · 18:06</div><div class="c">好，马上</div></div>
     <div class="dm"><div class="h">妈妈 · 18:11</div><div class="c">快递放门口了</div></div>
     <div class="dm"><div class="h">妈妈 · 18:12</div><div class="c">下来吃饭了</div></div>
   </div>

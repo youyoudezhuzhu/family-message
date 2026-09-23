@@ -13,7 +13,6 @@ CONFIG_PATH = Path(os.environ.get("FM_CONFIG", str(BASE_DIR / "config.yaml")))
 _DEFAULTS: dict = {
     "server": {"host": "0.0.0.0", "port": 18801, "public_url": ""},
     "data_dir": str(BASE_DIR / "data"),
-    "senders": ["振辉"],
     "web": {"password": "", "session_hours": 720},
     "device": {
         "enroll_token": "",

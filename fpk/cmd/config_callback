@@ -8,11 +8,11 @@ CFG="$GNOME/config.yaml"
 PY="$GNOME/venv/bin/python"
 
 if [ -x "$PY" ] && [ -f "$CFG" ]; then
-    "$PY" - "$CFG" "${wizard_web_password:-}" "${wizard_enroll_token:-}" "${wizard_senders:-}" <<'PY'
+    "$PY" - "$CFG" "${wizard_web_password:-}" "${wizard_enroll_token:-}" <<'PY'
 import re
 import sys
 
-cfg_path, pwd, enroll, senders = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+cfg_path, pwd, enroll = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(cfg_path, encoding="utf-8").read()
 
 def set_scalar(src, key, value):
@@ -24,11 +24,6 @@ if pwd:
     text = set_scalar(text, "password", pwd)
 if enroll:
     text = set_scalar(text, "enroll_token", enroll)
-if senders:
-    names = [s.strip() for s in senders.split(",") if s.strip()]
-    if names:
-        block = "senders:\n" + "\n".join("  - " + n for n in names)
-        text = re.sub(r"senders:\n(?:  - .*\n?)*", block + "\n", text, count=1)
 open(cfg_path, "w", encoding="utf-8").write(text)
 print("config.yaml updated")
 PY

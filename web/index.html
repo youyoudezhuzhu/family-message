@@ -24,7 +24,7 @@
     <div class="card-head"><h2>发送消息</h2></div>
 
     <label class="field">
-      <span>发送人</span>
+      <span>发送人 <a href="#" class="link" id="btn-names">管理昵称</a></span>
       <select id="sender"></select>
     </label>
 
@@ -90,6 +90,26 @@
       <select id="conv-sender" title="以谁的名义发送"></select>
       <input id="conv-text" placeholder="输入消息，回车发送">
       <button class="primary small" id="conv-send">发送</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="names">
+  <div class="modal-box names-box">
+    <div class="modal-head">
+      <strong>管理发送昵称</strong>
+      <button class="ghost small" id="names-close">关闭</button>
+    </div>
+    <div class="names-body">
+      <div class="names-add">
+        <input id="name-new" placeholder="输入新昵称，回车添加" maxlength="16">
+        <button class="primary small" id="name-add">添加</button>
+      </div>
+      <div class="names-list" id="names-list"></div>
+    </div>
+    <div class="modal-foot">
+      昵称只保存在<strong>这台设备的浏览器</strong>里（localStorage），服务端不记录；
+      换浏览器需要重新添加。同一个昵称就当作同一个人。
     </div>
   </div>
 </div>
