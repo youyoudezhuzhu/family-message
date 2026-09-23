@@ -497,6 +497,7 @@ public partial class PopupWindow : Window
             App.Config.Save();
         }
         RenderThemeGrid();
+        RefreshCardThemes();
         SettingsHint.Text = $"配色已切换为「{MdTheme.Current.Name}」";
     }
 
@@ -538,8 +539,18 @@ public partial class PopupWindow : Window
             App.Config.Save();
         }
         RenderModeGrid();
+        RefreshCardThemes();
         var shown = id switch { "light" => "浅色", "dark" => "深色", _ => "跟随系统" };
         SettingsHint.Text = $"外观已切换为「{shown}」";
+    }
+
+    /// <summary>
+    /// 换主题后，已经建好的消息卡片不会自动跟着变（它们的颜色是 C# 里直接赋的，
+    /// 不走 DynamicResource），所以这里逐个刷新一次。
+    /// </summary>
+    private void RefreshCardThemes()
+    {
+        foreach (var card in _cards) card.ApplyTheme();
     }
 
     private void RenderReplyNames()

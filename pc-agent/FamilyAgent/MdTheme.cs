@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Windows;
 using System.Windows.Media;
 using Microsoft.Win32;
 
@@ -10,81 +11,130 @@ namespace FamilyAgent;
 /// Material Design 3 设计令牌（Windows 端）。
 ///
 /// 颜色一律来自 MdPalette.g.cs —— 那份文件由 tools/gen_tokens.py 生成，
-/// 与网页端的 web/static/tokens.css **同源**，所以两端的配色永远一致，
-/// 不会出现「网页改了色、PC 端还是旧的」这种漂移。
+/// 与网页端的 web/static/tokens.css **同源**，两端配色永远一致。
 ///
-/// 用法：启动时调用 MdTheme.Apply(配色id, 明暗偏好)，
-/// 之后所有色刷的颜色会被就地改写 —— XAML 里引用的是同一个对象，
-/// 所以不需要重建界面就能换色。
+/// ⚠️ 关键设计：**画刷是不可变的，换主题时换新实例，绝不改旧实例的颜色。**
+///
+/// 为什么：XAML 里如果用 {x:Static} 把画刷引用进 Style / ControlTemplate，
+/// WPF 在密封这些样式时会顺手把其中的 Freezable（画刷）冻结，之后
+/// brush.Color = ... 会抛「无法在该对象上设置属性，因为它处于只读状态」。
+/// 所以这里改为：
+///   XAML 用 {DynamicResource MdPrimary} 引用 → 由 XAML 负责跟着资源变化刷新
+///   换主题 → 生成一批全新画刷 → 写进 Application.Resources → 界面自动更新
 /// </summary>
 public static class MdTheme
 {
     public static Color Parse(string hex) => (Color)ColorConverter.ConvertFromString(hex);
 
-    // 所有色刷都登记在这里，Apply 时统一改写颜色
-    private static readonly Dictionary<string, SolidColorBrush> _brushes = new(StringComparer.Ordinal);
-
-    private static SolidColorBrush Reg(string role, string fallback)
+    /// <summary>按比例混合两个颜色（a 占比 1-t，b 占比 t）。</summary>
+    public static Color Blend(Color a, Color b, double t)
     {
-        var b = new SolidColorBrush(Parse(fallback));
-        _brushes[role] = b;
-        return b;
+        t = Math.Clamp(t, 0, 1);
+        return Color.FromArgb(
+            (byte)(a.A + (b.A - a.A) * t),
+            (byte)(a.R + (b.R - a.R) * t),
+            (byte)(a.G + (b.G - a.G) * t),
+            (byte)(a.B + (b.B - a.B) * t));
     }
 
-    // ── 颜色角色（MD3 完整角色集）───────────────────────────────
-    public static readonly SolidColorBrush Primary = Reg("primary", "#B6C4FF");
-    public static readonly SolidColorBrush OnPrimary = Reg("on-primary", "#002F67");
-    public static readonly SolidColorBrush PrimaryContainer = Reg("primary-container", "#174589");
-    public static readonly SolidColorBrush OnPrimaryContainer = Reg("on-primary-container", "#DCE1FF");
+    // ── 资源键 → 颜色角色 ────────────────────────────────────────
+    // XAML 里用 {DynamicResource <键>} 引用；键名 = "Md" + 下面的角色名。
+    private static readonly (string Key, string Role)[] Map =
+    {
+        ("MdPrimary",              "primary"),
+        ("MdOnPrimary",            "on-primary"),
+        ("MdPrimaryContainer",     "primary-container"),
+        ("MdOnPrimaryContainer",   "on-primary-container"),
+        ("MdSecondary",            "secondary"),
+        ("MdSecondaryContainer",   "secondary-container"),
+        ("MdOnSecondaryContainer", "on-secondary-container"),
+        ("MdTertiary",             "tertiary"),
+        ("MdOnTertiary",           "on-tertiary"),
+        ("MdTertiaryContainer",    "tertiary-container"),
+        ("MdOnTertiaryContainer",  "on-tertiary-container"),
+        ("MdError",                "error"),
+        ("MdOnError",              "on-error"),
+        ("MdErrorContainer",       "error-container"),
+        ("MdOnErrorContainer",     "on-error-container"),
+        ("MdSurface",              "surface"),
+        ("MdSurfaceDim",           "surface-dim"),
+        ("MdSurfaceLowest",        "surface-container-lowest"),
+        ("MdSurfaceLow",           "surface-container-low"),
+        ("MdSurfaceC",             "surface-container"),
+        ("MdSurfaceHigh",          "surface-container-high"),
+        ("MdSurfaceHighest",       "surface-container-highest"),
+        ("MdOnSurface",            "on-surface"),
+        ("MdOnVariant",            "on-surface-variant"),
+        ("MdOutline",              "outline"),
+        ("MdOutlineVariant",       "outline-variant"),
+        ("MdInverseSurface",       "inverse-surface"),
+        ("MdInverseOnSurface",     "inverse-on-surface"),
+        ("MdInversePrimary",       "inverse-primary"),
+    };
 
-    public static readonly SolidColorBrush Secondary = Reg("secondary", "#C0C5E3");
-    public static readonly SolidColorBrush OnSecondary = Reg("on-secondary", "#292F47");
-    public static readonly SolidColorBrush SecondaryContainer = Reg("secondary-container", "#40465F");
-    public static readonly SolidColorBrush OnSecondaryContainer = Reg("on-secondary-container", "#DCE1FF");
+    // 语义别名（指向上面某个键，方便按含义使用）
+    private static readonly Dictionary<string, string> Alias = new(StringComparer.Ordinal)
+    {
+        ["MdBad"] = "MdError",             // 危险 / 失败
+        ["MdOk"] = "MdTertiary",           // 在线 / 成功
+        ["MdTimeText"] = "MdOnVariant",    // 时间戳
+    };
 
-    public static readonly SolidColorBrush Tertiary = Reg("tertiary", "#EFB6D4");
-    public static readonly SolidColorBrush OnTertiary = Reg("on-tertiary", "#4E203B");
-    public static readonly SolidColorBrush TertiaryContainer = Reg("tertiary-container", "#673752");
-    public static readonly SolidColorBrush OnTertiaryContainer = Reg("on-tertiary-container", "#FED8EB");
+    // 不随配色变的固定色
+    private static readonly Dictionary<string, string> Fixed = new(StringComparer.Ordinal)
+    {
+        ["MdScrim"] = "#B3000000",         // 对话框遮罩
+    };
 
-    public static readonly SolidColorBrush Error = Reg("error", "#F2B8B5");
-    public static readonly SolidColorBrush OnError = Reg("on-error", "#601410");
-    public static readonly SolidColorBrush ErrorContainer = Reg("error-container", "#8C1D18");
-    public static readonly SolidColorBrush OnErrorContainer = Reg("on-error-container", "#F9DEDC");
+    /// <summary>当前这批画刷。换主题时整体换成新实例，旧实例不再改动。</summary>
+    private static Dictionary<string, SolidColorBrush> _brushes = new(StringComparer.Ordinal);
 
-    // 五级 surface container —— MD3 靠这个建立层次，而不是靠阴影
-    public static readonly SolidColorBrush Surface = Reg("surface", "#121319");
-    public static readonly SolidColorBrush SurfaceDim = Reg("surface-dim", "#121319");
-    public static readonly SolidColorBrush SurfaceLowest = Reg("surface-container-lowest", "#0D0E15");
-    public static readonly SolidColorBrush SurfaceLow = Reg("surface-container-low", "#1A1B21");
-    public static readonly SolidColorBrush SurfaceC = Reg("surface-container", "#1E1F25");
-    public static readonly SolidColorBrush SurfaceHigh = Reg("surface-container-high", "#292A2F");
-    public static readonly SolidColorBrush SurfaceHighest = Reg("surface-container-highest", "#33343A");
+    /// <summary>取画刷；键不存在时返回一个安全的兜底色。</summary>
+    private static SolidColorBrush Get(string key)
+    {
+        if (_brushes.TryGetValue(key, out var b)) return b;
+        if (Alias.TryGetValue(key, out var target)) return Get(target);
+        return new SolidColorBrush(Colors.Magenta);   // 明显不对的颜色，方便发现问题
+    }
 
-    public static readonly SolidColorBrush OnSurface = Reg("on-surface", "#E1E2EA");
-    public static readonly SolidColorBrush OnVariant = Reg("on-surface-variant", "#C3C6D5");
-    public static readonly SolidColorBrush Outline = Reg("outline", "#8E909E");
-    public static readonly SolidColorBrush OutlineVariant = Reg("outline-variant", "#41424A");
+    // ── C# 侧访问器（XAML 侧请用 {DynamicResource MdXxx}）─────────
+    public static SolidColorBrush Primary => Get("MdPrimary");
+    public static SolidColorBrush OnPrimary => Get("MdOnPrimary");
+    public static SolidColorBrush PrimaryContainer => Get("MdPrimaryContainer");
+    public static SolidColorBrush OnPrimaryContainer => Get("MdOnPrimaryContainer");
+    public static SolidColorBrush Secondary => Get("MdSecondary");
+    public static SolidColorBrush SecondaryContainer => Get("MdSecondaryContainer");
+    public static SolidColorBrush OnSecondaryContainer => Get("MdOnSecondaryContainer");
+    public static SolidColorBrush Tertiary => Get("MdTertiary");
+    public static SolidColorBrush Error => Get("MdError");
+    public static SolidColorBrush OnError => Get("MdOnError");
+    public static SolidColorBrush ErrorContainer => Get("MdErrorContainer");
+    public static SolidColorBrush OnErrorContainer => Get("MdOnErrorContainer");
 
-    public static readonly SolidColorBrush InverseSurface = Reg("inverse-surface", "#E1E2EA");
-    public static readonly SolidColorBrush InverseOnSurface = Reg("inverse-on-surface", "#1A1B21");
-    public static readonly SolidColorBrush InversePrimary = Reg("inverse-primary", "#3A5CA4");
+    public static SolidColorBrush Surface => Get("MdSurface");
+    public static SolidColorBrush SurfaceDim => Get("MdSurfaceDim");
+    public static SolidColorBrush SurfaceLowest => Get("MdSurfaceLowest");
+    public static SolidColorBrush SurfaceLow => Get("MdSurfaceLow");
+    public static SolidColorBrush SurfaceC => Get("MdSurfaceC");
+    public static SolidColorBrush SurfaceHigh => Get("MdSurfaceHigh");
+    public static SolidColorBrush SurfaceHighest => Get("MdSurfaceHighest");
+    public static SolidColorBrush OnSurface => Get("MdOnSurface");
+    public static SolidColorBrush OnVariant => Get("MdOnVariant");
+    public static SolidColorBrush Outline => Get("MdOutline");
+    public static SolidColorBrush OutlineVariant => Get("MdOutlineVariant");
+    public static SolidColorBrush InverseSurface => Get("MdInverseSurface");
+    public static SolidColorBrush InverseOnSurface => Get("MdInverseOnSurface");
+    public static SolidColorBrush InversePrimary => Get("MdInversePrimary");
 
-    // 语义别名：XAML 里按含义用，颜色仍来自 MD3 令牌
-    public static readonly SolidColorBrush Ok = Tertiary;      // 在线/成功 → tertiary
-    public static readonly SolidColorBrush Bad = Error;        // 失败/危险 → error
-    public static readonly SolidColorBrush TimeText = OnVariant;
-
-    // ── 状态层（MD3 用叠加层表达 hover/press，而不是改底色）─────
-    // 颜色跟随 on-surface，只调透明度，所以明暗两套主题都自动适配。
-    public static readonly SolidColorBrush StateHover = new(Color.FromArgb(0x14, 0xE1, 0xE2, 0xEA));
-    public static readonly SolidColorBrush StateFocus = new(Color.FromArgb(0x1A, 0xE1, 0xE2, 0xEA));
-    public static readonly SolidColorBrush StatePress = new(Color.FromArgb(0x1A, 0xE1, 0xE2, 0xEA));
-    /// <summary>滚动条滑块：outline 半透明</summary>
-    public static readonly SolidColorBrush ScrollThumb = new(Color.FromArgb(0x73, 0x8E, 0x90, 0x9E));
-    public static readonly SolidColorBrush ScrollThumbHover = new(Color.FromArgb(0xA6, 0x8E, 0x90, 0x9E));
-    /// <summary>对话框遮罩（MD3 scrim）</summary>
-    public static readonly SolidColorBrush Scrim = new(Color.FromArgb(0xB3, 0x00, 0x00, 0x00));
+    public static SolidColorBrush Ok => Get("MdOk");
+    public static SolidColorBrush Bad => Get("MdBad");
+    public static SolidColorBrush TimeText => Get("MdTimeText");
+    public static SolidColorBrush Scrim => Get("MdScrim");
+    public static SolidColorBrush StateHover => Get("MdStateHover");
+    public static SolidColorBrush StateFocus => Get("MdStateFocus");
+    public static SolidColorBrush StatePress => Get("MdStatePress");
+    public static SolidColorBrush ScrollThumb => Get("MdScrollThumb");
+    public static SolidColorBrush ScrollThumbHover => Get("MdScrollThumbHover");
 
     // ── Typography（MD3 Type Scale，单位 DIP）────────────────────
     public static class Type
@@ -120,8 +170,8 @@ public static class MdTheme
 
     // ── 给 XAML 用的扁平常量 ────────────────────────────────────
     // XAML 的 x:Static 不支持访问嵌套类型：{x:Static local:MdTheme.Shape.Full}
-    // 会报 MC3050 "Cannot find the type 'MdTheme.Shape'"。
-    // 所以把 XAML 需要的档位以扁平名字再暴露一次；C# 代码里仍用 MdTheme.Type / MdTheme.Shape。
+    // 会报 MC3050。所以把 XAML 需要的档位以扁平名字再暴露一次；
+    // C# 里仍用 MdTheme.Type / MdTheme.Shape。
     public const double RadiusNone = Shape.None;
     public const double RadiusExtraSmall = Shape.ExtraSmall;
     public const double RadiusSmall = Shape.Small;
@@ -131,6 +181,7 @@ public static class MdTheme
     public const double RadiusFull = Shape.Full;
 
     public const double FontDisplayLarge = Type.DisplayLarge;
+    public const double FontHeadlineLarge = Type.HeadlineLarge;
     public const double FontHeadlineMedium = Type.HeadlineMedium;
     public const double FontHeadlineSmall = Type.HeadlineSmall;
     public const double FontTitleLarge = Type.TitleLarge;
@@ -147,8 +198,10 @@ public static class MdTheme
     public static string CurrentSchemeId { get; private set; } = "indigo";
     /// <summary>实际生效的模式：light / dark（system 已经解析过）</summary>
     public static string CurrentModeId { get; private set; } = "dark";
+    /// <summary>用户选择的模式偏好：system / light / dark</summary>
+    public static string CurrentModePref { get; private set; } = "system";
 
-    /// <summary>读系统「应用」的浅色/深色设置。读不到就按深色（提醒窗口默认深色更合适）。</summary>
+    /// <summary>读系统「应用」的浅色/深色设置。读不到就按深色。</summary>
     public static bool SystemPrefersLight()
     {
         try
@@ -158,7 +211,7 @@ public static class MdTheme
             var v = key?.GetValue("AppsUseLightTheme");
             if (v is int i) return i != 0;
         }
-        catch { /* 注册表读不到就回退默认 */ }
+        catch { /* 读不到就回退默认 */ }
         return false;
     }
 
@@ -169,13 +222,13 @@ public static class MdTheme
         return SystemPrefersLight() ? "light" : "dark";
     }
 
-    // ── 配色枚举（供设置界面列出）───────────────────────────────
+    // ── 配色枚举 ────────────────────────────────────────────────
     public sealed record Scheme(string Id, string Name, string Preview);
 
     public static readonly IReadOnlyList<Scheme> Schemes = new[]
     {
         "indigo", "violet", "teal", "green", "amber", "coral", "pink", "cyan",
-    }.Select(id => new Scheme(id, SchemeName(id), PreviewColor(id))).ToArray();
+    }.Select(id => new Scheme(id, SchemeName(id), string.Empty)).ToArray();
 
     private static string SchemeName(string id) => id switch
     {
@@ -190,22 +243,30 @@ public static class MdTheme
         _        => id,
     };
 
-    /// <summary>设置界面用的色块预览色（取浅色模式的主色，在明暗两种模式下都看得清）。</summary>
-    public static string PreviewColor(string id) => Role(id, "light", "primary") ?? "#888888";
-
-    /// <summary>某套配色在**当前明暗模式**下的主色，用于设置界面的色块。</summary>
-    public static Color SchemePrimary(string id) =>
-        Parse(Role(id, CurrentModeId, "primary") ?? "#888888");
-
     /// <summary>当前生效的配色。</summary>
     public static Scheme Current => Find(CurrentSchemeId) ?? Schemes[0];
 
     /// <summary>兼容旧调用：当前配色 id。</summary>
     public static string CurrentId => CurrentSchemeId;
 
+    public static Scheme? Find(string? id) =>
+        Schemes.FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>取某个配色/模式下的颜色角色，取不到返回 null。</summary>
+    public static string? Role(string schemeId, string mode, string role)
+    {
+        if (!MdPalette.All.TryGetValue(schemeId, out var byMode)) return null;
+        if (!byMode.TryGetValue(mode, out var table)) return null;
+        return table.TryGetValue(role, out var hex) ? hex : null;
+    }
+
+    /// <summary>某套配色在**当前明暗模式**下的主色，用于设置界面的色块。</summary>
+    public static Color SchemePrimary(string id) =>
+        Parse(Role(id, CurrentModeId, "primary") ?? "#888888");
+
+    // ── 昵称配色 ────────────────────────────────────────────────
     /// <summary>昵称配色：同一昵称在网页端 / PC 端永远是同一个颜色。
-    /// 哈希算法必须与 web/static/app.js 的 nickColor() 完全一致
-    /// （32 位无符号回绕 + 12 色调色板），否则两端会对不上。</summary>
+    /// 哈希算法必须与 web/static/app.js 的 nickColor() 完全一致。</summary>
     private static readonly string[] NickPalette =
     {
         "#90CAF9", "#CE93D8", "#80CBC4", "#A5D6A7", "#FFE082", "#FFCC80",
@@ -224,29 +285,55 @@ public static class MdTheme
         }
     }
 
-    /// <summary>按比例混合两个颜色（a 占比 1-t，b 占比 t）。</summary>
-    public static Color Blend(Color a, Color b, double t)
+    // ── 生成并发布一批新画刷 ────────────────────────────────────
+    /// <summary>
+    /// 构建整套画刷。**每次都返回全新实例** —— 旧实例可能已被 WPF 冻结，
+    /// 绝不能再改它。
+    /// </summary>
+    private static Dictionary<string, SolidColorBrush> Build(string schemeId, string mode)
     {
-        t = Math.Clamp(t, 0, 1);
-        return Color.FromArgb(
-            (byte)(a.A + (b.A - a.A) * t),
-            (byte)(a.R + (b.R - a.R) * t),
-            (byte)(a.G + (b.G - a.G) * t),
-            (byte)(a.B + (b.B - a.B) * t));
+        var map = new Dictionary<string, SolidColorBrush>(StringComparer.Ordinal);
+
+        foreach (var (key, role) in Map)
+        {
+            var hex = Role(schemeId, mode, role) ?? "#FF00FF";
+            map[key] = new SolidColorBrush(Parse(hex));
+        }
+
+        // 状态层：跟随 on-surface，只调透明度，明暗两套都自动适配
+        var on = map["MdOnSurface"].Color;
+        map["MdStateHover"] = new SolidColorBrush(Color.FromArgb(0x14, on.R, on.G, on.B));
+        map["MdStateFocus"] = new SolidColorBrush(Color.FromArgb(0x1A, on.R, on.G, on.B));
+        map["MdStatePress"] = new SolidColorBrush(Color.FromArgb(0x1A, on.R, on.G, on.B));
+
+        // 滚动条滑块：outline 半透明
+        var ol = map["MdOutline"].Color;
+        map["MdScrollThumb"] = new SolidColorBrush(Color.FromArgb(0x73, ol.R, ol.G, ol.B));
+        map["MdScrollThumbHover"] = new SolidColorBrush(Color.FromArgb(0xA6, ol.R, ol.G, ol.B));
+
+        return map;
     }
 
-    public static Scheme? Find(string? id) =>
-        Schemes.FirstOrDefault(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase));
-
-    /// <summary>取某个配色/模式下的颜色角色，取不到返回 null。</summary>
-    public static string? Role(string schemeId, string mode, string role)
+    /// <summary>把画刷写进 Application.Resources，XAML 的 DynamicResource 会自动跟上。</summary>
+    private static void Publish(Dictionary<string, SolidColorBrush> map)
     {
-        if (!MdPalette.All.TryGetValue(schemeId, out var byMode)) return null;
-        if (!byMode.TryGetValue(mode, out var table)) return null;
-        return table.TryGetValue(role, out var hex) ? hex : null;
+        var app = Application.Current;
+        if (app is null) return;   // 理论上 WPF 里不会为 null，防一手
+
+        foreach (var (key, brush) in map)
+            app.Resources[key] = brush;
+
+        foreach (var (alias, target) in Alias)
+            if (map.TryGetValue(target, out var b)) app.Resources[alias] = b;
+
+        foreach (var (key, hex) in Fixed)
+            app.Resources[key] = new SolidColorBrush(Parse(hex));
     }
 
-    /// <summary>换配色 / 换明暗。就地改写色刷颜色，界面无需重建。</summary>
+    /// <summary>
+    /// 换配色 / 换明暗。生成一批**全新**画刷并发布到 Application.Resources，
+    /// 界面靠 DynamicResource 自动刷新（不修改任何旧画刷 —— 它们可能已被冻结）。
+    /// </summary>
     public static void Apply(string? schemeId, string? modePref = "system")
     {
         var scheme = Find(schemeId) ?? Schemes[0];
@@ -254,23 +341,22 @@ public static class MdTheme
 
         CurrentSchemeId = scheme.Id;
         CurrentModeId = mode;
+        CurrentModePref = (modePref ?? "system").Trim().ToLowerInvariant();
 
-        foreach (var (role, brush) in _brushes)
-        {
-            var hex = Role(scheme.Id, mode, role);
-            if (hex != null) brush.Color = Parse(hex);
-        }
-
-        // 状态层跟着 on-surface 走，只换透明度，明暗两套主题自动适配
-        var on = OnSurface.Color;
-        StateHover.Color = Color.FromArgb(0x14, on.R, on.G, on.B);
-        StateFocus.Color = Color.FromArgb(0x1A, on.R, on.G, on.B);
-        StatePress.Color = Color.FromArgb(0x1A, on.R, on.G, on.B);
-        var ol = Outline.Color;
-        ScrollThumb.Color = Color.FromArgb(0x73, ol.R, ol.G, ol.B);
-        ScrollThumbHover.Color = Color.FromArgb(0xA6, ol.R, ol.G, ol.B);
+        var map = Build(scheme.Id, mode);
+        _brushes = map;
+        Publish(map);
     }
 
     /// <summary>兼容旧调用：只给配色时沿用当前明暗偏好。</summary>
-    public static void Apply(string? id) => Apply(id, CurrentModeId);
+    public static void Apply(string? id) => Apply(id, CurrentModePref);
+
+    /// <summary>首次使用前的兜底初始化（XAML 解析早于 Apply 时也能取到颜色）。</summary>
+    static MdTheme()
+    {
+        _brushes = Build("indigo", "dark");
+        // 也发布一次：XAML 有可能早于 Apply 被解析，DynamicResource 需要键已存在。
+        // Application.Current 还没建好时会被内部判空挡掉，下次 Apply 再补。
+        Publish(_brushes);
+    }
 }
