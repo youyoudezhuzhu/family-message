@@ -7,8 +7,8 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.7.0">
-<link rel="stylesheet" href="static/style.css?v=0.7.0">
+<link rel="stylesheet" href="static/tokens.css?v=0.8.0">
+<link rel="stylesheet" href="static/style.css?v=0.8.0">
 </head>
 <body>
 
@@ -266,9 +266,24 @@
         </div>
 
         <span class="md-section-label">新增一条绑定</span>
+
+        <div class="md-field" style="margin-bottom:var(--md-sp-3)">
+          <input id="xm-search" placeholder=" ">
+          <span class="md-field__label">搜索米家设备</span>
+          <span class="md-field__support">设备多了不好找，输入名称关键字过滤下面的列表</span>
+        </div>
+
         <div class="xm-form">
           <div class="md-select" id="xm-dev-pick" aria-label="选择米家设备"></div>
-          <div class="md-select" id="xm-act-pick" aria-label="选择开关动作"></div>
+        </div>
+        <div class="xm-form">
+          <div class="md-select" id="xm-prop-pick" aria-label="选择要控制的属性"></div>
+          <div class="md-select" id="xm-val-pick" aria-label="选择目标值"></div>
+        </div>
+        <span class="md-section-label" style="margin:var(--md-sp-4) 0 var(--md-sp-2)">
+          关联到哪台 PC（只有这台 PC 的卡片上会出现「开机」按钮）
+        </span>
+        <div class="xm-form">
           <div class="md-select" id="xm-pc-pick" aria-label="关联到哪台 PC"></div>
           <button class="md-btn md-btn--filled" id="xm-add">
             <svg class="md-btn__icon" aria-hidden="true"><use href="#i-add"/></svg>
@@ -323,6 +338,6 @@
 <!-- ══ Snackbar 容器 ════════════════════════════════════════════ -->
 <div class="md-snackbar-host" id="snackbar-host" role="status" aria-live="polite"></div>
 
-<script src="static/app.js?v=0.7.0"></script>
+<script src="static/app.js?v=0.8.0"></script>
 </body>
 </html>

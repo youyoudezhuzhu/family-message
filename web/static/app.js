@@ -440,6 +440,7 @@ async function loadDevices() {
   }
   renderDevices();
   renderTargets();
+  renderXmPcPick();
   // 消息里的投递标签要显示设备「名字」，设备列表晚于消息到达时
   // 之前渲染出来的会一直是 fallback 的 device_id，这里补一次。
   renderMessages();
@@ -561,18 +562,9 @@ async function deviceAction(d, act) {
     openShot(d);
 
   } else if (act === 'wake') {
-    const plug = d.xiaomi ? `「${d.xiaomi.name}」` : '绑定的米家设备';
-    const verb = (d.xiaomi && d.xiaomi.power_action === 'off') ? '关闭' : '开启';
-    const ok = await confirmDialog({
-      title: `要${verb}米家设备吗？`,
-      body: `将执行 ${plug} 的「${verb}」动作。` +
-            (verb === '开启' ? '这会通电，如果 PC 已经开机不会有影响。' : '这会断电，正在运行的 PC 会直接掉电。'),
-      okText: verb,
-      danger: verb === '关闭',
-      iconName: 'i-power',
-    });
-    if (!ok) return;
-    const dismiss = snack(`正在${verb}米家设备……`);
+    // 不弹确认：这套绑定常见用法是「用插座断电来触发 BIOS 上电开机」，
+    // 断电后插座会自动恢复供电，提醒「电脑会掉电」既误导又多余。
+    const dismiss = snack('正在执行米家动作……');
     try {
       const r = await api(`/api/devices/${d.device_id}/wake`, { method: 'POST' });
       dismiss();
@@ -975,14 +967,11 @@ function addName() {
        模型：米家设备 + 动作(开/关) → 某台 PC
        这个绑定只用于「设备清单里那台 PC 上的『开机』按钮」。 */
 let xmStatus = null;
-let xmDevices = [];      // 从米家云端发现的设备
-let xmBoundList = [];    // 已建立的绑定规则
-
-const XM_ACTIONS = [
-  { value: 'on', label: '开（通电）' },
-  { value: 'off', label: '关（断电）' },
-];
-
+let xmDevices = [];        // 从米家云端发现的设备
+let xmBoundList = [];      // 已建立的绑定规则
+let xmSearch = '';         // 设备搜索关键字
+let xmProps = [];          // 当前选中设备的可控属性
+const specCache = {};      // urn -> 可控属性列表（服务端已缓存，这里再缓存一层）
 async function loadXiaomi() {
   try {
     xmStatus = await api('/api/xiaomi/status');
@@ -994,7 +983,7 @@ async function loadXiaomi() {
   $('xm-login').hidden = on;
   $('xm-authed').hidden = !on;
   $('xm-state-line').textContent = on
-    ? '已授权米家。绑定规则：米家设备 + 动作 → 某台 PC（只影响那台 PC 上的「开机」按钮）'
+    ? '已授权米家。绑定规则：米家设备 + 属性/值 → 某台 PC（只影响那台 PC 上的「开机」按钮）'
     : '尚未授权米家。授权后可以绑定智能插座，让网页端能远程开机。';
   $('xm-redirect').textContent = xmStatus.redirect_url || '';
 
@@ -1008,6 +997,7 @@ async function loadXiaomi() {
     if (!xmDevices.length) xmDiscover();     // 首次打开自动拉一次设备列表
   }
 }
+
 
 async function xmGetUrl() {
   $('xm-url-hint').textContent = '正在获取……';
@@ -1074,28 +1064,145 @@ async function xmDiscover() {
     : '这个账号下没有找到设备';
 }
 
-/* 新增绑定表单：选择开关设备 + 动作 + 关联 PC */
+/* ── 可控属性：不再局限于开/关 ───────────────────────────────
+   属性表来自米家公开的 miot-spec（与官方 ha_xiaomi_home 同一份数据），
+   取其中 access 含 write 的属性，连同它的可选值一起给界面用。 */
+
+async function loadSpec(urn) {
+  const key = (urn || '').trim();
+  if (!key) return [];
+  if (specCache[key]) return specCache[key];
+  try {
+    const d = await api('/api/xiaomi/spec?urn=' + encodeURIComponent(key));
+    specCache[key] = d.props || [];
+  } catch (e) {
+    specCache[key] = [];
+    snack('查不到这个型号的可控属性：' + e.message, { error: true });
+  }
+  return specCache[key];
+}
+
+const specOf = (urn) => specCache[(urn || '').trim()] || [];
+
+/** 某个属性可以取哪些值 */
+function valueItems(prop) {
+  if (!prop) return [];
+  if (prop.options && prop.options.length) {
+    return prop.options.map((o) => ({ value: o.value, label: String(o.label) }));
+  }
+  const r = prop.range;
+  if (Array.isArray(r) && r.length >= 2) {
+    const min = Number(r[0]);
+    const max = Number(r[1]);
+    let step = Number(r[2] || 1) || 1;
+    // 档位太多（比如亮度 1~100）就把步长放粗，保证整个区间都能选到，
+    // 而不是截断成前 60 个值
+    if ((max - min) / step > 60) step = Math.max(1, Math.ceil((max - min) / 60));
+    const label = (v) => String(v) + (prop.unit ? ' ' + prop.unit : '');
+    const out = [];
+    for (let v = min; v <= max && out.length < 80; v += step) {
+      out.push({ value: v, label: label(v) });
+    }
+    if (out.length && out[out.length - 1].value !== max) {
+      out.push({ value: max, label: label(max) });     // 补齐上界
+    }
+    return out.length ? out : [{ value: min, label: label(min) }];
+  }
+  return [{ value: true, label: '写入 true' }, { value: false, label: '写入 false' }];
+}
+
+const propItems = (props) => props.map((p) => ({
+  value: p.siid + ':' + p.piid,
+  label: `${p.service} · ${p.name}`,
+}));
+
+const propOf = (props, key) => {
+  const [siid, piid] = String(key || '').split(':').map(Number);
+  return props.find((p) => p.siid === siid && p.piid === piid) || null;
+};
+
+function valueLabel(prop, value) {
+  const hit = valueItems(prop).find((o) => o.value === value);
+  if (hit) return hit.label;
+  return value === true ? '开' : value === false ? '关' : String(value);
+}
+
+/* ── 新增绑定表单 ───────────────────────────────────────────── */
+
+/** 按搜索关键字过滤设备 */
+function filteredDevices() {
+  const kw = xmSearch.trim().toLowerCase();
+  if (!kw) return xmDevices;
+  return xmDevices.filter((d) =>
+    String(d.name || '').toLowerCase().includes(kw) ||
+    String(d.model || '').toLowerCase().includes(kw) ||
+    String(d.miot_device_id || '').toLowerCase().includes(kw));
+}
+
 function renderXmForm() {
-  const devItems = xmDevices.length
-    ? xmDevices.map((d) => ({
+  const pool = filteredDevices();
+  const devItems = pool.length
+    ? pool.map((d) => ({
         value: d.miot_device_id,
         label: (d.name || d.miot_device_id) + (d.is_online === false ? '（离线）' : ''),
       }))
-    : [{ value: '', label: '（先点「刷新米家设备」）' }];
-  buildSelect($('xm-dev-pick'), devItems, devItems[0].value, null);
-  buildSelect($('xm-act-pick'), XM_ACTIONS, 'on', null);
+    : [{ value: '', label: xmDevices.length ? '（没有匹配的设备）' : '（先点「刷新米家设备」）' }];
 
-  const pcItems = [{ value: '', label: '不指定 PC' }].concat(
+  const keep = $('xm-dev-pick')._value;
+  const val = devItems.some((i) => i.value === keep) ? keep : devItems[0].value;
+  buildSelect($('xm-dev-pick'), devItems, val, () => onXmDeviceChange());
+  renderXmPropPick();
+  renderXmPcPick();
+  // 首次渲染时也拉一次规格，否则属性下拉一直停在占位文案上
+  if (!xmProps.length && val) onXmDeviceChange();
+}
+
+/** 「关联到哪台 PC」——只有被关联的那台才会出现「开机」按钮 */
+function renderXmPcPick() {
+  const items = [{ value: '', label: '不指定 PC' }].concat(
     state.devices.map((d) => ({ value: d.device_id, label: d.name })));
-  buildSelect($('xm-pc-pick'), pcItems, pcItems.length > 1 ? pcItems[1].value : '', null);
+  const keep = $('xm-pc-pick')._value;
+  const val = items.some((i) => i.value === keep) ? keep : items[0].value;
+  buildSelect($('xm-pc-pick'), items, val, null);
+}
+
+async function onXmDeviceChange() {
+  const mid = $('xm-dev-pick')._value;
+  const dev = xmDevices.find((d) => d.miot_device_id === mid);
+  xmProps = dev ? await loadSpec(dev.model) : [];
+  renderXmPropPick();
+}
+
+function renderXmPropPick() {
+  const items = xmProps.length
+    ? propItems(xmProps)
+    : [{ value: '', label: '（选好设备后自动加载）' }];
+  const keep = $('xm-prop-pick')._value;
+  const val = items.some((i) => i.value === keep) ? keep : items[0].value;
+  buildSelect($('xm-prop-pick'), items, val, () => renderXmValPick());
+  renderXmValPick();
+}
+
+function renderXmValPick() {
+  const prop = propOf(xmProps, $('xm-prop-pick')._value);
+  const items = valueItems(prop);
+  const shown = items.length ? items : [{ value: '', label: '（无可选值）' }];
+  const keep = $('xm-val-pick')._value;
+  const val = items.some((i) => i.value === keep) ? keep : shown[0].value;
+  buildSelect($('xm-val-pick'), shown, val, null);
 }
 
 async function xmAdd() {
   const mid = $('xm-dev-pick')._value;
-  const action = $('xm-act-pick')._value || 'on';
-  const target = $('xm-pc-pick')._value || '';
   if (!mid) { snack('先选一个米家设备（点「刷新米家设备」）', { error: true }); return; }
+
+  const prop = propOf(xmProps, $('xm-prop-pick')._value);
+  if (!prop) { snack('先选一个要控制的属性', { error: true }); return; }
+
+  const value = $('xm-val-pick')._value;
   const dev = xmDevices.find((d) => d.miot_device_id === mid) || {};
+  const target = $('xm-pc-pick')._value || '';
+
   try {
     await api('/api/xiaomi/devices', {
       method: 'POST',
@@ -1104,13 +1211,15 @@ async function xmAdd() {
         miot_device_id: mid,
         urn: dev.model || '',
         device_type: 'plug',
-        power_siid: 2,
-        power_piid: 1,
-        power_action: action,
+        power_siid: prop.siid,
+        power_piid: prop.piid,
+        power_value: value,
+        // 旧字段保留，便于老数据/老版本兼容
+        power_action: value === false ? 'off' : 'on',
         target_device_id: target,
       }),
     });
-    snack('已添加绑定');
+    snack(`已绑定：${prop.name} = ${valueLabel(prop, value)}`);
     await loadXmBound();
     await loadDevices();          // 设备卡片上的「开机」按钮要跟着出现
   } catch (e) {
@@ -1124,6 +1233,8 @@ async function loadXmBound() {
   } catch (_) {
     xmBoundList = [];
   }
+  // 预取每个绑定设备的规格，否则显示不出属性名和可选值
+  await Promise.all(xmBoundList.map((r) => loadSpec(r.urn)));
   renderXmBound();
 }
 
@@ -1133,7 +1244,7 @@ function renderXmBound() {
   if (!xmBoundList.length) {
     const p = document.createElement('p');
     p.className = 'md-body-small md-muted';
-    p.textContent = '还没有绑定。上面选好设备、动作和目标 PC 后点「添加绑定」。';
+    p.textContent = '还没有绑定。上面选好设备、属性和目标值，再选关联的 PC，点「添加绑定」。';
     box.appendChild(p);
     return;
   }
@@ -1143,7 +1254,24 @@ function renderXmBound() {
   sec.textContent = '已建立的绑定（改完即时生效）';
   box.appendChild(sec);
 
+  const pcItems = [{ value: '', label: '不指定 PC' }].concat(
+    state.devices.map((d) => ({ value: d.device_id, label: d.name })));
+
   xmBoundList.forEach((row) => {
+    const specs = specOf(row.urn);
+    const nowKey = row.power_siid + ':' + row.power_piid;
+    const rowProp = propOf(specs, nowKey)
+      || { siid: row.power_siid, piid: row.power_piid, name: '属性', service: '', format: 'bool' };
+
+    const readValue = () => {
+      const raw = row.power_value;
+      if (raw === null || raw === undefined || raw === '') {
+        return (row.power_action || 'on').toLowerCase() !== 'off';
+      }
+      try { return JSON.parse(raw); } catch (_) { return raw; }
+    };
+    const cur = readValue();
+
     const el = document.createElement('div');
     el.className = 'xm-row';
 
@@ -1154,23 +1282,38 @@ function renderXmBound() {
     n.textContent = row.name;
     const dd = document.createElement('div');
     dd.className = 'xm-row__desc';
-    dd.textContent = `${row.urn || '未知型号'} · 电源 siid=${row.power_siid} piid=${row.power_piid}`;
+    dd.textContent = specs.length
+      ? `${rowProp.service ? rowProp.service + ' · ' : ''}${rowProp.name} = ${valueLabel(rowProp, cur)}`
+      : `${row.urn || '未知型号'} · siid=${row.power_siid} piid=${row.power_piid} = ${valueLabel(rowProp, cur)}`;
     meta.append(n, dd);
 
     const acts = document.createElement('div');
     acts.className = 'xm-row__acts';
 
-    const actPick = document.createElement('div');
-    actPick.className = 'md-select';
-    buildSelect(actPick, XM_ACTIONS, row.power_action || 'on',
-      (v) => xmPatch(row, { power_action: v }));
+    // 属性
+    const propPick = document.createElement('div');
+    propPick.className = 'md-select';
+    const pItems = specs.length ? propItems(specs)
+      : [{ value: nowKey, label: `${rowProp.name}（siid=${row.power_siid} piid=${row.power_piid}）` }];
+    buildSelect(propPick, pItems, nowKey, (v) => {
+      const [siid, piid] = v.split(':').map(Number);
+      xmPatch(row, { power_siid: siid, power_piid: piid },
+        `已改属性：${propOf(specs, v)?.name || v}`);
+    });
 
+    // 值
+    const valPick = document.createElement('div');
+    valPick.className = 'md-select';
+    const vItems = valueItems(rowProp);
+    buildSelect(valPick, vItems.length ? vItems : [{ value: '', label: '（无可选值）' }], cur,
+      (v) => xmPatch(row, { power_value: v },
+        `已改值：${valueLabel(rowProp, v)}`));
+
+    // 关联 PC
     const pcPick = document.createElement('div');
     pcPick.className = 'md-select';
-    const pcItems = [{ value: '', label: '不指定 PC' }].concat(
-      state.devices.map((d) => ({ value: d.device_id, label: d.name })));
     buildSelect(pcPick, pcItems, row.target_device_id || '',
-      (v) => xmPatch(row, { target_device_id: v }));
+      (v) => xmPatch(row, { target_device_id: v }, '已改关联 PC'));
 
     const del = document.createElement('button');
     del.type = 'button';
@@ -1180,17 +1323,21 @@ function renderXmBound() {
                Object.assign(document.createElement('span'), { textContent: '删除' }));
     del.onclick = () => xmUnbind(row);
 
-    acts.append(actPick, pcPick, del);
+    acts.append(propPick, valPick, pcPick, del);
     el.append(meta, acts);
     box.appendChild(el);
   });
 }
 
-async function xmPatch(row, fields) {
+async function xmPatch(row, fields, okText) {
   try {
     await api(`/api/xiaomi/devices/${row.id}`, { method: 'PATCH', body: JSON.stringify(fields) });
     Object.assign(row, fields);
-    snack('已更新');
+    if (fields.power_value !== undefined) {
+      row.power_value = JSON.stringify(fields.power_value);
+    }
+    snack(okText || '已更新');
+    renderXmBound();
     await loadDevices();
   } catch (e) {
     snack('更新失败：' + e.message, { error: true });
@@ -1311,6 +1458,10 @@ $('xm-exchange').onclick = xmExchange;
 $('xm-logout').onclick = xmLogout;
 $('xm-discover').onclick = xmDiscover;
 $('xm-add').onclick = xmAdd;
+$('xm-search').addEventListener('input', (e) => {
+  xmSearch = e.target.value || '';
+  renderXmForm();
+});
 $('xm-code').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); xmExchange(); }
 });

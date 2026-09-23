@@ -342,10 +342,85 @@ async def get_power(miot_device_id: str, siid: int = 2, piid: int = 1) -> Option
     return bool(value) if value is not None else None
 
 
-async def set_power(miot_device_id: str, on: bool, siid: int = 2, piid: int = 1) -> Any:
+async def set_prop(miot_device_id: str, siid: int, piid: int, value: Any) -> Any:
+    """写入任意属性。value 的类型要跟规格里的 format 对上（bool / int / str）。"""
     return await _api("POST", "/app/v2/miotspec/prop/set", {
-        "params": [{"did": miot_device_id, "siid": siid, "piid": piid, "value": bool(on)}],
+        "params": [{"did": miot_device_id, "siid": siid, "piid": piid, "value": value}],
     }, timeout=15)
+
+
+async def set_power(miot_device_id: str, on: bool, siid: int = 2, piid: int = 1) -> Any:
+    return await set_prop(miot_device_id, siid, piid, bool(on))
+
+
+# ------------------------------------------------------------
+# MIoT 规格：设备到底有哪些「可写」属性
+# 参考小米官方 ha_xiaomi_home，规格库公开在 miot-spec.org
+# ------------------------------------------------------------
+SPEC_API = "https://miot-spec.org/miot-spec-v2/instance"
+_SPEC_CACHE: dict[str, dict] = {}
+
+
+def _short(t: str) -> str:
+    """urn:miot-spec-v2:property:on:00000006:1 → on"""
+    parts = (t or "").split(":")
+    return parts[3] if len(parts) > 3 else (t or "")
+
+
+async def fetch_spec(urn: str) -> dict:
+    """取设备的 MIoT 规格。规格是静态的，进程内缓存，不用反复拉。"""
+    urn = (urn or "").strip()
+    if not urn:
+        raise XiaomiError("这个设备没有型号（urn），查不到可控属性")
+    if urn in _SPEC_CACHE:
+        return _SPEC_CACHE[urn]
+
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(SPEC_API, params={"type": urn})
+            r.raise_for_status()
+            d = r.json()
+    except Exception as exc:                                  # noqa: BLE001
+        raise XiaomiError(f"拉取米家规格失败：{exc}") from exc
+
+    if not d.get("services"):
+        raise XiaomiError(f"米家规格库里没有这个型号：{urn}")
+    _SPEC_CACHE[urn] = d
+    return d
+
+
+def controllable_props(spec: dict) -> list[dict]:
+    """把规格里 access 含 write 的属性整理成界面能直接渲染的选项。"""
+    out: list[dict] = []
+    for svc in spec.get("services", []):
+        for prop in svc.get("properties", []):
+            if "write" not in (prop.get("access") or []):
+                continue
+
+            fmt = (prop.get("format") or "").lower()
+            options: list[dict] = []
+            vlist = prop.get("value-list")
+
+            if fmt == "bool":
+                options = [{"value": True, "label": "开 / 是"},
+                           {"value": False, "label": "关 / 否"}]
+            elif vlist:
+                options = [{"value": it.get("value"),
+                            "label": it.get("description") or str(it.get("value"))}
+                           for it in vlist]
+
+            out.append({
+                "siid": svc.get("iid"),
+                "piid": prop.get("iid"),
+                "service": svc.get("description") or _short(svc.get("type", "")),
+                "name": prop.get("description") or _short(prop.get("type", "")),
+                "key": _short(prop.get("type", "")),
+                "format": fmt,
+                "options": options,
+                "range": prop.get("value-range"),
+                "unit": prop.get("unit"),
+            })
+    return out
 
 
 # ------------------------------------------------------------
@@ -361,26 +436,36 @@ def get_xiaomi_device(row_id: int) -> Optional[dict]:
 
 def bind_xiaomi_device(name: str, miot_device_id: str, urn: str = "",
                        device_type: str = "plug", siid: int = 2, piid: int = 1,
-                       target_device_id: str = "", action: str = "on") -> dict:
+                       target_device_id: str = "", action: str = "on",
+                       value: Any = None) -> dict:
+    """新建绑定。
+
+    value 非空时用它写属性（JSON 编码保存），此时 action 只是兼容旧数据的兜底；
+    value 为空时按 action（on/off）当布尔值写，行为跟以前一致。
+    """
     did = db.execute(
         """INSERT INTO xiaomi_devices (name, urn, miot_device_id, device_type,
                                        power_capability, target_device_id,
-                                       power_siid, power_piid, power_action, enabled)
-           VALUES (?,?,?,?, 'power', ?, ?, ?, ?, 1)""",
+                                       power_siid, power_piid, power_action,
+                                       power_value, enabled)
+           VALUES (?,?,?,?, 'power', ?, ?, ?, ?, ?, 1)""",
         (name, urn, miot_device_id, device_type, target_device_id, siid, piid,
-         "off" if str(action).lower() == "off" else "on"),
+         "off" if str(action).lower() == "off" else "on",
+         json.dumps(value) if value is not None else None),
     )
     return db.query_one("SELECT * FROM xiaomi_devices WHERE id=?", (did,)) or {}
 
 
 def update_xiaomi_device(row_id: int, **fields) -> Optional[dict]:
     allowed = {"name", "device_type", "target_device_id", "power_siid",
-               "power_piid", "power_action", "enabled"}
+               "power_piid", "power_action", "power_value", "enabled"}
     sets, vals = [], []
     for k, v in fields.items():
         if k in allowed and v is not None:
             if k == "power_action":
                 v = "off" if str(v).lower() == "off" else "on"
+            elif k == "power_value":
+                v = json.dumps(v)
             sets.append(f"{k}=?")
             vals.append(v)
     if sets:
@@ -414,18 +499,41 @@ async def apply_for_device(device_id: str) -> dict:
     if not plug:
         raise XiaomiError(f"设备 {device_id} 未绑定米家开关（网页端「设置 → 米家」里绑定）")
 
-    action = (plug["power_action"] or "on").lower()
-    on = action != "off"
-    await set_power(plug["miot_device_id"], on,
-                    plug["power_siid"] or 2, plug["power_piid"] or 1)
-    db.log_event(device_id, "xiaomi_action", f"{plug['name']} -> {'on' if on else 'off'}")
+    siid = plug["power_siid"] or 2
+    piid = plug["power_piid"] or 1
+
+    # 新版绑定存的是具体值（power_value），旧数据回落到 on/off
+    raw = plug["power_value"] if "power_value" in plug.keys() else None
+    if raw not in (None, ""):
+        try:
+            value = json.loads(raw)
+        except (TypeError, ValueError):
+            value = raw
+        shown = _describe(value)
+    else:
+        value = (plug["power_action"] or "on").lower() != "off"
+        shown = "开" if value else "关"
+
+    await set_prop(plug["miot_device_id"], siid, piid, value)
+    db.log_event(device_id, "xiaomi_action",
+                 f"{plug['name']} siid={siid} piid={piid} -> {shown}")
     return {
         "ok": True,
         "device_id": device_id,
         "plug": plug["name"],
-        "action": "on" if on else "off",
-        "message": f"已{'开启' if on else '关闭'}米家设备「{plug['name']}」",
+        "action": shown,
+        "value": value,
+        "message": f"已把米家设备「{plug['name']}」设为 {shown}",
     }
+
+
+def _describe(value: Any) -> str:
+    """给回执用的中文描述。"""
+    if value is True:
+        return "开"
+    if value is False:
+        return "关"
+    return str(value)
 
 
 # 兼容旧调用名
