@@ -105,7 +105,7 @@ public partial class App : Application
     /// 而按钮/输入框等标准控件由 Fluent 决定 —— 两边明暗不一致的话，
     /// 会出现「浅色控件压在深色背景上」的错配。
     /// </summary>
-    private static ThemeMode ToFluent(string? pref) => (pref ?? "system").Trim().ToLowerInvariant() switch
+    internal static ThemeMode ToFluent(string? pref) => (pref ?? "system").Trim().ToLowerInvariant() switch
     {
         "light" => ThemeMode.Light,
         "dark" => ThemeMode.Dark,
