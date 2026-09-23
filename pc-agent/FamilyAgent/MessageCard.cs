@@ -52,7 +52,7 @@ public sealed class MessageCard : Grid
             : len <= 140 ? 19
             : 17;
 
-        _sender = new TextBlock
+        _sender = new Emoji.Wpf.TextBlock
         {
             Text = name,
             FontSize = 14,
@@ -62,7 +62,9 @@ public sealed class MessageCard : Grid
             Margin = new Thickness(0, 0, 0, 4),
         };
 
-        _content = new TextBlock
+        // 用 Emoji.Wpf 的 TextBlock：WPF 原生 TextBlock 会把 emoji 渲染成黑白轮廓，
+        // 这个子类把 Segoe UI Emoji 的彩色图层解析成矢量图，表情才是彩色的。
+        _content = new Emoji.Wpf.TextBlock
         {
             Text = RawContent,
             FontSize = _baseFontSize,

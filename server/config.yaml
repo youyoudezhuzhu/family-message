@@ -1,50 +1,24 @@
-# ============================================================
-# 家庭消息与设备控制服务端配置
-# ============================================================
-
 server:
   host: 0.0.0.0
   port: 18801
-  # 对外服务的地址（写给你自己看的，Agent 配置时参考）
-  public_url: "http://192.168.31.50:18801"
-
-# 数据目录（SQLite、截图等）
-data_dir: "/vol1/@apphome/hermes-agent/data/family-data"
-
-# ------------------------------------------------------------
-# Web Sender 身份模型
-# 昵称不存在服务端 —— 它是纯本地概念，由网页(localStorage)和 PC Agent 各自维护，
-# 发消息时把名字作为普通字符串带上即可。服务端只负责存 sender_name。
-# ------------------------------------------------------------
-
+  public_url: http://192.168.31.50:18801
+data_dir: /vol1/@apphome/hermes-agent/data/family-data
 web:
-  # 家庭内网使用可留空；填了则访问网页需要先输入这个口令
-  password: ""
-  # 会话有效期（小时）
+  password: ''
   session_hours: 720
-
 device:
-  # 设备首次接入时用来验证的注册口令；留空表示允许内网任意设备自动注册
-  enroll_token: "family-2026"
-  # 允许新设备自动注册
+  enroll_token: family-2026
   auto_register: true
-  # 超过多少秒没有心跳判定为离线
   offline_after_seconds: 45
-
 message:
-  # 弹窗默认停留时间（秒），0 表示必须手动点「知道了」
   popup_auto_close_seconds: 0
-  # 一条消息最多同时发给几个设备
   max_targets: 20
-  # 推给 PC Agent 的弹窗右侧历史对话条数
   history_limit: 30
-
 xiaomi:
   enabled: false
-  # 米家账号（仅用于首次获取 token，成功后可留空）
-  username: ""
-  password: ""
-  # 地区服务器：cn / de / us / sg / ru / i2
-  region: "cn"
-  # token 剩余多少秒时提前刷新
+  username: ''
+  password: ''
+  region: cn
   refresh_ahead_seconds: 86400
+  redirect_url: http://homeassistant.local:8123
+  oauth_device_id: ha.aac7fbd5f27a4abe9a464561a889d57e

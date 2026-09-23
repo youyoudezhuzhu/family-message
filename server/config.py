@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import os
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -26,6 +27,10 @@ _DEFAULTS: dict = {
         "password": "",
         "region": "cn",
         "refresh_ahead_seconds": 86400,
+        # 官方 OAuth2：redirect_url 必须是小米那边为 client_id 注册过的地址，
+        # 默认沿用官方 HA 集成的注册地址；oauth_device_id 首次使用时自动生成并固定。
+        "redirect_url": "http://homeassistant.local:8123",
+        "oauth_device_id": "",
     },
 }
 
@@ -65,3 +70,28 @@ def load_config() -> dict:
 
 
 CONFIG = load_config()
+
+
+def save_config(cfg: Optional[dict] = None) -> None:
+    """把内存里的配置写回 config.yaml。
+
+    只写「用户可能改过」的那几段，不把全部默认值固化进文件 ——
+    否则以后改默认值对已安装的用户就不生效了。
+    """
+    cfg = cfg or CONFIG
+    out: dict = {}
+    if CONFIG_PATH.exists():
+        try:
+            out = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) or {}
+        except Exception:
+            out = {}
+
+    for section in ("server", "web", "device", "message", "xiaomi"):
+        if section in cfg:
+            out[section] = dict(cfg[section])
+
+    # data_dir 由部署决定，不写回，避免把开发机路径固化到别人的机器上
+    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(
+        yaml.safe_dump(out, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    )

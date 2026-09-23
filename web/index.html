@@ -109,7 +109,7 @@
 
 <!-- 设置 -->
 <div class="modal" id="settings">
-  <div class="modal-box names-box">
+  <div class="modal-box settings-box">
     <div class="modal-head">
       <strong>设置</strong>
       <button class="btn btn-text small" id="settings-close">关闭</button>
@@ -117,6 +117,55 @@
     <div class="names-body">
       <span class="section-label">配色方案</span>
       <div class="theme-grid" id="theme-grid"></div>
+
+      <hr class="divider">
+
+      <span class="section-label">米家开关（配置好后，设备清单里对应的 PC 会出现「开机」按钮）</span>
+      <div id="xm-state-line" class="hint" style="margin-bottom:12px"></div>
+
+      <!-- 未授权 -->
+      <div id="xm-login" style="display:none">
+        <p class="hint" style="margin:0 0 14px;line-height:1.7">
+          米家走<strong>官方 OAuth2 授权</strong>（不保存账号密码）。两步：
+          拿到授权链接在浏览器里同意；回调页打不开是正常的，把地址栏整段粘回来即可。<br>
+          回调地址：<code id="xm-redirect" style="word-break:break-all"></code>
+        </p>
+        <div class="actions">
+          <button class="btn btn-filled small" id="xm-get-url">1. 获取授权链接</button>
+          <span class="hint" id="xm-url-hint"></span>
+        </div>
+        <div id="xm-url-box" style="display:none;margin-top:14px">
+          <a class="link" id="xm-auth-link" target="_blank" rel="noopener"
+             style="font-size:13px;word-break:break-all"></a>
+          <div class="field" style="margin-top:14px">
+            <span class="label">2. 把回调地址（或其中的 code）粘贴到这里</span>
+            <input id="xm-code" placeholder="http://homeassistant.local:8123/?code=xxxx&amp;state=...">
+          </div>
+          <div class="actions">
+            <button class="btn btn-filled small" id="xm-exchange">完成授权</button>
+            <span class="hint" id="xm-exchange-hint"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 已授权 -->
+      <div id="xm-authed" style="display:none">
+        <div class="actions" style="margin-bottom:14px">
+          <button class="btn btn-outlined small" id="xm-discover">刷新米家设备</button>
+          <button class="btn btn-text small" id="xm-logout">退出米家</button>
+          <span class="hint" id="xm-login-info"></span>
+        </div>
+
+        <span class="section-label" style="margin-top:0">新增一条绑定</span>
+        <div class="xm-form">
+          <div class="md-select" id="xm-dev-pick"></div>
+          <div class="md-select" id="xm-act-pick"></div>
+          <div class="md-select" id="xm-pc-pick"></div>
+          <button class="btn btn-filled small" id="xm-add">添加绑定</button>
+        </div>
+
+        <div id="xm-bound"></div>
+      </div>
 
       <hr class="divider">
 

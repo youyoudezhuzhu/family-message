@@ -47,6 +47,7 @@ public partial class App : Application
         Client.ScreenshotRequested += OnScreenshotRequested;
         Client.ReplyAcked += OnReplyAcked;
         Client.HistoryReceived += OnHistoryReceived;
+        Client.ShutdownRequested += OnShutdownRequested;
 
         AutoStart.Apply(Config.AutoStart);
         Client.Start();
@@ -213,6 +214,50 @@ public partial class App : Application
             var (base64, width, height) = ScreenCapture.CaptureJpeg();
             await Client.SendScreenshotAsync(requestId, base64, width, height,
                 ScreenCapture.LastError);
+        });
+    }
+
+    /// <summary>
+    /// 网页端点了「关机」：本机执行。给一个托盘气泡提示，并留出几秒取消时间。
+    /// 这是设备管理能力 —— PC Agent 是受 Server 信任的家庭设备 Agent，不再二次确认。
+    /// </summary>
+    private void OnShutdownRequested(int delaySeconds)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            AgentLog.Write($"收到关机指令，{delaySeconds} 秒后执行");
+
+            try
+            {
+                _tray?.ShowBalloonTip(6000, "家庭消息",
+                    $"收到远程关机指令，{delaySeconds} 秒后关机（可在命令行 shutdown /a 取消）",
+                    WinForms.ToolTipIcon.Warning);
+            }
+            catch
+            {
+                // 气泡提示失败不影响关机
+            }
+
+            try
+            {
+                PowerControl.Shutdown(delaySeconds);
+                Client.SendOrQueue(new
+                {
+                    type = "event",
+                    kind = "shutdown",
+                    detail = $"delay={delaySeconds}s",
+                }, "event");
+            }
+            catch (Exception ex)
+            {
+                AgentLog.Write("执行关机失败：" + ex.Message);
+                Client.SendOrQueue(new
+                {
+                    type = "event",
+                    kind = "shutdown_failed",
+                    detail = ex.Message,
+                }, "event");
+            }
         });
     }
 

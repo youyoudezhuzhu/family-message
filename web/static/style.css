@@ -87,6 +87,7 @@ button{font:inherit; cursor:pointer; border:none; background:none; color:inherit
   display:inline-flex; align-items:center; justify-content:center; gap:8px;
   height:40px; padding:0 20px; border-radius:999px;
   font-size:14px; font-weight:500; letter-spacing:.1px;
+  flex:0 0 auto; white-space:nowrap;
   transition:background .15s cubic-bezier(.2,0,0,1);
 }
 .btn-filled{background:var(--primary); color:var(--on-primary)}
@@ -249,8 +250,38 @@ input::placeholder,textarea::placeholder{color:color-mix(in srgb,var(--on-varian
 .conv-input .md-select{min-width:110px; flex:0 0 auto}
 .conv-input input{flex:1}
 
-/* ── 14. 昵称管理 / 设置 ────────────────────────────────────── */
+/* ── 15. 米家设备面板 ──────────────────────────────────────── */
+.xm-item{display:flex;align-items:center;gap:12px;padding:12px 14px;
+  background:var(--surface-c);border-radius:12px;margin-bottom:8px}
+.xm-item .meta{flex:1;min-width:0}
+.xm-item .n{font-size:15px;color:var(--on-surface)}
+.xm-item .d{font-size:12px;color:var(--on-variant);margin-top:2px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xm-item .acts{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.xm-tag{font-size:11px;border-radius:8px;padding:2px 7px;margin-left:8px;
+  background:var(--surface-highest);color:var(--on-variant)}
+
+/* MD 开关 */
+.switch{position:relative;display:inline-block;width:52px;height:32px;flex:0 0 52px;
+  cursor:pointer;user-select:none}
+.switch input{display:none}
+.switch .track{position:absolute;inset:0;border-radius:999px;
+  background:var(--surface-highest);border:2px solid var(--outline);
+  transition:background .18s,border-color .18s}
+.switch .knob{position:absolute;top:6px;left:6px;width:20px;height:20px;border-radius:50%;
+  background:var(--outline);transition:transform .18s,background .18s,width .18s,height .18s}
+.switch input:checked + .track{background:var(--primary);border-color:var(--primary)}
+.switch input:checked ~ .knob{transform:translateX(20px);background:var(--on-primary);
+  width:24px;height:24px;top:4px;left:4px}
+.switch.busy{opacity:.5;pointer-events:none}
+
+.xm-sec{font-size:12px;color:var(--on-variant);margin:16px 0 8px;display:block}
+.xm-form{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.xm-form .md-select{flex:1 1 150px;min-width:130px}
+
+/* ── 16. 昵称管理 / 设置 ────────────────────────────────────── */
 .names-box{width:min(460px,92vw); max-height:84vh}
+.settings-box{width:min(720px,94vw); max-height:88vh}
 .names-body{padding:0 20px 20px; overflow:auto}
 .names-add{display:flex; gap:10px; margin-bottom:14px}
 .names-add input{flex:1}

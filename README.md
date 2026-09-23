@@ -131,18 +131,38 @@ PC 端存 Agent 配置（设置窗口可增删改，弹窗下拉可选）。发�
 对话串由双向查询拼出；老库启动时自动 `ALTER TABLE` 补列。这也正是设计文档里
 预留的 `Sender → Server → Receiver` 模型——加手机 Agent 时不用改表结构。
 
-## 远程开机（米家）
+## 远程开机 / 关机
 
-在服务端 `config.yaml` 里打开 `xiaomi.enabled` 并填账号，程序会：
+### 开机：米家智能插座（官方 OAuth2）
 
-1. 登录一次拿到 `ssecurity` / `userId` / `passToken`，落库到 `xiaomi_auth`（密码不落库）
-2. 每次调用走签名请求（HMAC-SHA256 + nonce），凭证快过期时用 refresh_token 自动续期
-3. 只有续期也失败时，才需要重新登录
+米家的接入**严格对照小米官方的 [ha_xiaomi_home](https://github.com/XiaoMi/ha_xiaomi_home)**
+（`miot_cloud.py`），不引入 Home Assistant，只保留最小实现：
 
-然后把米家插座和 PC 绑定（`xiaomi_devices.target_device_id`），网页上的「远程开机」就会
-`Server → MIoT → 插座通电 → PC 启动 → Agent 上线 → 网页转 🟢`。
+1. **OAuth2 授权码流程**（不保存账号密码）：网页「设置 → 米家」里点「获取授权链接」，
+   浏览器里同意后页面会跳到 `homeassistant.local`（打不开是正常的），
+   把地址栏整段粘回网页即可换到 `access_token` / `refresh_token` / `expires_in`
+2. token 在剩余寿命的 **70%** 处提前续期（官方 `TOKEN_EXPIRES_TS_RATIO`），
+   只有 refresh_token 也失效时才需要重新授权
+3. 调用走 `https://ha.api.io.mi.com/app/v2/...`，`Authorization: Bearer<token>` 头
 
-> 不同型号插座的 `siid/piid` 可能不同，接入时用真实设备验证后再写死，不要凭空假设。
+绑定模型是「**米家设备 + 动作(开/关) → 某台 PC**」。绑好之后，那台 PC 的卡片上才会出现
+「开机」按钮，点击即执行该动作。
+
+> ⚠️ 两点如实说明：
+> 1. `redirect_uri` 必须是小米那边为该 `client_id` **注册过**的地址，我们复用的是官方集成的
+>    注册地址，所以需要「粘贴 code」这一步；如果将来自己注册 OAuth 应用，改 `xiaomi.redirect_url` 即可。
+> 2. 官方实现的鉴权头是 `Bearer<token>`（**中间没有空格**），这里照抄，不要顺手「修正」。
+
+> 不同型号插座的 `siid/piid` 可能不同，绑定时可改（默认 2/1）；接入真实设备后请实测确认。
+
+### 关机：由 PC 端 Agent 执行
+
+设备卡片上的「关机」按钮会下发 `{"type":"shutdown","delay_seconds":5}`：
+
+- PC 端执行 `shutdown /s /t 5`（**不加 `/f`**，让系统正常关闭程序，避免丢未保存内容）
+- 延迟几秒是留给坐在电脑前的人反应时间，`shutdown /a` 可取消
+- 设备离线时服务端直接返回 409，不会假装成功
+- 不需要在 PC 上再点一次确认 —— PC Agent 是受 Server 信任的家庭设备 Agent（设计原则 §13）
 
 ## 技术栈与取舍
 
@@ -227,7 +247,8 @@ ss -lntp | grep 18801
 - [x] **Phase 1** 服务端 + 网页发送 + 全屏弹窗 + 在线状态 + ACK
 - [x] **Phase 2** 设备管理：桌面截图、设备列表、远程开机
 - [x] **Phase 3** 双向对话：PC 端弹窗回复、消息堆叠、历史弹幕流
-- [ ] **Phase 4** 米家真实账号联调、设备发现、插座绑定 UI
+- [x] **Phase 4** 米家官方 OAuth2 接入：授权、设备发现、开关绑定、远程开机
+- [x] **Phase 4.5** 远程关机（服务端下发指令，PC Agent 执行）；两端彩色 emoji
 - [ ] **Phase 5** 消息历史分页、图片/文件、广播组、Android/Linux/macOS Agent
 
 ## 许可

@@ -16,7 +16,7 @@ namespace FamilyAgent;
 /// </summary>
 public sealed class AgentClient
 {
-    private const string AgentVersion = "cs-0.5.0";
+    private const string AgentVersion = "cs-0.6.0";
 
     private readonly AgentConfig _config;
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -37,6 +37,7 @@ public sealed class AgentClient
     public event Action<string>? ScreenshotRequested;
     public event Action<JsonElement>? ReplyAcked;
     public event Action<JsonElement>? HistoryReceived;
+    public event Action<int>? ShutdownRequested;
     public event Action<string>? Log;
 
     public AgentClient(AgentConfig config) => _config = config;
@@ -299,6 +300,17 @@ public sealed class AgentClient
 
             case "history_response":
                 HistoryReceived?.Invoke(root.Clone());
+                break;
+
+            case "shutdown":
+                // 网页端点了「关机」→ 由本机执行
+                var delay = PowerControl.DefaultDelaySeconds;
+                if (root.TryGetProperty("delay_seconds", out var dEl) &&
+                    dEl.ValueKind == JsonValueKind.Number)
+                {
+                    delay = dEl.GetInt32();
+                }
+                ShutdownRequested?.Invoke(delay);
                 break;
 
             case "heartbeat_ack":

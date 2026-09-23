@@ -71,6 +71,9 @@ CREATE TABLE IF NOT EXISTS xiaomi_devices (
     device_type      TEXT DEFAULT '',
     power_capability TEXT DEFAULT 'power',
     target_device_id TEXT DEFAULT '',
+    power_siid       INTEGER NOT NULL DEFAULT 2,
+    power_piid       INTEGER NOT NULL DEFAULT 1,
+    power_action     TEXT NOT NULL DEFAULT 'on',
     enabled          INTEGER NOT NULL DEFAULT 1
 );
 
@@ -101,6 +104,14 @@ CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 MIGRATIONS = [
     ("messages", "sender_kind", "ALTER TABLE messages ADD COLUMN sender_kind TEXT NOT NULL DEFAULT 'web'"),
     ("messages", "sender_device_id", "ALTER TABLE messages ADD COLUMN sender_device_id TEXT"),
+    # 不同型号插座的电源属性 siid/piid 不一样，硬编码只对部分型号成立
+    ("xiaomi_devices", "power_siid",
+     "ALTER TABLE xiaomi_devices ADD COLUMN power_siid INTEGER NOT NULL DEFAULT 2"),
+    ("xiaomi_devices", "power_piid",
+     "ALTER TABLE xiaomi_devices ADD COLUMN power_piid INTEGER NOT NULL DEFAULT 1"),
+    # 绑定时要能选「执行开还是关」的动作
+    ("xiaomi_devices", "power_action",
+     "ALTER TABLE xiaomi_devices ADD COLUMN power_action TEXT NOT NULL DEFAULT 'on'"),
 ]
 
 # 依赖迁移后才能建的索引（老库在 CREATE TABLE IF NOT EXISTS 时不会补列）
