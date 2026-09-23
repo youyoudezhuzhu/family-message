@@ -78,6 +78,18 @@ def save_config(cfg: Optional[dict] = None) -> None:
     只写「用户可能改过」的那几段，不把全部默认值固化进文件 ——
     否则以后改默认值对已安装的用户就不生效了。
     """
+    # ── 安全阀：绝不写代码目录里的那份 config.yaml ──────────────────
+    # 线上部署时 cmd/main 会把 FM_CONFIG 指到 $TRIM_PKGHOME/config.yaml；
+    # 代码目录里的那份是「安装模板」，带完整注释、随升级分发。
+    # 一旦被运行时写回：注释会被 yaml.safe_dump 抹掉，本机生成的
+    # oauth_device_id 之类也会被带进仓库（所有人共用一个 id）。
+    try:
+        if CONFIG_PATH.resolve().parent == BASE_DIR.resolve():
+            print(f"[config] 拒绝写入代码目录里的模板配置，已跳过：{CONFIG_PATH}", flush=True)
+            return
+    except OSError:
+        pass
+
     cfg = cfg or CONFIG
     out: dict = {}
     if CONFIG_PATH.exists():
