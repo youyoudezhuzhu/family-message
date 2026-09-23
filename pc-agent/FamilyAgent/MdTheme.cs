@@ -118,6 +118,31 @@ public static class MdTheme
         public const double Full = 999;       // 按钮 / 开关 / 徽标
     }
 
+    // ── 给 XAML 用的扁平常量 ────────────────────────────────────
+    // XAML 的 x:Static 不支持访问嵌套类型：{x:Static local:MdTheme.Shape.Full}
+    // 会报 MC3050 "Cannot find the type 'MdTheme.Shape'"。
+    // 所以把 XAML 需要的档位以扁平名字再暴露一次；C# 代码里仍用 MdTheme.Type / MdTheme.Shape。
+    public const double RadiusNone = Shape.None;
+    public const double RadiusExtraSmall = Shape.ExtraSmall;
+    public const double RadiusSmall = Shape.Small;
+    public const double RadiusMedium = Shape.Medium;
+    public const double RadiusLarge = Shape.Large;
+    public const double RadiusExtraLarge = Shape.ExtraLarge;
+    public const double RadiusFull = Shape.Full;
+
+    public const double FontDisplayLarge = Type.DisplayLarge;
+    public const double FontHeadlineMedium = Type.HeadlineMedium;
+    public const double FontHeadlineSmall = Type.HeadlineSmall;
+    public const double FontTitleLarge = Type.TitleLarge;
+    public const double FontTitleMedium = Type.TitleMedium;
+    public const double FontTitleSmall = Type.TitleSmall;
+    public const double FontBodyLarge = Type.BodyLarge;
+    public const double FontBodyMedium = Type.BodyMedium;
+    public const double FontBodySmall = Type.BodySmall;
+    public const double FontLabelLarge = Type.LabelLarge;
+    public const double FontLabelMedium = Type.LabelMedium;
+    public const double FontLabelSmall = Type.LabelSmall;
+
     // ── 明暗模式 ────────────────────────────────────────────────
     public static string CurrentSchemeId { get; private set; } = "indigo";
     /// <summary>实际生效的模式：light / dark（system 已经解析过）</summary>
