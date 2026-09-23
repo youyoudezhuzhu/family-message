@@ -21,7 +21,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
                         <Border x:Name="B" Background="{x:Static local:MdTheme.ScrollThumb}"
-                                                CornerRadius="{x:Static local:MdTheme.Shape.Full}" Margin="1"/>
+                                                CornerRadius="{x:Static local:MdTheme.RadiusFull}" Margin="1"/>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="B" Property="Background" Value="{x:Static local:MdTheme.ScrollThumbHover}"/>
@@ -88,7 +88,7 @@
         <!-- ══ MD 按钮 ══════════════════════════════════════ -->
         <Style x:Key="MdBase" TargetType="Button">
             <Setter Property="Foreground" Value="{x:Static local:MdTheme.Primary}"/>
-            <Setter Property="FontSize" Value="{x:Static local:MdTheme.Type.LabelLarge}"/>
+            <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontLabelLarge}"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Padding" Value="20,0"/>
@@ -142,13 +142,13 @@
             <Setter Property="Background" Value="{x:Static local:MdTheme.SurfaceC}"/>
             <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
             <Setter Property="CaretBrush" Value="{x:Static local:MdTheme.Primary}"/>
-            <Setter Property="FontSize" Value="{x:Static local:MdTheme.Type.BodyLarge}"/>
+            <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
             <Setter Property="Padding" Value="14,12"/>
             <Setter Property="Margin" Value="0,0,0,14"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
-                        <Border x:Name="Shell" CornerRadius="{x:Static local:MdTheme.Shape.ExtraSmall}"
+                        <Border x:Name="Shell" CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}"
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{x:Static local:MdTheme.Outline}"
                                 BorderThickness="1">
@@ -171,7 +171,7 @@
         <!-- ══ MD 下拉（默认模板在暗色下浮层纯白，必须整套换掉）══ -->
         <Style x:Key="MdCombo" TargetType="ComboBox">
             <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
-            <Setter Property="FontSize" Value="{x:Static local:MdTheme.Type.BodyLarge}"/>
+            <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -185,7 +185,7 @@
                                         <Border x:Name="Chrome"
                                                 Background="{x:Static local:MdTheme.SurfaceC}"
                                                 BorderBrush="{x:Static local:MdTheme.Outline}"
-                                                BorderThickness="1" CornerRadius="{x:Static local:MdTheme.Shape.ExtraSmall}">
+                                                BorderThickness="1" CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
                                                     <ColumnDefinition Width="*"/>
@@ -212,7 +212,7 @@
                                                   ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                                   ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
                                                   TextElement.Foreground="{x:Static local:MdTheme.OnSurface}"
-                                                  TextElement.FontSize="{x:Static local:MdTheme.Type.BodyLarge}"
+                                                  TextElement.FontSize="{x:Static local:MdTheme.FontBodyLarge}"
                                                   VerticalAlignment="Center"/>
                             </ToggleButton>
 
@@ -223,7 +223,7 @@
                                 <Border Background="{x:Static local:MdTheme.SurfaceHigh}"
                                         BorderBrush="{x:Static local:MdTheme.OutlineVariant}"
                                         BorderThickness="1"
-                                        CornerRadius="{x:Static local:MdTheme.Shape.ExtraSmall}"
+                                        CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}"
                                         MinWidth="{Binding ActualWidth,
                                                   RelativeSource={RelativeSource TemplatedParent}}"
                                         MaxHeight="300" Margin="0,4,0,0">
@@ -241,7 +241,7 @@
                 <Setter.Value>
                     <Style TargetType="ComboBoxItem">
                         <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
-                        <Setter Property="FontSize" Value="{x:Static local:MdTheme.Type.BodyLarge}"/>
+                        <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
                         <Setter Property="Padding" Value="16,12"/>
                         <Setter Property="Template">
                             <Setter.Value>
@@ -273,13 +273,13 @@
         <!-- ══ MD 勾选框 ════════════════════════════════════ -->
         <Style x:Key="MdCheck" TargetType="CheckBox">
             <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
-            <Setter Property="FontSize" Value="{x:Static local:MdTheme.Type.BodyLarge}"/>
+            <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
                         <StackPanel Orientation="Horizontal" Background="Transparent">
-                            <Border x:Name="Box" Width="20" Height="20" CornerRadius="{x:Static local:MdTheme.Shape.ExtraSmall}"
+                            <Border x:Name="Box" Width="20" Height="20" CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}"
                                     BorderBrush="{x:Static local:MdTheme.Outline}"
                                     BorderThickness="2" VerticalAlignment="Center">
                                 <Path x:Name="Tick" Data="M 0 4 L 3.5 7.5 L 9 1"
@@ -305,7 +305,7 @@
 
         <!-- 设置页里的小标题 -->
         <Style x:Key="MdLabel" TargetType="TextBlock">
-            <Setter Property="FontSize" Value="{x:Static local:MdTheme.Type.LabelMedium}"/>
+            <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontLabelMedium}"/>
             <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnVariant}"/>
             <Setter Property="Margin" Value="0,0,0,6"/>
         </Style>
@@ -330,7 +330,7 @@
                           Width="26" Height="26" Stretch="Uniform"
                           VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <TextBlock Text="家庭消息"
-                               FontSize="{x:Static local:MdTheme.Type.TitleLarge}"
+                               FontSize="{x:Static local:MdTheme.FontTitleLarge}"
                                FontWeight="Normal"
                                Foreground="{x:Static local:MdTheme.OnSurface}"
                                VerticalAlignment="Center"/>
@@ -338,7 +338,7 @@
                             CornerRadius="8" Padding="9,2" Margin="14,0,0,0"
                             VerticalAlignment="Center" Visibility="Collapsed">
                         <TextBlock x:Name="CountText" Text="1 条新消息"
-                                   FontSize="{x:Static local:MdTheme.Type.LabelSmall}"
+                                   FontSize="{x:Static local:MdTheme.FontLabelSmall}"
                                    Foreground="{x:Static local:MdTheme.OnPrimaryContainer}"/>
                     </Border>
                 </StackPanel>
@@ -348,7 +348,7 @@
                     <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{x:Static local:MdTheme.Bad}"
                              VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBlock x:Name="StatusText" Text="未连接"
-                               FontSize="{x:Static local:MdTheme.Type.LabelMedium}"
+                               FontSize="{x:Static local:MdTheme.FontLabelMedium}"
                                Foreground="{x:Static local:MdTheme.OnVariant}"
                                VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <Button x:Name="SettingsButton" Style="{StaticResource MdText}"
@@ -391,7 +391,7 @@
                               SelectionChanged="ReplyNameBox_SelectionChanged"/>
 
                     <TextBox x:Name="ReplyBox" Grid.Column="1" Style="{StaticResource MdTextBox}"
-                             FontSize="{x:Static local:MdTheme.Type.TitleLarge}"
+                             FontSize="{x:Static local:MdTheme.FontTitleLarge}"
                              Padding="18,14" Margin="0"
                              MaxLength="2000" AcceptsReturn="False"
                              KeyDown="ReplyBox_KeyDown"/>
@@ -399,7 +399,7 @@
                     <Button x:Name="SendButton" Grid.Column="2"
                             Style="{StaticResource MdFilled}"
                             Margin="12,0,0,0" Padding="32,0"
-                            FontSize="{x:Static local:MdTheme.Type.TitleMedium}"
+                            FontSize="{x:Static local:MdTheme.FontTitleMedium}"
                             Click="SendButton_Click">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"
@@ -419,7 +419,7 @@
                     <Button x:Name="OkButton" Grid.Column="0"
                             Style="{StaticResource MdOutlined}" Margin="0"
                             Padding="36,0" Height="48"
-                            FontSize="{x:Static local:MdTheme.Type.TitleMedium}"
+                            FontSize="{x:Static local:MdTheme.FontTitleMedium}"
                             Click="OkButton_Click">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
@@ -430,7 +430,7 @@
                         </StackPanel>
                     </Button>
                     <TextBlock x:Name="HintText" Grid.Column="1" Text="Enter 直接回复"
-                               FontSize="{x:Static local:MdTheme.Type.BodyMedium}"
+                               FontSize="{x:Static local:MdTheme.FontBodyMedium}"
                                Foreground="{x:Static local:MdTheme.OnVariant}"
                                VerticalAlignment="Center" Margin="20,0,0,0"/>
                 </Grid>
@@ -452,7 +452,7 @@
 
                     <Grid Grid.Row="0" Margin="0,0,0,20">
                         <TextBlock Text="设置"
-                                   FontSize="{x:Static local:MdTheme.Type.TitleLarge}"
+                                   FontSize="{x:Static local:MdTheme.FontTitleLarge}"
                                    FontWeight="Normal"
                                    Foreground="{x:Static local:MdTheme.OnSurface}"
                                    VerticalAlignment="Center"/>
@@ -462,7 +462,7 @@
                                      Fill="{x:Static local:MdTheme.Bad}" VerticalAlignment="Center"
                                      Margin="0,0,8,0"/>
                             <TextBlock x:Name="SettingsStatus" Text="未连接"
-                                       FontSize="{x:Static local:MdTheme.Type.LabelMedium}"
+                                       FontSize="{x:Static local:MdTheme.FontLabelMedium}"
                                        Foreground="{x:Static local:MdTheme.OnVariant}"/>
                         </StackPanel>
                     </Grid>
@@ -527,7 +527,7 @@
 
                     <StackPanel Grid.Row="2" Margin="0,20,0,0">
                         <TextBlock x:Name="SettingsHint" Text=""
-                                   FontSize="{x:Static local:MdTheme.Type.BodySmall}"
+                                   FontSize="{x:Static local:MdTheme.FontBodySmall}"
                                    Foreground="{x:Static local:MdTheme.OnVariant}"
                                    TextWrapping="Wrap" Margin="0,0,0,14"/>
                         <StackPanel Orientation="Horizontal">
