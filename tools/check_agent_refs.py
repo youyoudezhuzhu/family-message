@@ -97,8 +97,13 @@ def main() -> int:
         }
         body = "\n".join(ln for ln in lines if not ln.strip().startswith("using "))
         for token, ns in NEEDS.items():
-            if token in body and ns not in usings:
-                errors.append(f"{f.name}: 用到 {token} 但缺 using {ns}")
+            if ns in usings:
+                continue
+            # 只看「未限定」的用法：System.IO.Path. 这种全限定名不需要 using，
+            # 而且全限定是刻意为之（避免和 WPF 的 System.Windows.Shapes.Path 撞名）
+            if not re.search(r'(?<![\w.])' + re.escape(token), body):
+                continue
+            errors.append(f"{f.name}: 用到 {token} 但缺 using {ns}（若是有意全限定，请忽略）")
 
         if txt.count('{') != txt.count('}'):
             errors.append(f"{f.name}: 花括号不平衡 {txt.count('{')}/{txt.count('}')}")

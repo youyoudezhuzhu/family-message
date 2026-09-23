@@ -33,6 +33,9 @@ public partial class App : Application
         {
             AgentLog.Write("!! 未处理异常(UI): " + args.Exception);
             args.Handled = true;          // UI 线程的异常别直接把进程杀掉
+            // 但也**不能静默**：之前异常被吞掉，用户看到的现象是「点了没反应」，
+            // 只能靠翻日志文件才能知道原因。所以第一次出错直接把原因弹出来。
+            ReportOnce("界面出错", args.Exception);
         };
         TaskScheduler.UnobservedTaskException += (_, args) =>
         {
@@ -98,6 +101,23 @@ public partial class App : Application
     /// 「点菜单没反应」，而异常被全局兜底吞掉，连日志都要翻文件才知道 ——
     /// 所以这里既写日志也弹框，把原因直接摆到用户面前。
     /// </summary>
+    private static bool _reportedOnce;
+
+    /// <summary>把异常摆到用户面前（只弹第一次，避免连环弹窗刷屏）。</summary>
+    private static void ReportOnce(string what, Exception? ex)
+    {
+        if (_reportedOnce) return;
+        _reportedOnce = true;
+        try
+        {
+            WinForms.MessageBox.Show(
+                what + "：\n\n" + (ex?.Message ?? "未知错误") +
+                "\n\n完整堆栈已写入日志：\n" + AgentLog.FilePath,
+                "家庭消息", WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+        }
+        catch { /* 连弹框都失败就只留日志 */ }
+    }
+
     private PopupWindow? EnsurePopup()
     {
         if (_popup is not null)
@@ -110,12 +130,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             AgentLog.Write("!! 创建消息窗口失败：" + ex);
-            WinForms.MessageBox.Show(
-                "打开消息窗口失败：\n\n" + ex.Message +
-                "\n\n完整堆栈已写入日志：\n" + AgentLog.FilePath,
-                "家庭消息",
-                WinForms.MessageBoxButtons.OK,
-                WinForms.MessageBoxIcon.Error);
+            ReportOnce("打开消息窗口失败", ex);
             return null;
         }
     }
@@ -307,6 +322,42 @@ public partial class App : Application
         });
     }
 
+    /// <summary>用系统默认程序打开一个路径（文件或目录）。</summary>
+    private void OpenPath(string path, string what)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(
+                new System.Diagnostics.ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write($"打开{what}失败：{ex.Message}");
+            ReportOnce($"打开{what}失败", ex);
+        }
+    }
+
+    /// <summary>打开 agent.log。窗口打不开时，这是唯一能拿到诊断信息的入口。</summary>
+    private void OpenLogFile()
+    {
+        try
+        {
+            // 文件不存在就建一个，免得「打开」直接报错
+            if (!System.IO.File.Exists(AgentLog.FilePath))
+                System.IO.File.WriteAllText(AgentLog.FilePath,
+                    "（日志暂时是空的）\r\n", System.Text.Encoding.UTF8);
+        }
+        catch { /* 建不了就让下面的 Process.Start 去报错 */ }
+        OpenPath(AgentLog.FilePath, "日志文件");
+    }
+
+    /// <summary>打开配置目录（%APPDATA%\FamilyAgent）。</summary>
+    private void OpenConfigDir()
+    {
+        var dir = System.IO.Path.GetDirectoryName(AgentLog.FilePath) ?? ".";
+        OpenPath(dir, "配置目录");
+    }
+
     // ---------------- 托盘 ----------------
 
     private void SetupTray()
@@ -324,6 +375,11 @@ public partial class App : Application
         menu.Items.Add("重新连接", null, (_, _) => Client.Restart());
         menu.Items.Add("打开控制台", null, (_, _) => OpenConsole());
         menu.Items.Add(new WinForms.ToolStripSeparator());
+        // 放在托盘里而不是只放设置页：窗口一旦打不开，设置页就进不去，
+        // 日志也就拿不到 —— 那样连排查的入口都没有了。
+        menu.Items.Add("打开日志文件", null, (_, _) => OpenLogFile());
+        menu.Items.Add("打开配置目录", null, (_, _) => OpenConfigDir());
+        menu.Items.Add(new WinForms.ToolStripSeparator());
         menu.Items.Add("退出", null, (_, _) => ExitApp());
 
         _tray.ContextMenuStrip = menu;
@@ -336,7 +392,18 @@ public partial class App : Application
         IsSystemShuttingDown = false;
         var win = EnsurePopup();
         if (win is null) return;
-        win.PresentIdle();
+        try
+        {
+            win.PresentIdle();
+            AgentLog.Write($"托盘打开会话：窗口已显示 visible={win.IsVisible} "
+                           + $"state={win.WindowState} size={win.Width}x{win.Height} "
+                           + $"at=({win.Left},{win.Top})");
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("!! 显示消息窗口失败：" + ex);
+            ReportOnce("显示消息窗口失败", ex);
+        }
         Client.RequestHistory(50);
     }
 
@@ -371,7 +438,13 @@ public partial class App : Application
     private void ShowSettings()
     {
         var popup = EnsurePopup();
-        popup?.ShowSettingsPage();
+        if (popup is null) return;
+        try { popup.ShowSettingsPage(); }
+        catch (Exception ex)
+        {
+            AgentLog.Write("!! 打开设置页失败：" + ex);
+            ReportOnce("打开设置页失败", ex);
+        }
     }
 
     // ---------------- 退出 ----------------
