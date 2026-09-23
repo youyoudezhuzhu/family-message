@@ -2,6 +2,9 @@
 //   由 tools/gen_tokens.py 生成，请勿手改。
 //   与网页端 web/static/tokens.css 同源 —— 改配色请改生成器再重新生成。
 // </auto-generated>
+// 注意：本项目 ImplicitUsings 是关闭的，using 必须显式写出来。
+using System.Collections.Generic;
+
 namespace FamilyAgent;
 
 internal static class MdPalette

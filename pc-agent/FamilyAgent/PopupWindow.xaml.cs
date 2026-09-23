@@ -452,7 +452,7 @@ public partial class PopupWindow : Window
                 Width = 30,
                 Height = 30,
                 CornerRadius = new CornerRadius(15),
-                Background = new SolidColorBrush(MdTheme.Parse(s.Primary)),
+                Background = new SolidColorBrush(MdTheme.SchemePrimary(s.Id)),
                 BorderBrush = selected ? MdTheme.OnSurface : Brushes.Transparent,
                 BorderThickness = new Thickness(2),
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -477,7 +477,7 @@ public partial class PopupWindow : Window
                 Height = double.NaN,
                 Background = selected
                     ? new SolidColorBrush(MdTheme.Blend(MdTheme.SurfaceHigh.Color,
-                                                        MdTheme.Parse(s.Primary), 0.14))
+                                                        MdTheme.SchemePrimary(s.Id), 0.14))
                     : Brushes.Transparent,
                 ToolTip = s.Name,
             };
