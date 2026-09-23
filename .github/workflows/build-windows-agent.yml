@@ -29,7 +29,7 @@ jobs:
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: '9.0.x'
 
       # 先做纯静态检查：成员被改名/删除、XAML 引用了不存在的常量、
       # x:Static 误用嵌套类型（MC3050）这类错误在这里就能抓到，
