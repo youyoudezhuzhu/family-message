@@ -121,6 +121,9 @@ function applyScheme(id, persist) {
 function schemeColor(id, role = 'primary') {
   const probe = document.createElement('div');
   probe.setAttribute('data-scheme', id);
+  // 带上当前模式，色块才会跟着明暗变化
+  const mode = document.documentElement.getAttribute('data-mode');
+  if (mode) probe.setAttribute('data-mode', mode);
   probe.style.display = 'none';
   document.body.appendChild(probe);
   const c = getComputedStyle(probe).getPropertyValue('--md-' + role).trim();

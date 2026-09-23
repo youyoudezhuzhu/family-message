@@ -168,6 +168,10 @@ public static class MdTheme
     /// <summary>设置界面用的色块预览色（取浅色模式的主色，在明暗两种模式下都看得清）。</summary>
     public static string PreviewColor(string id) => Role(id, "light", "primary") ?? "#888888";
 
+    /// <summary>某套配色在**当前明暗模式**下的主色，用于设置界面的色块。</summary>
+    public static Color SchemePrimary(string id) =>
+        Parse(Role(id, CurrentModeId, "primary") ?? "#888888");
+
     /// <summary>当前生效的配色。</summary>
     public static Scheme Current => Find(CurrentSchemeId) ?? Schemes[0];
 
