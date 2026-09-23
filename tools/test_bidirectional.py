@@ -87,10 +87,11 @@ async def main() -> int:
                       h1 and h1[-1]["direction"] == "in",
                       h1[-1]["direction"] if h1 else "-")
 
-                # ---- 2. Device → Web：回复 ----
+                # ---- 2. Device → Web：回复（带本机昵称）----
                 cid = uuid.uuid4().hex[:12]
                 await ws.send(json.dumps({
                     "type": "reply", "content": "好，马上下来", "client_id": cid,
+                    "sender_name": "书房的我",
                 }))
                 ack = await dev.wait_for("reply_ack")
                 check("服务器确认回复已接收",
@@ -107,8 +108,8 @@ async def main() -> int:
                       any(k == "web" and c == "下来吃饭了" for k, c in kinds))
                 check("包含 device→web 的一条",
                       any(k == "device" and c == "好，马上下来" for k, c in kinds))
-                check("发送人名字取自设备名",
-                      any(m["sender_name"] == "双向测试机" for m in conv
+                check("设备回复用本机自带昵称",
+                      any(m["sender_name"] == "书房的我" for m in conv
                           if m["sender_kind"] == "device"))
 
                 # ---- 4. 下一条消息的历史里应能看到刚才的回复 ----

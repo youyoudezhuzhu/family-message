@@ -137,7 +137,6 @@ async def api_login(body: LoginBody, response: Response):
 async def api_config():
     return {
         "auth_required": bool(CONFIG["web"]["password"]),
-        "senders": CONFIG["senders"],
         "popup_auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
         "public_url": CONFIG["server"]["public_url"],
         "xiaomi_enabled": bool(CONFIG["xiaomi"]["enabled"]),
@@ -308,11 +307,16 @@ async def api_screenshot(device_id: str, timeout: float = 25.0):
         raise HTTPException(404, "设备不存在")
     if not HUB.is_online(device_id):
         raise HTTPException(409, "设备离线，无法截图")
+
+    # 全链路留痕，失败时能直接看出卡在哪一环
+    db.log_event(device_id, "screenshot_request", "sending")
     try:
         result = await HUB.request_screenshot(device_id, timeout=timeout)
     except DeviceOffline as e:
+        db.log_event(device_id, "screenshot_failed", f"offline: {e}")
         raise HTTPException(409, str(e))
     except TimeoutError as e:
+        db.log_event(device_id, "screenshot_failed", f"timeout: {e}")
         raise HTTPException(504, str(e))
 
     raw = None
@@ -321,9 +325,12 @@ async def api_screenshot(device_id: str, timeout: float = 25.0):
         try:
             raw = base64.b64decode(result["data_base64"])
         except (binascii.Error, ValueError):
+            db.log_event(device_id, "screenshot_failed", "bad base64")
             raise HTTPException(502, "设备返回的图片数据损坏")
     if raw is None:
-        raise HTTPException(502, result.get("error") or "设备未返回截图")
+        err = result.get("error") or "设备未返回截图"
+        db.log_event(device_id, "screenshot_failed", str(err)[:200])
+        raise HTTPException(502, err)
 
     name = f"{device_id}_{db.now_iso().replace(':', '').replace(' ', '_')}_{uuid.uuid4().hex[:6]}.jpg"
     (SHOT_DIR / name).write_bytes(raw)
@@ -473,11 +480,20 @@ async def handle_device_message(device_id: str, data: dict) -> None:
     elif mtype == "reply":
         # ★ 双向对话：PC 端在弹窗里回复 → 落库 → 广播给所有浏览器
         content = (data.get("content") or "").strip()
-        if not content:
-            return
         client_id = data.get("client_id") or ""
+        if not content:
+            # 空回复必须回执，否则客户端会一直停在「发送中…」
+            await HUB.send_to_device(device_id, {
+                "type": "reply_ack",
+                "client_id": client_id,
+                "message_id": None,
+                "status": "empty",
+            })
+            return
         dev = dev_svc.get_device(device_id)
-        sender_name = (dev or {}).get("name") or device_id
+        # 昵称由 PC 端本地维护并随消息带上来；没带就用设备名兜底
+        sender_name = (data.get("sender_name") or "").strip()[:32] \
+            or (dev or {}).get("name") or device_id
         msg = msg_svc.create_reply(device_id, sender_name, content[:2000])
         await HUB.send_to_device(device_id, {
             "type": "reply_ack",
@@ -567,4 +583,4 @@ async def healthz():
 async def _startup():
     HUB.start_sweeper()
     print(f"[family-message] data_dir={CONFIG['data_dir']} "
-          f"port={CONFIG['server']['port']} senders={CONFIG['senders']}", flush=True)
+          f"port={CONFIG['server']['port']}", flush=True)

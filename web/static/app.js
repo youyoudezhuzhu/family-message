@@ -51,9 +51,7 @@ function askPassword() {
 /* ── 初始化 ───────────────────────────────────── */
 async function boot() {
   state.config = await api('/api/config');
-  const sel = $('sender');
-  sel.innerHTML = '';
-  state.config.senders.forEach((s) => sel.add(new Option(s, s)));
+  renderNameSelectors();
 
   $('quick').innerHTML = '';
   QUICK.forEach((q) => {
@@ -256,9 +254,7 @@ async function openConversation(device) {
   convDevice = device;
   $('conv-title').textContent = `对话 · ${device.name}`;
   $('conv-state').textContent = device.online ? '🟢 在线' : '⚪ 离线（消息会在它上线后补投）';
-  if ($('conv-sender').options.length === 0) {
-    state.config.senders.forEach((s) => $('conv-sender').add(new Option(s, s)));
-  }
+  renderNameSelectors();
   $('conv').classList.add('show');
   $('conv-text').focus();
   await refreshConversation();
@@ -349,6 +345,107 @@ function connectWS() {
   };
 }
 
+/* ── 发送昵称：纯本地，存在浏览器 localStorage，服务端不参与 ── */
+const NAMES_KEY = 'fm.names';
+const LAST_SENDER_KEY = 'fm.lastSender';
+let names = loadNames();
+
+function loadNames() {
+  try {
+    const raw = localStorage.getItem(NAMES_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        const clean = arr.filter((n) => typeof n === 'string' && n.trim());
+        if (clean.length) return clean;
+      }
+    }
+  } catch (_) { /* 解析失败就回默认 */ }
+  return ['我'];   // 首次打开给一个默认昵称，之后随便改
+}
+
+function persistNames() {
+  try { localStorage.setItem(NAMES_KEY, JSON.stringify(names)); } catch (_) {}
+}
+
+function rememberSender(value) {
+  try { localStorage.setItem(LAST_SENDER_KEY, value || ''); } catch (_) {}
+}
+
+/** 把本地昵称同步到两个下拉框（主发送区 + 对话窗） */
+function renderNameSelectors() {
+  const keepMain = $('sender').value ||
+    (() => { try { return localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) { return ''; } })();
+
+  $('sender').innerHTML = '';
+  names.forEach((n) => $('sender').add(new Option(n, n)));
+  if (keepMain && names.includes(keepMain)) $('sender').value = keepMain;
+
+  const keepConv = $('conv-sender').value;
+  $('conv-sender').innerHTML = '';
+  names.forEach((n) => $('conv-sender').add(new Option(n, n)));
+  if (keepConv && names.includes(keepConv)) $('conv-sender').value = keepConv;
+
+  renderNamesList();
+}
+
+function renderNamesList() {
+  const box = $('names-list');
+  box.innerHTML = '';
+  if (names.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.textContent = '还没有昵称，先添加一个吧。';
+    box.appendChild(p);
+    return;
+  }
+
+  names.forEach((name, idx) => {
+    const row = document.createElement('div');
+    row.className = 'name-row';
+
+    const input = document.createElement('input');
+    input.value = name;
+    input.maxLength = 16;
+    input.onchange = () => {
+      const v = input.value.trim();
+      if (!v || (names.includes(v) && names[idx] !== v)) {
+        input.value = names[idx];   // 空值或重名，回滚
+        return;
+      }
+      names[idx] = v;
+      persistNames();
+      renderNameSelectors();
+    };
+
+    const del = document.createElement('button');
+    del.textContent = '删除';
+    del.onclick = () => {
+      names.splice(idx, 1);
+      if (names.length === 0) names = ['我'];   // 至少留一个
+      persistNames();
+      renderNameSelectors();
+    };
+
+    row.append(input, del);
+    box.appendChild(row);
+  });
+}
+
+function addName() {
+  const v = $('name-new').value.trim();
+  if (!v) return;
+  if (!names.includes(v)) {
+    names.push(v);
+    persistNames();
+  }
+  $('name-new').value = '';
+  $('sender').value = v;
+  rememberSender(v);
+  renderNameSelectors();
+  $('sender').value = v;
+}
+
 /* ── 工具 ─────────────────────────────────────── */
 function refreshTimes() {
   const d = new Date();
@@ -382,6 +479,20 @@ $('conv-text').addEventListener('keydown', (e) => {
 });
 $('content').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
+});
+$('sender').addEventListener('change', () => rememberSender($('sender').value));
+
+$('btn-names').onclick = (e) => {
+  e.preventDefault();
+  renderNamesList();
+  $('names').classList.add('show');
+  $('name-new').focus();
+};
+$('names-close').onclick = () => $('names').classList.remove('show');
+$('names').onclick = (e) => { if (e.target.id === 'names') $('names').classList.remove('show'); };
+$('name-add').onclick = addName;
+$('name-new').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addName(); }
 });
 
 boot().catch((e) => { console.error(e); toast('初始化失败：' + e.message); });

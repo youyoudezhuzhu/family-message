@@ -2,10 +2,10 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="家庭消息 · Family Agent"
-        Width="620" Height="640"
+        Width="640" Height="780"
         WindowStartupLocation="CenterScreen"
         Background="#12151C"
-        MinWidth="520" MinHeight="560">
+        MinWidth="540" MinHeight="620">
 
     <Window.Resources>
         <Style TargetType="TextBlock">
@@ -78,6 +78,14 @@
 
             <CheckBox x:Name="AutoStartBox" Content="Windows 启动时自动运行"
                       Foreground="#E8EDF7" Margin="0,4,0,0"/>
+
+            <TextBlock Text="回复昵称（本机使用，可随时增删改；服务端不记录）"
+                       Margin="0,18,0,8"/>
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                <TextBox x:Name="NewReplyNameBox" Width="230" Margin="0,0,10,0"/>
+                <Button Content="添加" Click="AddReplyName_Click" Padding="20,8"/>
+            </StackPanel>
+            <StackPanel x:Name="ReplyNamesPanel" Margin="0,0,0,12"/>
         </StackPanel>
 
         <TextBlock Grid.Row="2" x:Name="HintText" Text=""
@@ -89,6 +97,7 @@
                     Foreground="#06121C" Click="SaveButton_Click"/>
             <Button x:Name="TestButton" Content="测试连接" Click="TestButton_Click"/>
             <Button x:Name="ConsoleButton" Content="打开控制台" Click="ConsoleButton_Click"/>
+            <Button x:Name="LogButton" Content="打开日志" Click="LogButton_Click"/>
             <Button x:Name="HideButton" Content="最小化到托盘" Click="HideButton_Click"/>
         </StackPanel>
     </Grid>

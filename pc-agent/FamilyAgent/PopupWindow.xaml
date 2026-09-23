@@ -69,12 +69,25 @@
 
                 <Grid>
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
 
+                    <ComboBox x:Name="ReplyNameBox"
+                              Grid.Column="0"
+                              FontSize="20"
+                              Padding="12,10"
+                              Margin="0,0,12,0"
+                              MinWidth="120"
+                              VerticalContentAlignment="Center"
+                              Background="#1B2130"
+                              Foreground="#E8EDF7"
+                              BorderBrush="#2A3243"
+                              SelectionChanged="ReplyNameBox_SelectionChanged"/>
+
                     <TextBox x:Name="ReplyBox"
-                             Grid.Column="0"
+                             Grid.Column="1"
                              FontSize="26"
                              Padding="18,14"
                              Background="#1B2130"
@@ -87,7 +100,7 @@
                              KeyDown="ReplyBox_KeyDown"/>
 
                     <Button x:Name="SendButton"
-                            Grid.Column="1"
+                            Grid.Column="2"
                             Content="回复"
                             Click="SendButton_Click"
                             Margin="14,0,0,0"
@@ -130,7 +143,7 @@
 
                     <Button x:Name="OkButton"
                             Grid.Column="0"
-                            Content="知道了"
+                            Content="关闭窗口"
                             Click="OkButton_Click"
                             Padding="52,14"
                             FontSize="24"

@@ -196,7 +196,9 @@ public sealed class AgentClient
         if (!root.TryGetProperty("type", out var typeEl))
             return;
 
-        switch (typeEl.GetString())
+        var kind = typeEl.GetString() ?? "";
+
+        switch (kind)
         {
             case "hello":
                 if (root.TryGetProperty("token", out var tokenEl))
@@ -236,12 +238,15 @@ public sealed class AgentClient
             case "heartbeat_ack":
                 break;
         }
+
+        if (kind != "heartbeat_ack")
+            AgentLog.Write($"← {kind}");
     }
 
     private async Task SendRawAsync(ClientWebSocket ws, string json, CancellationToken ct)
     {
         if (ws.State != WebSocketState.Open)
-            return;
+            throw new InvalidOperationException($"连接不可用（{ws.State}）");
 
         await _sendLock.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -250,51 +255,74 @@ public sealed class AgentClient
             await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, ct)
                     .ConfigureAwait(false);
         }
-        catch (Exception ex)
-        {
-            Log?.Invoke("发送失败：" + ex.Message);
-        }
         finally
         {
             _sendLock.Release();
         }
     }
 
-    /// <summary>给服务端发送一条 JSON（心跳之外的主动消息）。</summary>
-    public async Task SendJsonAsync(object payload)
+    /// <summary>发送一条 JSON。失败会抛异常，不再静默吞掉。</summary>
+    public async Task SendJsonAsync<T>(T payload, string kind)
     {
         var ws = _ws;
         if (ws is null)
-            return;
+            throw new InvalidOperationException("尚未建立连接");
+
         var json = JsonSerializer.Serialize(payload);
         await SendRawAsync(ws, json, CancellationToken.None).ConfigureAwait(false);
+        AgentLog.Write($"→ {kind}（{Encoding.UTF8.GetByteCount(json)} 字节）");
+    }
+
+    /// <summary>发送但不抛异常，只记日志 —— 给 ACK 这类「发不出去也不该崩」的场景用。</summary>
+    private async Task TrySendJsonAsync<T>(T payload, string kind)
+    {
+        try
+        {
+            await SendJsonAsync(payload, kind).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write($"✗ {kind} 发送失败：{ex.GetType().Name} {ex.Message}");
+        }
     }
 
     public Task AckAsync(long messageId, string status) =>
-        SendJsonAsync(new { type = "ack", message_id = messageId, status });
+        TrySendJsonAsync(new { type = "ack", message_id = messageId, status }, $"ack:{status}");
 
-    /// <summary>把弹窗里的回复发给服务端。</summary>
-    public Task ReplyAsync(string content, string clientId) =>
-        SendJsonAsync(new { type = "reply", content, client_id = clientId });
+    /// <summary>把弹窗里的回复发给服务端（昵称由本机本地维护）。</summary>
+    public Task ReplyAsync(string senderName, string content, string clientId) =>
+        SendJsonAsync(new
+        {
+            type = "reply",
+            sender_name = senderName,
+            content,
+            client_id = clientId,
+        }, "reply");
 
     /// <summary>主动拉一次历史对话（从托盘打开对话窗口时用）。</summary>
     public Task RequestHistoryAsync(int limit = 30) =>
-        SendJsonAsync(new { type = "history_request", request_id = Guid.NewGuid().ToString("N")[..12], limit });
+        TrySendJsonAsync(new
+        {
+            type = "history_request",
+            request_id = Guid.NewGuid().ToString("N")[..12],
+            limit,
+        }, "history_request");
 
-    public Task SendScreenshotAsync(string requestId, string? base64, int width, int height,
-                                    string? error)
+    public async Task SendScreenshotAsync(string requestId, string? base64, int width, int height,
+                                          string? error)
     {
         if (string.IsNullOrEmpty(base64))
         {
-            return SendJsonAsync(new
+            await TrySendJsonAsync(new
             {
                 type = "screenshot_response",
                 request_id = requestId,
                 error = string.IsNullOrEmpty(error) ? "截图失败" : error,
-            });
+            }, "screenshot_response:error").ConfigureAwait(false);
+            return;
         }
 
-        return SendJsonAsync(new
+        await TrySendJsonAsync(new
         {
             type = "screenshot_response",
             request_id = requestId,
@@ -303,6 +331,6 @@ public sealed class AgentClient
             width,
             height,
             screen_locked = false,
-        });
+        }, $"screenshot_response:{width}x{height}").ConfigureAwait(false);
     }
 }

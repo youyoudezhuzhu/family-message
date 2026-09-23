@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -31,6 +32,14 @@ public sealed class AgentConfig
 
     [JsonPropertyName("popup_auto_close_seconds")]
     public int PopupAutoCloseSeconds { get; set; }
+
+    /// <summary>本机回复时可选的昵称列表（纯本地，不上传服务端）。</summary>
+    [JsonPropertyName("reply_names")]
+    public List<string> ReplyNames { get; set; } = new();
+
+    /// <summary>当前选中的回复昵称。</summary>
+    [JsonPropertyName("reply_name")]
+    public string ReplyName { get; set; } = "";
 
     [JsonIgnore]
     public bool IsConfigured =>
@@ -85,6 +94,17 @@ public sealed class AgentConfig
                 c => char.IsLetterOrDigit(c) || c == '-' || c == '_'));
             DeviceId = "pc_" + (raw.Length > 0 ? raw : "unknown");
         }
+
+        // 回复昵称列表：至少有一个，默认用设备名
+        ReplyNames ??= new List<string>();
+        ReplyNames.RemoveAll(string.IsNullOrWhiteSpace);
+        if (ReplyNames.Count == 0)
+            ReplyNames.Add(DeviceName);
+        if (string.IsNullOrWhiteSpace(ReplyName) || !ReplyNames.Contains(ReplyName))
+            ReplyName = ReplyNames[0];
+
+        for (var i = 0; i < ReplyNames.Count; i++)
+            ReplyNames[i] = ReplyNames[i].Trim();
     }
 
     public void Save()

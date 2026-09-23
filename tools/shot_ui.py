@@ -39,6 +39,17 @@ async def main() -> None:
         else:
             print("没找到「对话」按钮")
 
+        # ---- 4. 网页昵称管理 ----
+        await page.keyboard.press("Escape")
+        await page.evaluate("document.getElementById('conv').classList.remove('show')")
+        try:
+            await page.click("#btn-names", timeout=4000)
+            await page.wait_for_timeout(900)
+            await page.screenshot(path=str(OUT / "ui-names.png"))
+            print("saved ui-names.png")
+        except Exception as exc:
+            print("昵称管理弹窗截图失败:", exc)
+
         await page.close()
         await browser.close()  # 断开 CDP，不关用户浏览器
 

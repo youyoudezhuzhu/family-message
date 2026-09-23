@@ -134,6 +134,20 @@ button.ghost.small{padding:5px 11px; font-size:12px}
 .conv-input input{flex:1}
 button.primary.small{padding:9px 18px; font-size:14px}
 
+/* 昵称管理 */
+a.link{color:var(--accent); font-size:12px; margin-left:8px; cursor:pointer; text-decoration:none}
+a.link:hover{text-decoration:underline}
+.names-box{width:min(420px, 92vw); max-height:80vh}
+.names-body{padding:16px; overflow:auto}
+.names-add{display:flex; gap:8px; margin-bottom:14px}
+.names-add input{flex:1}
+.name-row{display:flex; align-items:center; gap:8px; padding:8px 10px;
+  border:1px solid var(--line); border-radius:9px; margin-bottom:8px; background:var(--bg)}
+.name-row input{flex:1; border:none; background:transparent; padding:4px 0; font-size:15px}
+.name-row button{background:transparent; border:1px solid var(--line); color:var(--dim);
+  border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer}
+.name-row button:hover{color:var(--bad); border-color:var(--bad)}
+
 @media (max-width:600px){
   .brand .sub{display:none}
   main{padding:0 10px}
