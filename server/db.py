@@ -74,6 +74,8 @@ CREATE TABLE IF NOT EXISTS xiaomi_devices (
     power_siid       INTEGER NOT NULL DEFAULT 2,
     power_piid       INTEGER NOT NULL DEFAULT 1,
     power_action     TEXT NOT NULL DEFAULT 'on',
+    power_value      TEXT,
+
     enabled          INTEGER NOT NULL DEFAULT 1
 );
 
@@ -112,6 +114,9 @@ MIGRATIONS = [
     # 绑定时要能选「执行开还是关」的动作
     ("xiaomi_devices", "power_action",
      "ALTER TABLE xiaomi_devices ADD COLUMN power_action TEXT NOT NULL DEFAULT 'on'"),
+    # 新版绑定存具体值（JSON），不再局限开/关两种
+    ("xiaomi_devices", "power_value",
+     "ALTER TABLE xiaomi_devices ADD COLUMN power_value TEXT"),
 ]
 
 # 依赖迁移后才能建的索引（老库在 CREATE TABLE IF NOT EXISTS 时不会补列）

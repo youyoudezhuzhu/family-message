@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.7.1</Version>
+    <Version>0.8.0</Version>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>

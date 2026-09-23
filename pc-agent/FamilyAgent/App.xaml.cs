@@ -91,11 +91,37 @@ public partial class App : Application
 
     // ---------------- 弹窗（全局复用同一个窗口）----------------
 
-    private PopupWindow EnsurePopup()
+    /// <summary>
+    /// 取（必要时创建）唯一的消息窗口。
+    ///
+    /// 创建失败时**不能只是静默**：之前窗口建不起来，用户看到的现象是
+    /// 「点菜单没反应」，而异常被全局兜底吞掉，连日志都要翻文件才知道 ——
+    /// 所以这里既写日志也弹框，把原因直接摆到用户面前。
+    /// </summary>
+    private PopupWindow? EnsurePopup()
     {
         if (_popup is not null)
             return _popup;
 
+        try
+        {
+            return CreatePopup();
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("!! 创建消息窗口失败：" + ex);
+            WinForms.MessageBox.Show(
+                "打开消息窗口失败：\n\n" + ex.Message +
+                "\n\n完整堆栈已写入日志：\n" + AgentLog.FilePath,
+                "家庭消息",
+                WinForms.MessageBoxButtons.OK,
+                WinForms.MessageBoxIcon.Error);
+            return null;
+        }
+    }
+
+    private PopupWindow CreatePopup()
+    {
         var popup = new PopupWindow();
         popup.Acknowledged += id => Client.Ack(id, "read");
         popup.RetryAck += id => Client.Ack(id, "read");
@@ -188,7 +214,9 @@ public partial class App : Application
                     history.Add(HistoryItem.FromJson(h, messageId));
             }
 
-            EnsurePopup().AppendMessage(messageId, sender, content, created, autoClose, history);
+            var win = EnsurePopup();
+            if (win is null) return;
+            win.AppendMessage(messageId, sender, content, created, autoClose, history);
 
             // 弹窗已经显示在屏幕上 → 回报 popup_displayed
             Client.Ack(messageId, "popup_displayed");
@@ -306,7 +334,9 @@ public partial class App : Application
     private void ShowConversation()
     {
         IsSystemShuttingDown = false;
-        EnsurePopup().PresentIdle();
+        var win = EnsurePopup();
+        if (win is null) return;
+        win.PresentIdle();
         Client.RequestHistory(50);
     }
 
@@ -341,7 +371,7 @@ public partial class App : Application
     private void ShowSettings()
     {
         var popup = EnsurePopup();
-        popup.ShowSettingsPage();
+        popup?.ShowSettingsPage();
     }
 
     // ---------------- 退出 ----------------

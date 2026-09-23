@@ -12,7 +12,7 @@ import binascii
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import (Depends, FastAPI, HTTPException, Request, Response, WebSocket,
                      WebSocketDisconnect)
@@ -411,12 +411,15 @@ class XiaomiBindBody(BaseModel):
     power_siid: int = 2
     power_piid: int = 1
     power_action: str = Field(default="on", max_length=8)
+    # 要写入的具体值（bool / int / str）。给了它就以它为准，power_action 只作旧数据兜底。
+    power_value: Any = None
     target_device_id: str = Field(default="", max_length=64)
 
 
 class XiaomiPatchBody(BaseModel):
     name: Optional[str] = None
     device_type: Optional[str] = None
+    power_value: Any = None
     target_device_id: Optional[str] = None
     power_siid: Optional[int] = None
     power_piid: Optional[int] = None
@@ -472,6 +475,19 @@ async def api_xiaomi_discover():
         raise HTTPException(502, str(e))
 
 
+@app.get("/api/xiaomi/spec", dependencies=[WebAuth])
+async def api_xiaomi_spec(urn: str = ""):
+    """某型号有哪些「可写」属性 —— 让绑定不再局限于开/关。
+
+    规格来自米家公开的 miot-spec（与官方 ha_xiaomi_home 用的是同一份）。
+    """
+    try:
+        spec = await xiaomi_svc.fetch_spec(urn)
+    except xiaomi_svc.XiaomiError as e:
+        raise HTTPException(502, str(e))
+    return {"urn": urn, "props": xiaomi_svc.controllable_props(spec)}
+
+
 @app.get("/api/xiaomi/devices", dependencies=[WebAuth])
 async def api_xiaomi_devices():
     return xiaomi_svc.list_xiaomi_devices()
@@ -484,7 +500,7 @@ async def api_xiaomi_bind(body: XiaomiBindBody):
     row = xiaomi_svc.bind_xiaomi_device(
         body.name or body.miot_device_id, body.miot_device_id, body.urn,
         body.device_type, body.power_siid, body.power_piid, body.target_device_id,
-        body.power_action,
+        body.power_action, body.power_value,
     )
     return row
 
@@ -495,7 +511,7 @@ async def api_xiaomi_update(row_id: int, body: XiaomiPatchBody):
         row_id, name=body.name, device_type=body.device_type,
         target_device_id=body.target_device_id, power_siid=body.power_siid,
         power_piid=body.power_piid, power_action=body.power_action,
-        enabled=body.enabled,
+        power_value=body.power_value, enabled=body.enabled,
     )
     if not row:
         raise HTTPException(404, "米家设备不存在")
