@@ -541,7 +541,7 @@ public partial class PopupWindow : Window
         // 两者明暗必须一致，否则控件会和背景撞色。
         try
         {
-            Application.Current.ThemeMode = ToFluent(id);
+            Application.Current.ThemeMode = App.ToFluent(id);
         }
         catch (Exception ex)
         {
