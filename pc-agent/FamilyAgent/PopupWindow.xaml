@@ -303,6 +303,40 @@
             </Setter>
         </Style>
 
+        <!-- ══ 网格色块按钮 ═══════════════════════════════════
+             这类控件是「一块面」而不是「一个按钮」：它里面放的是色块 + 文字，
+             高度往往大于宽度。如果沿用按钮的全圆角（999），圆角会被钳制到
+             短边的一半，方块就变成了椭圆 —— 所以这里单独用 12px 圆角。 -->
+        <Style x:Key="MdTile" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource MdOnSurface}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Grid>
+                            <Border x:Name="Shell"
+                                    CornerRadius="{x:Static local:MdTheme.RadiusMedium}"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                            </Border>
+                            <Border x:Name="Hover"
+                                    CornerRadius="{x:Static local:MdTheme.RadiusMedium}"
+                                    Background="{DynamicResource MdStateHover}"
+                                    Opacity="0" IsHitTestVisible="False"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Hover" Property="Opacity" Value="1"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- 设置页里的小标题 -->
         <Style x:Key="MdLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontLabelMedium}"/>
@@ -363,7 +397,9 @@
         </Border>
 
         <!-- ══════ 消息区（右侧历史弹幕已移除：与网页端消息记录重复）══════ -->
-        <Grid Grid.Row="1" Margin="56,20,40,32">
+        <!-- 宽屏（2K/4K）上限制内容宽度：不加限制的话消息会横跨两千多像素，
+             一行字长得没法读，视觉上就是「整个 MD 布局被拉伸了」。 -->
+        <Grid Grid.Row="1" Margin="56,20,40,32" MaxWidth="1180" HorizontalAlignment="Center">
             <Grid.RowDefinitions>
                 <RowDefinition Height="*"/>
                 <RowDefinition Height="Auto"/>
@@ -376,7 +412,7 @@
                 <StackPanel x:Name="MessageStack" VerticalAlignment="Bottom"/>
             </ScrollViewer>
 
-            <StackPanel Grid.Row="1" Margin="0,20,0,0">
+            <StackPanel Grid.Row="1" Margin="0,14,0,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
@@ -391,15 +427,15 @@
                               SelectionChanged="ReplyNameBox_SelectionChanged"/>
 
                     <TextBox x:Name="ReplyBox" Grid.Column="1" Style="{StaticResource MdTextBox}"
-                             FontSize="{x:Static local:MdTheme.FontTitleLarge}"
-                             Padding="18,14" Margin="0"
+                             FontSize="{x:Static local:MdTheme.FontTitleMedium}"
+                             Padding="16,12" Margin="0"
                              MaxLength="2000" AcceptsReturn="False"
                              KeyDown="ReplyBox_KeyDown"/>
 
                     <Button x:Name="SendButton" Grid.Column="2"
                             Style="{StaticResource MdFilled}"
-                            Margin="12,0,0,0" Padding="32,0"
-                            FontSize="{x:Static local:MdTheme.FontTitleMedium}"
+                            Margin="12,0,0,0" Padding="26,0"
+                            FontSize="{x:Static local:MdTheme.FontLabelLarge}"
                             Click="SendButton_Click">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"
@@ -411,15 +447,15 @@
                     </Button>
                 </Grid>
 
-                <Grid Margin="0,18,0,0">
+                <Grid Margin="0,12,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
                     <Button x:Name="OkButton" Grid.Column="0"
                             Style="{StaticResource MdOutlined}" Margin="0"
-                            Padding="36,0" Height="48"
-                            FontSize="{x:Static local:MdTheme.FontTitleMedium}"
+                            Padding="28,0" Height="40"
+                            FontSize="{x:Static local:MdTheme.FontLabelLarge}"
                             Click="OkButton_Click">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"

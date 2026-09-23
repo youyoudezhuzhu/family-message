@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="FamilyAgent.app"/>
+
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 / 11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       DPI 感知声明 —— 这一条不写，界面在高缩放屏上会被 Windows 整张
+       位图放大：观感是「糊 + 被拉伸」，而且 SystemParameters.PrimaryScreenWidth
+       返回的是虚拟化后的值，窗口会显得过大。
+
+       微软官方文档原话：
+         "WPF apps are System DPI aware by default, and need to declare
+          themselves to be Per Monitor DPI aware via an app.manifest file."
+         "Scaling in the OS may result in WPF applications to appear blurry
+          especially when the scaling is non-integral."
+
+       PerMonitorV2 = Win10 1607+ 的每显示器 DPI 感知 V2；
+       true/pm 是给更老系统看的兼容写法。
+       ══════════════════════════════════════════════════════════════ -->
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>
