@@ -37,6 +37,8 @@ jobs:
       - name: 静态引用检查
         run: python tools/check_agent_refs.py pc-agent/FamilyAgent
         shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
 
       - name: Publish (win-x64, self-contained, single file)
         run: >

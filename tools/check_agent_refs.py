@@ -24,6 +24,14 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+# Windows 上 CI 的 stdout 默认是 cp1252/GBK，直接 print 中文会 UnicodeEncodeError
+# 把检查结果本身变成失败原因 —— 强制切到 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else "pc-agent/FamilyAgent")
 
 errors: list[str] = []
