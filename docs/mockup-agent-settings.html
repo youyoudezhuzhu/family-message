@@ -2,132 +2,147 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Family Agent · 设置页</title>
+<title>Family Agent · 设置（MD3）</title>
 <style>
-  /* 按 PopupWindow.xaml 的设置页 1:1 复刻（覆盖层 760 宽居中面板）。 */
+  /* 按 PopupWindow.xaml 的设置页 1:1 复刻（MD 对话框 780 宽、圆角 28）。 */
   *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --surface:#141218; --surface-low:#1D1B20; --surface-c:#211F26;
+    --surface-high:#2B2930; --surface-highest:#36343B;
+    --on-surface:#E6E0E9; --on-variant:#CAC4D0;
+    --outline:#938F99; --outline-variant:#49454F;
+    --primary:#A8C7FA; --primary-c:#0842A0; --on-primary-c:#D3E3FD; --on-primary:#0B1020;
+    --ok:#A5D6A7; --bad:#EF9A9A;
+  }
   body{width:1920px;height:1080px;overflow:hidden;position:relative;
-       font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
-       background:radial-gradient(circle at 35% 30%, #182133 0%, #12151C 100%);
-       color:#E8EDF7}
+       font-family:Roboto,"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+       background:var(--surface);color:var(--on-surface);-webkit-font-smoothing:antialiased}
 
-  /* 背后被压暗的消息界面（示意） */
-  .behind{position:absolute;inset:0;display:flex;flex-direction:column}
-  .behind .topbar{display:flex;align-items:center;justify-content:space-between;
-                  padding:30px 40px 0 56px}
-  .behind .t{font-size:24px;font-weight:600}
-  .behind .right{display:flex;align-items:center;gap:8px}
-  .behind .dot{width:10px;height:10px;border-radius:50%;background:#5DDBA0}
-  .behind .stat{font-size:15px;color:#93A0B8}
-  .behind .btn-set{font-size:15px;background:#243044;border-radius:9px;padding:10px 18px}
-  .behind .body{flex:1;display:flex;min-height:0}
-  .behind .left{width:73%;padding:18px 40px 40px 56px}
-  .behind .rightcol{width:27%;padding:18px 40px 40px 8px}
+  /* 背后被压暗的消息界面 */
+  .behind{position:absolute;inset:0;display:flex;flex-direction:column;opacity:.9}
+  .appbar{height:64px;display:flex;align-items:center;background:var(--surface-low);
+          border-bottom:1px solid var(--outline-variant);padding:0 32px 0 56px}
+  .appbar .title{font-size:22px}
+  .appbar .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--ok)}
+  .stat{font-size:12px;color:var(--on-variant)}
 
-  /* 压暗层 */
-  .scrim{position:absolute;inset:0;background:#D910141C;display:flex;
+  .scrim{position:absolute;inset:0;background:#B3000000;display:flex;
          align-items:center;justify-content:center}
 
-  .panel{width:760px;max-height:900px;background:#1A1F2B;border:1px solid #2A3243;
-         border-radius:16px;padding:32px;display:flex;flex-direction:column;
-         box-shadow:0 24px 60px rgba(0,0,0,.55)}
+  .dialog{width:780px;max-height:920px;background:var(--surface-high);
+          border-radius:28px;padding:28px;display:flex;flex-direction:column;
+          box-shadow:0 8px 12px 6px rgba(0,0,0,.15),0 4px 4px rgba(0,0,0,.3)}
 
-  .p-head{display:flex;align-items:center;margin-bottom:22px}
-  .p-head .t{font-size:26px;font-weight:600}
-  .p-head .dot{width:10px;height:10px;border-radius:50%;background:#5DDBA0;
-               margin:0 8px 0 20px}
-  .p-head .s{font-size:15px;color:#93A0B8}
+  .d-head{display:flex;align-items:center;margin-bottom:20px}
+  .d-head .t{font-size:22px;font-weight:400}
+  .d-head .st{margin-left:auto;display:flex;align-items:center;gap:8px;
+              font-size:12px;color:var(--on-variant)}
 
-  .field{margin-bottom:14px}
-  .lab{font-size:13px;color:#93A0B8;margin-bottom:6px}
-  .inp{background:#12151C;border:1px solid #2A3243;border-radius:9px;
-       padding:9px 12px;font-size:15px;color:#E8EDF7}
-  .inp.ph{color:#5C6B85}
+  .label{font-size:12px;color:var(--on-variant);margin:0 0 6px}
+  .inp{background:var(--surface-c);border:1px solid var(--outline);border-radius:12px;
+       padding:11px 14px;font-size:15px;color:var(--on-surface);margin-bottom:14px}
 
-  .chk{display:flex;align-items:center;gap:9px;font-size:15px;margin:0 0 16px}
-  .box{width:17px;height:17px;border-radius:4px;background:#5AC8FA;position:relative}
-  .box::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;
-              border:solid #06121C;border-width:0 2.5px 2.5px 0;transform:rotate(42deg)}
+  /* 配色网格 4 列 */
+  .themes{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:4px 0 0}
+  .th{display:flex;flex-direction:column;align-items:center;gap:6px;
+      padding:8px 6px;border-radius:999px;border-radius:12px}
+  .th .sw{width:30px;height:30px;border-radius:50%;border:2px solid transparent}
+  .th .n{font-size:11px;color:var(--on-variant)}
+  .th.sel{background:#2f3020}
+  .th.sel .sw{border-color:var(--on-surface)}
+  .th.sel .n{color:var(--primary)}
 
-  .add-row{display:flex;gap:10px;margin-bottom:10px}
-  .add-row .inp{width:240px}
-  .btn{font-size:15px;color:#E8EDF7;background:#243044;border-radius:9px;
-       padding:10px 18px;display:inline-flex;align-items:center}
-  .btn.sm{font-size:14px;padding:6px 16px;border-radius:9px}
+  .divider{height:1px;background:var(--outline-variant);margin:20px 0;border:0}
 
-  .name-row{display:flex;align-items:center;justify-content:space-between;
-            padding:5px 0;margin-bottom:8px}
-  .name-row .n{font-size:16px;color:#E8EDF7}
+  /* 勾选框 */
+  .check{display:flex;align-items:center;gap:12px;font-size:15px;margin:4px 0 20px}
+  .box{width:20px;height:20px;border-radius:4px;background:var(--primary);
+       position:relative;flex:0 0 20px}
+  .box::after{content:"";position:absolute;left:6px;top:2px;width:5px;height:10px;
+              border:solid var(--on-primary);border-width:0 2px 2px 0;transform:rotate(42deg)}
 
-  .hint{font-size:13px;color:#5C6B85;margin:14px 0 14px}
-  .actions{display:flex;gap:10px}
-  .btn.primary{background:#5AC8FA;color:#06121C;font-weight:600}
+  .namerow{display:flex;align-items:center;gap:10px;padding:8px 14px;
+           background:var(--surface-c);border-radius:12px;margin-bottom:8px}
+  .namerow .sw{width:14px;height:14px;border-radius:50%;flex:0 0 14px}
+  .namerow .nm{flex:1;font-size:15px}
+  .namerow .del{color:var(--bad);font-size:13px}
+
+  .addrow{display:flex;gap:10px;margin-bottom:12px}
+  .addrow .inp{flex:1;margin:0}
+  .btn{display:inline-flex;align-items:center;justify-content:center;height:40px;
+       padding:0 20px;border-radius:999px;font-size:14px;font-weight:500}
+  .btn.filled{background:var(--primary);color:var(--on-primary)}
+  .btn.outlined{border:1px solid var(--outline);color:var(--primary)}
+  .btn.text{color:var(--primary);padding:0 14px}
+  .btn.ht42{height:42px;padding:0 22px}
+  .actions{display:flex;gap:10px;margin-top:20px}
+  .hint{font-size:12px;color:var(--on-variant);margin-top:4px}
 </style>
 </head>
 <body>
 
   <div class="behind">
-    <div class="topbar">
-      <span class="t">家庭消息</span>
-      <div class="right">
-        <span class="dot"></span><span class="stat">已连接</span>
-        <span class="btn-set">设置</span>
-      </div>
-    </div>
-    <div class="body">
-      <div class="left"></div>
-      <div class="rightcol"></div>
+    <div class="appbar">
+      <span class="title">家庭消息</span>
+      <div class="right"><span class="dot"></span><span class="stat">已连接</span></div>
     </div>
   </div>
 
   <div class="scrim">
-    <div class="panel">
-      <div class="p-head">
+    <div class="dialog">
+      <div class="d-head">
         <span class="t">设置</span>
-        <span class="dot"></span>
-        <span class="s">已连接</span>
+        <span class="st"><span class="dot"></span>已连接</span>
       </div>
 
-      <div class="field">
-        <div class="lab">服务端地址（NAS 的 IP + 端口）</div>
-        <div class="inp">http://192.168.31.50:18801</div>
+      <div class="label">配色方案（只存本机，服务端不记录）</div>
+      <div class="themes">
+        <div class="th sel"><span class="sw" style="background:#A8C7FA"></span><span class="n">靛蓝</span></div>
+        <div class="th"><span class="sw" style="background:#D0BCFF"></span><span class="n">紫罗</span></div>
+        <div class="th"><span class="sw" style="background:#80DEEA"></span><span class="n">青碧</span></div>
+        <div class="th"><span class="sw" style="background:#A5D6A7"></span><span class="n">松绿</span></div>
+        <div class="th"><span class="sw" style="background:#FFD54F"></span><span class="n">琥珀</span></div>
+        <div class="th"><span class="sw" style="background:#FFB4AB"></span><span class="n">珊瑚</span></div>
+        <div class="th"><span class="sw" style="background:#F8BBD0"></span><span class="n">品红</span></div>
+        <div class="th"><span class="sw" style="background:#90CAF9"></span><span class="n">天青</span></div>
       </div>
 
-      <div class="field">
-        <div class="lab">设备名称（显示在网页控制台上的名字）</div>
-        <div class="inp">书房电脑</div>
+      <hr class="divider">
+
+      <div class="label">服务端地址（NAS 的 IP + 端口）</div>
+      <div class="inp">http://192.168.31.50:18801</div>
+
+      <div class="label">设备名称（显示在网页控制台上的名字）</div>
+      <div class="inp">书房电脑</div>
+
+      <div class="label">设备 ID（同一台机器保持固定即可）</div>
+      <div class="inp">pc_shufang</div>
+
+      <div class="label">注册口令（服务端 config.yaml 里的 device.enroll_token）</div>
+      <div class="inp">family-2026</div>
+
+      <div class="check"><span class="box"></span>Windows 启动时自动运行</div>
+
+      <div class="label">回复昵称（本机使用，可随时增删改；消息颜色按昵称分配）</div>
+      <div class="addrow">
+        <div class="inp">新昵称</div>
+        <span class="btn outlined ht42">添加</span>
       </div>
 
-      <div class="field">
-        <div class="lab">设备 ID（同一台机器保持固定即可）</div>
-        <div class="inp">pc_shufang</div>
-      </div>
+      <div class="namerow"><span class="sw" style="background:#A5D6A7"></span>
+        <span class="nm" style="color:#A5D6A7">书房电脑</span><span class="del">删除</span></div>
+      <div class="namerow"><span class="sw" style="background:#90CAF9"></span>
+        <span class="nm" style="color:#90CAF9">振辉</span><span class="del">删除</span></div>
 
-      <div class="field">
-        <div class="lab">注册口令（服务端 config.yaml 里的 device.enroll_token）</div>
-        <div class="inp">family-2026</div>
-      </div>
-
-      <div class="chk"><span class="box"></span>Windows 启动时自动运行</div>
-
-      <div class="lab">回复昵称（本机使用，可随时增删改；服务端不记录）</div>
-      <div class="add-row">
-        <div class="inp ph">新昵称</div>
-        <span class="btn">添加</span>
-      </div>
-
-      <div class="name-row"><span class="n">书房电脑</span><span class="btn sm">删除</span></div>
-      <div class="name-row"><span class="n">书房的我</span><span class="btn sm">删除</span></div>
-      <div class="name-row"><span class="n">振辉</span><span class="btn sm">删除</span></div>
-
-      <div class="hint">已添加昵称「振辉」</div>
+      <div class="hint">已添加昵称「振辉」（颜色按昵称自动分配）</div>
 
       <div class="actions">
-        <span class="btn primary">保存并连接</span>
-        <span class="btn">测试连接</span>
-        <span class="btn">打开控制台</span>
-        <span class="btn">打开日志</span>
-        <span class="btn">返回消息</span>
+        <span class="btn filled">保存并连接</span>
+        <span class="btn outlined">测试连接</span>
+        <span class="btn outlined">打开控制台</span>
+        <span class="btn outlined">打开日志</span>
+        <span class="btn text">返回消息</span>
       </div>
     </div>
   </div>

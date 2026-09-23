@@ -39,7 +39,8 @@ public partial class App : Application
         AgentLog.Rotate();
 
         Config = AgentConfig.Load();
-        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} ===");
+        MdTheme.Apply(Config.ThemeId);
+        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} theme={MdTheme.CurrentId} ===");
         Client = new AgentClient(Config);
         Client.ConnectionChanged += OnConnectionChanged;
         Client.MessageReceived += OnMessageReceived;
@@ -200,7 +201,8 @@ public partial class App : Application
                 foreach (var h in arr.EnumerateArray())
                     items.Add(HistoryItem.FromJson(h, 0));
             }
-            _popup?.ReplaceHistory(items);
+            // 右侧历史弹幕已移除（和网页端消息记录重复），历史现在直接铺进对话区
+            _popup?.SeedFromHistory(items);
         });
     }
 

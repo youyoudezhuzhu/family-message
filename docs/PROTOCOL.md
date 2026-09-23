@@ -74,16 +74,18 @@
   "redelivered": false,
   "history": [
     {"message_id": 40, "sender_name": "爸爸", "content": "买菜了吗",
-     "time": "12:28", "is_out": false, "sender_kind": "web"},
+     "created_at": "2026-09-23T12:28:03+08:00", "direction": "in"},
     {"message_id": 41, "sender_name": "书房电脑", "content": "买了",
-     "time": "12:29", "is_out": true,  "sender_kind": "device"}
+     "created_at": "2026-09-23T12:29:11+08:00", "direction": "out"}
   ]
 }
 ```
 
 - `history` 是最近 `message.history_limit` 条对话，**用来铺满对话界面**，
-  让 Agent 一打开就有上下文。Agent 自己决定怎么渲染（Windows 端是左气泡 + 弹幕流）。
-- `is_out = true` 表示这条是本机发的（应对齐到右侧）。
+  让 Agent 一打开就有上下文。Agent 自己决定怎么渲染
+  （Windows 端是左边聊天气泡，靠 `direction` 决定左右）。
+- **`direction`**：`"in"` = 这台设备收到的，`"out"` = 这台设备自己发出去的。
+  注意这是**相对该设备**的视角，不是绝对方向。
 - `auto_close_seconds > 0` 时，弹窗到点自动关；`0` 表示必须手动关。
 
 ### Agent 收到 `message` 后必须按顺序做
@@ -186,7 +188,7 @@
 | DELETE | `/api/devices/{id}` | 移除设备 |
 | POST | `/api/messages` | 发送留言 `{sender_name, content, device_ids}` |
 | GET | `/api/messages` | 消息列表（含每条对各设备的状态） |
-| GET | `/api/conversations/{device_id}` | 某设备的对话明细（**双向**） |
+| GET | `/api/conversations/{device_id}` | 某设备的对话明细（**双向**）。每条是原始 message 行，靠 `sender_kind`（`web`/`device`）判断方向，并带 `targets` |
 | POST | `/api/messages/{id}/read` | 标记已读 |
 | POST | `/api/devices/{id}/screenshot` | 请求截图，返回图片（**带鉴权，不是公开 URL**） |
 | POST | `/api/devices/{id}/wake` | 通过米家插座开机 |

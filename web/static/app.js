@@ -1,4 +1,5 @@
-/* 家庭消息控制台 —— 原生 JS，零构建 */
+/* 家庭消息控制台 —— 原生 JS，零构建
+   Material Design 3 暗色主题。令牌与配色定义见 docs/DESIGN-TOKENS.md */
 
 const STATE_ORDER = ['created', 'server_received', 'device_received', 'popup_displayed', 'read'];
 const STATE_LABEL = {
@@ -6,12 +7,11 @@ const STATE_LABEL = {
   server_received: '服务器已接收',
   device_received: 'PC 已收到',
   popup_displayed: '弹窗已显示',
-  read: '已点击「知道了」',
+  read: '已点击「关闭窗口」',
 };
 const QUICK = ['下来吃饭了', '该睡觉了', '有人找你', '快出来一下', '开会中，勿扰'];
 
-/* 裸端口访问时 BASE=""；走飞牛网关时 BASE="/app/family-message"。
-   所有请求都拼 BASE，两种入口下代码完全一致。 */
+/* 裸端口访问时 BASE=""；走飞牛网关时 BASE="/app/family-message"。 */
 const BASE = (() => {
   let p = location.pathname.replace(/\/index\.html$/, '');
   if (p.endsWith('/')) p = p.slice(0, -1);
@@ -36,6 +36,52 @@ const api = async (path, opts = {}) => {
 
 let state = { config: null, devices: [], messages: [], selected: new Set(), limit: 30 };
 
+/* ══════════════════════════════════════════════
+   配色方案（只存本地，服务端不参与）
+   ══════════════════════════════════════════════ */
+const THEMES = [
+  { id: 'indigo', name: '靛蓝', c: '#A8C7FA' },
+  { id: 'violet', name: '紫罗', c: '#D0BCFF' },
+  { id: 'teal',   name: '青碧', c: '#80DEEA' },
+  { id: 'green',  name: '松绿', c: '#A5D6A7' },
+  { id: 'amber',  name: '琥珀', c: '#FFD54F' },
+  { id: 'coral',  name: '珊瑚', c: '#FFB4AB' },
+  { id: 'pink',   name: '品红', c: '#F8BBD0' },
+  { id: 'cyan',   name: '天青', c: '#90CAF9' },
+];
+const THEME_KEY = 'fm.theme';
+
+function loadTheme() {
+  try {
+    const v = localStorage.getItem(THEME_KEY);
+    if (v && THEMES.some((t) => t.id === v)) return v;
+  } catch (_) { /* 读不到就用默认 */ }
+  return 'indigo';
+}
+function applyTheme(id) {
+  document.documentElement.setAttribute('data-theme', id);
+  try { localStorage.setItem(THEME_KEY, id); } catch (_) {}
+}
+
+/* ══════════════════════════════════════════════
+   昵称色：同一昵称在任何一端都是同一个颜色
+   算法必须与 PC 端 / Android 端完全一致（见 DESIGN-TOKENS.md §3）
+   ══════════════════════════════════════════════ */
+const NICK_COLORS = [
+  '#90CAF9', '#CE93D8', '#80CBC4', '#A5D6A7', '#FFE082', '#FFCC80',
+  '#EF9A9A', '#F48FB1', '#9FA8DA', '#80DEEA', '#C5E1A5', '#FFAB91',
+];
+
+function nickColor(name) {
+  const s = (name || '').trim();
+  if (!s) return NICK_COLORS[0];
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = (Math.imul(h, 31) + s.charCodeAt(i)) >>> 0;   // 32 位无符号回绕
+  }
+  return NICK_COLORS[h % NICK_COLORS.length];
+}
+
 /* ── 口令 ─────────────────────────────────────── */
 function askPassword() {
   const pwd = window.prompt('请输入家庭控制台访问口令');
@@ -48,8 +94,76 @@ function askPassword() {
   }).then((r) => { if (r.ok) location.reload(); else alert('口令错误'); });
 }
 
+/* ══════════════════════════════════════════════
+   MD 下拉组件（原生 select 的下拉浮层无法定制，只能自绘）
+   ══════════════════════════════════════════════ */
+function buildSelect(host, items, value, onChange) {
+  host.innerHTML = '';
+  const chosen = items.find((i) => i.value === value) || items[0];
+  host._value = chosen ? chosen.value : '';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'md-select-btn';
+
+  const label = document.createElement('span');
+  label.textContent = chosen ? chosen.label : '（没有可选项）';
+  if (chosen && chosen.color) label.style.color = chosen.color;
+
+  const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chev.setAttribute('viewBox', '0 0 24 24');
+  chev.setAttribute('width', '20');
+  chev.setAttribute('height', '20');
+  chev.setAttribute('class', 'chev');
+  const cp = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  cp.setAttribute('d', 'M7 10l5 5 5-5z');
+  cp.setAttribute('fill', 'currentColor');
+  chev.appendChild(cp);
+
+  btn.append(label, chev);
+
+  const menu = document.createElement('div');
+  menu.className = 'md-select-menu';
+  items.forEach((it) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'md-select-item' + (it.value === host._value ? ' sel' : '');
+    if (it.color) {
+      const sw = document.createElement('span');
+      sw.className = 'swatch';
+      sw.style.background = it.color;
+      el.appendChild(sw);
+    }
+    const t = document.createElement('span');
+    t.textContent = it.label;
+    el.appendChild(t);
+    el.onclick = (ev) => {
+      ev.stopPropagation();
+      host.classList.remove('open');
+      buildSelect(host, items, it.value, onChange);
+      if (onChange) onChange(it.value);
+    };
+    menu.appendChild(el);
+  });
+
+  btn.onclick = (ev) => {
+    ev.stopPropagation();
+    document.querySelectorAll('.md-select.open').forEach((o) => {
+      if (o !== host) o.classList.remove('open');
+    });
+    host.classList.toggle('open');
+  };
+
+  host.append(btn, menu);
+}
+
+document.addEventListener('click', () => {
+  document.querySelectorAll('.md-select.open').forEach((o) => o.classList.remove('open'));
+});
+
 /* ── 初始化 ───────────────────────────────────── */
 async function boot() {
+  applyTheme(loadTheme());
   state.config = await api('/api/config');
   renderNameSelectors();
 
@@ -78,7 +192,6 @@ async function loadVersion() {
 /* ── 设备 ─────────────────────────────────────── */
 async function loadDevices() {
   state.devices = await api('/api/devices');
-  // 默认选中全部在线设备
   if (state.selected.size === 0) {
     state.devices.filter((d) => d.online).forEach((d) => state.selected.add(d.device_id));
   } else {
@@ -131,7 +244,7 @@ function renderTargets() {
   box.innerHTML = '';
   state.devices.forEach((d) => {
     const el = document.createElement('div');
-    el.className = 'target' + (state.selected.has(d.device_id) ? ' sel' : '') + (d.online ? '' : ' off');
+    el.className = 'chip' + (state.selected.has(d.device_id) ? ' sel' : '') + (d.online ? '' : ' off');
     el.innerHTML = `<span class="sdot ${d.online ? 'on' : ''}"></span><span></span>`;
     el.querySelector('span:last-child').textContent = d.name;
     el.onclick = () => {
@@ -182,7 +295,7 @@ async function sendMessage() {
     const r = await api('/api/messages', {
       method: 'POST',
       body: JSON.stringify({
-        sender_name: $('sender').value,
+        sender_name: currentSender(),
         content,
         targets: [...state.selected],
       }),
@@ -217,7 +330,10 @@ function renderMessages() {
   box.innerHTML = '';
   state.messages.forEach((m) => {
     const el = document.createElement('div');
-    el.className = 'msg' + (m.sender_kind === 'device' ? ' reply' : '');
+    el.className = 'msg';
+    // 颜色只看昵称，不看这条是从网页还是从设备来的
+    el.style.setProperty('--nick', nickColor(m.sender_name));
+
     const head = document.createElement('div');
     head.className = 'msg-head';
     const left = document.createElement('span');
@@ -226,7 +342,7 @@ function renderMessages() {
     if (m.sender_kind === 'device') {
       const badge = document.createElement('span');
       badge.className = 'badge';
-      badge.textContent = '设备回复';
+      badge.textContent = 'PC 回复';
       left.appendChild(badge);
     }
     const right = document.createElement('span');
@@ -262,7 +378,7 @@ let convDevice = null;
 async function openConversation(device) {
   convDevice = device;
   $('conv-title').textContent = `对话 · ${device.name}`;
-  $('conv-state').textContent = device.online ? '🟢 在线' : '⚪ 离线（消息会在它上线后补投）';
+  $('conv-state').textContent = device.online ? '在线' : '离线（消息会在它上线后补投）';
   renderNameSelectors();
   $('conv').classList.add('show');
   $('conv-text').focus();
@@ -283,8 +399,8 @@ async function refreshConversation() {
     }
     list.forEach((m) => {
       const b = document.createElement('div');
-      // in = 网页发出去的（靠左）；out = 设备回复的（靠右）
       b.className = 'bubble ' + (m.sender_kind === 'device' ? 'out' : 'in');
+      b.style.setProperty('--nick', nickColor(m.sender_name));
       const meta = document.createElement('span');
       meta.className = 'meta';
       meta.textContent = `${m.sender_name} · ${m.created_at}`;
@@ -303,11 +419,12 @@ async function sendFromConversation() {
   if (!convDevice) return;
   const text = $('conv-text').value.trim();
   if (!text) return;
+  const who = $('conv-sender-sel')._value || names[0];
   try {
     await api('/api/messages', {
       method: 'POST',
       body: JSON.stringify({
-        sender_name: $('conv-sender').value,
+        sender_name: who,
         content: text,
         targets: [convDevice.device_id],
       }),
@@ -328,13 +445,10 @@ function connectWS() {
   ws.onerror = () => ws.close();
   ws.onmessage = (ev) => {
     let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
-    if (d.type === 'device_status' || d.type === 'device_updated') {
-      loadDevices();
-    } else if (d.type === 'device_deleted') {
+    if (d.type === 'device_status' || d.type === 'device_updated' || d.type === 'device_deleted') {
       loadDevices();
     } else if (d.type === 'message') {
       upsertMessage(d.message);
-      // 对话窗开着且这条属于当前设备 → 实时刷新
       if (convDevice) {
         const m = d.message;
         const mine = m.sender_device_id === convDevice.device_id ||
@@ -349,12 +463,14 @@ function connectWS() {
         renderMessages();
       }
     } else if (d.type === 'wake') {
-      toast(`⚡ ${d.result.plug || '米家设备'} 已开启，等待 PC 上线……`);
+      toast(`${d.result.plug || '米家设备'} 已开启，等待 PC 上线……`);
     }
   };
 }
 
-/* ── 发送昵称：纯本地，存在浏览器 localStorage，服务端不参与 ── */
+/* ══════════════════════════════════════════════
+   发送昵称：纯本地，存在浏览器 localStorage，服务端不参与
+   ══════════════════════════════════════════════ */
 const NAMES_KEY = 'fm.names';
 const LAST_SENDER_KEY = 'fm.lastSender';
 let names = loadNames();
@@ -370,7 +486,7 @@ function loadNames() {
       }
     }
   } catch (_) { /* 解析失败就回默认 */ }
-  return ['我'];   // 首次打开给一个默认昵称，之后随便改
+  return ['我'];
 }
 
 function persistNames() {
@@ -381,19 +497,24 @@ function rememberSender(value) {
   try { localStorage.setItem(LAST_SENDER_KEY, value || ''); } catch (_) {}
 }
 
+/** 当前选中的发送人（下拉 → localStorage → 第一个） */
+function currentSender() {
+  const v = $('sender-sel')._value;
+  if (v && names.includes(v)) return v;
+  let last = '';
+  try { last = localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) {}
+  return names.includes(last) ? last : names[0];
+}
+
 /** 把本地昵称同步到两个下拉框（主发送区 + 对话窗） */
 function renderNameSelectors() {
-  const keepMain = $('sender').value ||
-    (() => { try { return localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) { return ''; } })();
+  const items = names.map((n) => ({ value: n, label: n, color: nickColor(n) }));
 
-  $('sender').innerHTML = '';
-  names.forEach((n) => $('sender').add(new Option(n, n)));
-  if (keepMain && names.includes(keepMain)) $('sender').value = keepMain;
+  buildSelect($('sender-sel'), items, currentSender(), (v) => rememberSender(v));
 
-  const keepConv = $('conv-sender').value;
-  $('conv-sender').innerHTML = '';
-  names.forEach((n) => $('conv-sender').add(new Option(n, n)));
-  if (keepConv && names.includes(keepConv)) $('conv-sender').value = keepConv;
+  const convKeep = $('conv-sender-sel')._value;
+  const convVal = names.includes(convKeep) ? convKeep : names[0];
+  buildSelect($('conv-sender-sel'), items, convVal, null);
 
   renderNamesList();
 }
@@ -413,13 +534,18 @@ function renderNamesList() {
     const row = document.createElement('div');
     row.className = 'name-row';
 
+    const sw = document.createElement('span');
+    sw.className = 'swatch';
+    sw.style.background = nickColor(name);
+    sw.style.cssText += 'width:12px;height:12px;border-radius:50%;flex:0 0 12px;display:inline-block';
+
     const input = document.createElement('input');
     input.value = name;
     input.maxLength = 16;
     input.onchange = () => {
       const v = input.value.trim();
       if (!v || (names.includes(v) && names[idx] !== v)) {
-        input.value = names[idx];   // 空值或重名，回滚
+        input.value = names[idx];
         return;
       }
       names[idx] = v;
@@ -428,15 +554,16 @@ function renderNamesList() {
     };
 
     const del = document.createElement('button');
+    del.className = 'del';
     del.textContent = '删除';
     del.onclick = () => {
       names.splice(idx, 1);
-      if (names.length === 0) names = ['我'];   // 至少留一个
+      if (names.length === 0) names = ['我'];
       persistNames();
       renderNameSelectors();
     };
 
-    row.append(input, del);
+    row.append(sw, input, del);
     box.appendChild(row);
   });
 }
@@ -449,10 +576,35 @@ function addName() {
     persistNames();
   }
   $('name-new').value = '';
-  $('sender').value = v;
   rememberSender(v);
   renderNameSelectors();
-  $('sender').value = v;
+}
+
+/* ── 设置面板 ─────────────────────────────────── */
+function openSettings() {
+  renderThemeGrid();
+  renderNamesList();
+  $('settings').classList.add('show');
+}
+
+function renderThemeGrid() {
+  const box = $('theme-grid');
+  box.innerHTML = '';
+  const cur = loadTheme();
+  THEMES.forEach((t) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'theme-item' + (t.id === cur ? ' sel' : '');
+    const sw = document.createElement('span');
+    sw.className = 'sw';
+    sw.style.background = t.c;
+    const lb = document.createElement('span');
+    lb.className = 't';
+    lb.textContent = t.name;
+    el.append(sw, lb);
+    el.onclick = () => { applyTheme(t.id); renderThemeGrid(); };
+    box.appendChild(el);
+  });
 }
 
 /* ── 工具 ─────────────────────────────────────── */
@@ -475,6 +627,7 @@ function toast(text) {
   toastTimer = setTimeout(() => { $('send-hint').textContent = ''; }, 6000);
 }
 
+/* ── 事件绑定 ─────────────────────────────────── */
 $('btn-send').onclick = sendMessage;
 $('btn-refresh').onclick = () => Promise.all([loadDevices(), loadMessages()]);
 $('btn-history').onclick = () => { state.limit += 30; loadMessages(); };
@@ -489,16 +642,10 @@ $('conv-text').addEventListener('keydown', (e) => {
 $('content').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
 });
-$('sender').addEventListener('change', () => rememberSender($('sender').value));
 
-$('btn-names').onclick = (e) => {
-  e.preventDefault();
-  renderNamesList();
-  $('names').classList.add('show');
-  $('name-new').focus();
-};
-$('names-close').onclick = () => $('names').classList.remove('show');
-$('names').onclick = (e) => { if (e.target.id === 'names') $('names').classList.remove('show'); };
+$('btn-settings').onclick = openSettings;
+$('settings-close').onclick = () => $('settings').classList.remove('show');
+$('settings').onclick = (e) => { if (e.target.id === 'settings') $('settings').classList.remove('show'); };
 $('name-add').onclick = addName;
 $('name-new').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addName(); }

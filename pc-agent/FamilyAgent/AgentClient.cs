@@ -16,7 +16,7 @@ namespace FamilyAgent;
 /// </summary>
 public sealed class AgentClient
 {
-    private const string AgentVersion = "cs-0.4.1";
+    private const string AgentVersion = "cs-0.5.0";
 
     private readonly AgentConfig _config;
     private readonly SemaphoreSlim _sendLock = new(1, 1);

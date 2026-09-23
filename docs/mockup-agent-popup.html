@@ -2,186 +2,144 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Family Agent · 消息界面（含展开的昵称下拉）</title>
+<title>Family Agent · 消息界面（MD3）</title>
 <style>
-  /* 按 PopupWindow.xaml 1:1 复刻，用于预览。真实 Windows 端由 WPF 渲染。 */
+  /* 按 PopupWindow.xaml 1:1 复刻（Material Design 3 暗色）。真实 PC 端由 WPF 渲染。 */
   *{box-sizing:border-box;margin:0;padding:0}
-  body{width:1920px;height:1080px;overflow:hidden;
-       font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
-       background:radial-gradient(circle at 35% 30%, #182133 0%, #12151C 100%);
-       color:#E8EDF7;display:flex;flex-direction:column}
+  :root{
+    --surface:#141218; --surface-low:#1D1B20; --surface-c:#211F26;
+    --surface-high:#2B2930; --surface-highest:#36343B;
+    --on-surface:#E6E0E9; --on-variant:#CAC4D0;
+    --outline:#938F99; --outline-variant:#49454F;
+    --primary:#A8C7FA; --primary-c:#0842A0; --on-primary-c:#D3E3FD; --on-primary:#0B1020;
+    --ok:#A5D6A7; --bad:#EF9A9A;
+  }
+  body{width:1920px;height:1080px;overflow:hidden;display:flex;flex-direction:column;
+       font-family:Roboto,"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+       background:var(--surface);color:var(--on-surface);-webkit-font-smoothing:antialiased}
 
-  /* ── 顶部通栏：标题 + 状态 + 设置入口 ── */
-  .topbar{display:flex;align-items:center;justify-content:space-between;
-          padding:30px 40px 0 56px}
-  .topbar .brand{display:flex;align-items:center;gap:14px}
-  .topbar .t{font-size:24px;font-weight:600}
-  .badge{background:#1D3550;color:#5AC8FA;font-size:15px;border-radius:9px;padding:3px 10px}
-  .topbar .right{display:flex;align-items:center;gap:8px}
-  .dot{width:10px;height:10px;border-radius:50%;background:#5DDBA0}
-  .stat{font-size:15px;color:#93A0B8;margin:0 8px 0 0}
-  .btn-set{font-size:15px;color:#E8EDF7;background:#243044;border-radius:9px;
-           padding:10px 18px}
+  /* ── 顶部应用栏 ── */
+  .appbar{height:64px;flex:0 0 64px;display:flex;align-items:center;
+          background:var(--surface-low);border-bottom:1px solid var(--outline-variant);
+          padding:0 32px 0 56px}
+  .appbar .title{font-size:22px;font-weight:400}
+  .appbar .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--ok)}
+  .stat{font-size:12px;color:var(--on-variant);margin-right:12px}
+  .iconbtn{width:40px;height:40px;border-radius:999px;display:flex;
+           align-items:center;justify-content:center;color:var(--on-variant)}
 
-  /* ── 主体：73 / 27 ── */
-  .body{flex:1;display:flex;min-height:0}
-
-  .left{width:73%;padding:18px 40px 40px 56px;display:flex;flex-direction:column}
+  /* ── 消息区（右侧弹幕已移除）── */
   .thread{flex:1;display:flex;flex-direction:column;justify-content:flex-end;
-          gap:14px;overflow:hidden}
+          gap:14px;overflow:hidden;padding:20px 40px 0 56px}
 
   .row{display:flex;align-items:flex-start}
   .row.in{justify-content:flex-start}
   .row.out{justify-content:flex-end}
   .avatar{width:44px;height:44px;border-radius:50%;flex:0 0 44px;
           display:flex;align-items:center;justify-content:center;
-          font-size:19px;font-weight:600;margin:0 12px}
-  .in .avatar{background:#1B2A42;color:#5AC8FA}
-  .out .avatar{background:#332B18;color:#C9A24D}
-  .bubble{background:#161D2B;border:2px solid transparent;border-radius:14px;
-          padding:12px 18px 10px;max-width:640px}
-  .out .bubble{background:#142C42}
-  .bubble.newest{background:#16223A;border-color:#5AC8FA}
-  .out .bubble.newest{background:#17304A;border-color:#C9A24D}
-  .who{font-size:14px;font-weight:600;color:#5AC8FA;margin-bottom:4px}
-  .out .who{color:#C9A24D}
-  .msg{color:#ECF2FC;line-height:1.35}
-  .at{font-size:12px;color:#7484A1;text-align:right;margin-top:5px}
+          font-size:19px;font-weight:500;margin:0 12px}
+
+  .bubble{padding:12px 18px 10px;max-width:660px;border-radius:16px}
+  .row.in  .bubble{border-top-left-radius:4px;  border-left:3px solid var(--nick)}
+  .row.out .bubble{border-top-right-radius:4px; border-right:3px solid var(--nick)}
+  .who{font-size:14px;font-weight:500;color:var(--nick);margin-bottom:4px}
+  .msg{color:var(--on-surface);line-height:1.35}
+  .at{font-size:12px;color:#8B8695;text-align:right;margin-top:6px}
 
   /* ── 回复区 ── */
-  .reply-row{display:flex;gap:12px;align-items:stretch;margin-top:18px;position:relative}
-
-  /* 昵称下拉：深色底 + 深色浮层（这次修的就是它，以前是纯白看不清） */
-  .combo{position:relative;min-width:150px}
-  .combo-head{font-size:20px;padding:12px 14px;background:#12151C;border:1px solid #2A3243;
-              border-radius:9px;color:#E8EDF7;display:flex;align-items:center;
-              justify-content:space-between;gap:20px}
-  .combo-head .caret{color:#7C8BA6;font-size:14px}
-  .combo-pop{position:absolute;left:0;bottom:calc(100% + 4px);min-width:100%;
-             background:#1A1F2B;border:1px solid #2A3243;border-radius:9px;
-             overflow:hidden;box-shadow:0 12px 30px rgba(0,0,0,.5);z-index:9}
-  .combo-pop div{font-size:20px;color:#E8EDF7;padding:11px 14px}
-  .combo-pop div.sel{background:#24405C}
-  .combo-pop div:hover{background:#2A3B52}
-
-  .reply-box{flex:1;font-size:26px;padding:14px 18px;background:#12151C;
-             border:1px solid #2A3243;border-radius:9px;color:#5C6B85;
-             display:flex;align-items:center}
-  .btn-reply{font-size:26px;font-weight:600;color:#06121C;background:#5AC8FA;
-             border-radius:9px;padding:0 44px;display:flex;align-items:center}
-
+  .replyarea{flex:0 0 auto;padding:20px 40px 32px 56px}
+  .replyrow{display:flex;gap:12px;align-items:stretch}
+  .combo{display:flex;align-items:center;justify-content:space-between;gap:10px;
+         min-width:132px;padding:10px 14px;border-radius:12px;
+         background:var(--surface-c);border:1px solid var(--outline);font-size:16px}
+  .combo .caret{color:var(--on-variant);font-size:12px}
+  .inbox{flex:1;display:flex;align-items:center;padding:14px 18px;border-radius:12px;
+         background:var(--surface-c);border:1px solid var(--outline);
+         font-size:24px;color:#7d7887}
+  .send{display:flex;align-items:center;justify-content:center;padding:0 40px;
+        border-radius:999px;background:var(--primary);color:var(--on-primary);
+        font-size:20px;font-weight:500}
   .bottom{display:flex;align-items:center;margin-top:18px}
-  .btn-ok{font-size:22px;color:#E8EDF7;background:#243044;border-radius:9px;padding:14px 52px}
-  .hint{font-size:17px;color:#5C6B85;margin-left:20px}
-
-  /* ── 右栏弹幕 ── */
-  .danmaku{width:27%;padding:18px 40px 40px 8px;display:flex;flex-direction:column;
-           justify-content:flex-end;overflow:hidden;opacity:.95;
-           -webkit-mask-image:linear-gradient(to bottom,
-             rgba(0,0,0,0) 0%, rgba(0,0,0,.4) 10%, #000 42%, #000 100%);
-           mask-image:linear-gradient(to bottom,
-             rgba(0,0,0,0) 0%, rgba(0,0,0,.4) 10%, #000 42%, #000 100%);}
-  .dm{margin-bottom:18px}
-  .dm .h{font-size:15px;font-weight:600;color:#4FA9D6}
-  .dm.out .h{color:#C9A24D}
-  .dm .c{font-size:20px;color:#D7E1F2;line-height:1.29;margin-top:3px}
+  .ok{display:flex;align-items:center;justify-content:center;height:48px;padding:0 44px;
+      border-radius:999px;border:1px solid var(--outline);color:var(--primary);font-size:20px}
+  .hint{font-size:16px;color:var(--on-variant);margin-left:20px}
 </style>
 </head>
 <body>
 
-  <div class="topbar">
-    <div class="brand">
-      <span class="t">家庭消息</span>
-      <span class="badge">3 条新消息</span>
-    </div>
+  <div class="appbar">
+    <span class="title">家庭消息</span>
     <div class="right">
       <span class="dot"></span>
       <span class="stat">已连接</span>
-      <span class="btn-set">设置</span>
+      <span class="iconbtn">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></svg>
+      </span>
     </div>
   </div>
 
-  <div class="body">
-    <div class="left">
-      <div class="thread">
-        <div class="row in">
-          <div class="avatar">妈</div>
-          <div class="bubble">
-            <div class="who">妈妈</div>
-            <div class="msg" style="font-size:23px">晚上想吃什么</div>
-            <div class="at">18:02</div>
-          </div>
-        </div>
-
-        <div class="row out">
-          <div class="bubble">
-            <div class="who">书房电脑</div>
-            <div class="msg" style="font-size:23px">随便，你做什么我吃什么</div>
-            <div class="at">18:03</div>
-          </div>
-          <div class="avatar">书</div>
-        </div>
-
-        <div class="row in">
-          <div class="avatar">爸</div>
-          <div class="bubble">
-            <div class="who">爸爸</div>
-            <div class="msg" style="font-size:25px">把阳台的衣服收一下</div>
-            <div class="at">18:05</div>
-          </div>
-        </div>
-
-        <div class="row out">
-          <div class="bubble">
-            <div class="who">书房电脑</div>
-            <div class="msg" style="font-size:25px">好，马上</div>
-            <div class="at">18:06</div>
-          </div>
-          <div class="avatar">书</div>
-        </div>
-
-        <div class="row in">
-          <div class="avatar">妈</div>
-          <div class="bubble newest">
-            <div class="who">妈妈</div>
-            <div class="msg" style="font-size:28px">下来吃饭了</div>
-            <div class="at">18:12</div>
-          </div>
-        </div>
-      </div>
-
-      <div class="reply-row">
-        <!-- 展开状态的下拉浮层，用来展示深色适配结果 -->
-        <div class="combo">
-          <div class="combo-pop">
-            <div class="sel">书房电脑</div>
-            <div>书房的我</div>
-            <div>振辉</div>
-          </div>
-          <div class="combo-head"><span>书房电脑</span><span class="caret">▼</span></div>
-        </div>
-        <div class="reply-box">输入回复内容，按 Enter 发送</div>
-        <div class="btn-reply">回复</div>
-      </div>
-
-      <div class="bottom">
-        <div class="btn-ok">关闭窗口</div>
-        <div class="hint">Enter 直接回复</div>
+  <div class="thread">
+    <!-- 妈妈：#90CAF9 蓝 -->
+    <div class="row in">
+      <div class="avatar" style="background:#2b3746;color:#90CAF9">妈</div>
+      <div class="bubble" style="--nick:#90CAF9;background:#1c2530">
+        <div class="who">妈妈</div>
+        <div class="msg" style="font-size:23px">晚上想吃什么</div>
+        <div class="at">18:02</div>
       </div>
     </div>
 
-    <div class="danmaku">
-      <div class="dm"><div class="h">妈妈 · 17:38</div><div class="c">今晚几点回来</div></div>
-      <div class="dm out"><div class="h">书房电脑 · 17:39</div><div class="c">大概七点</div></div>
-      <div class="dm"><div class="h">妈妈 · 17:40</div><div class="c">路上买袋米</div></div>
-      <div class="dm out"><div class="h">书房电脑 · 17:41</div><div class="c">好</div></div>
-      <div class="dm"><div class="h">爸爸 · 17:52</div><div class="c">把路由器重启一下</div></div>
-      <div class="dm out"><div class="h">书房电脑 · 17:54</div><div class="c">已经重启了</div></div>
-      <div class="dm"><div class="h">妈妈 · 18:02</div><div class="c">晚上想吃什么</div></div>
-      <div class="dm out"><div class="h">书房电脑 · 18:03</div><div class="c">随便，你做什么我吃什么</div></div>
-      <div class="dm"><div class="h">爸爸 · 18:05</div><div class="c">把阳台的衣服收一下</div></div>
-      <div class="dm out"><div class="h">书房电脑 · 18:06</div><div class="c">好，马上</div></div>
-      <div class="dm"><div class="h">妈妈 · 18:12</div><div class="c">下来吃饭了</div></div>
+    <!-- 书房电脑：#A5D6A7 绿 -->
+    <div class="row out">
+      <div class="bubble" style="--nick:#A5D6A7;background:#1d2721">
+        <div class="who">书房电脑</div>
+        <div class="msg" style="font-size:23px">随便，你做什么我吃什么</div>
+        <div class="at">18:03</div>
+      </div>
+      <div class="avatar" style="background:#2c3a2e;color:#A5D6A7">书</div>
+    </div>
+
+    <!-- 爸爸：#FFCC80 橙 -->
+    <div class="row in">
+      <div class="avatar" style="background:#3a3125;color:#FFCC80">爸</div>
+      <div class="bubble" style="--nick:#FFCC80;background:#26211a">
+        <div class="who">爸爸</div>
+        <div class="msg" style="font-size:25px">把阳台的衣服收一下</div>
+        <div class="at">18:05</div>
+      </div>
+    </div>
+
+    <!-- 书房电脑 -->
+    <div class="row out">
+      <div class="bubble" style="--nick:#A5D6A7;background:#1d2721">
+        <div class="who">书房电脑</div>
+        <div class="msg" style="font-size:25px">好，马上</div>
+        <div class="at">18:06</div>
+      </div>
+      <div class="avatar" style="background:#2c3a2e;color:#A5D6A7">书</div>
+    </div>
+
+    <!-- 妈妈 · 最新 -->
+    <div class="row in">
+      <div class="avatar" style="background:#2b3746;color:#90CAF9">妈</div>
+      <div class="bubble" style="--nick:#90CAF9;background:#1c2530">
+        <div class="who">妈妈</div>
+        <div class="msg" style="font-size:28px">下来吃饭了</div>
+        <div class="at">18:12</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="replyarea">
+    <div class="replyrow">
+      <div class="combo"><span style="color:#A5D6A7">书房电脑</span><span class="caret">▼</span></div>
+      <div class="inbox">输入回复内容，按 Enter 发送</div>
+      <div class="send">回复</div>
+    </div>
+    <div class="bottom">
+      <div class="ok">关闭窗口</div>
+      <div class="hint">Enter 直接回复</div>
     </div>
   </div>
 
