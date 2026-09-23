@@ -17,7 +17,6 @@ public partial class App : Application
 
     private Mutex? _singleInstance;
     private WinForms.NotifyIcon? _tray;
-    private SettingsWindow? _settings;
     private PopupWindow? _popup;
     private string? _pendingReplyClientId;
 
@@ -52,10 +51,12 @@ public partial class App : Application
         Client.Start();
         SetupTray();
 
-        // --tray：开机自启时静默进托盘；未配置过则无论如何都弹设置窗
+        // --tray：开机自启时静默进托盘；手动启动则直接打开消息界面
         var silent = HasArg(e.Args, "--tray");
-        if (!Config.IsConfigured || !silent)
-            ShowSettings();
+        if (!Config.IsConfigured)
+            ShowSettings();          // 还没配置过 → 直接进设置页
+        else if (!silent)
+            ShowConversation();      // 打开就是消息界面，设置在右上角
     }
 
     private static bool HasArg(string[] args, string name)
@@ -76,11 +77,13 @@ public partial class App : Application
             return _popup;
 
         var popup = new PopupWindow();
-        popup.Acknowledged += id => _ = Client.AckAsync(id, "read");
-        popup.RetryAck += id => _ = Client.AckAsync(id, "read");
+        popup.Acknowledged += id => Client.Ack(id, "read");
+        popup.RetryAck += id => Client.Ack(id, "read");
         popup.ReplyRequested += OnReplyRequested;
         popup.ReplyNameChanged += OnReplyNameChanged;
+        popup.SettingsSaved += OnSettingsSaved;
         popup.SetReplyNames(Config.ReplyNames, Config.ReplyName);
+        popup.SetConfig(Config);
         _popup = popup;
 
         return popup;
@@ -91,30 +94,33 @@ public partial class App : Application
         var clientId = Guid.NewGuid().ToString("N")[..12];
         _pendingReplyClientId = clientId;
 
+        // 不再预判连接状态：直接尝试发送，发不出去会自动入队，重连后补发。
+        // （之前 `if (!Connected) 报失败` 会把能发的回复也拦下来。）
+        var dispatched = Client.Reply(senderName, content, clientId);
+        if (!dispatched)
+        {
+            _popup?.MarkReplyQueued();
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
-            try
+            // 服务端迟迟不回执时给个明确提示，别让界面永远停在「发送中…」
+            await Task.Delay(TimeSpan.FromSeconds(12));
+            if (_pendingReplyClientId == clientId)
             {
-                if (!Client.Connected)
-                    throw new InvalidOperationException("未连接到服务端");
-
-                await Client.ReplyAsync(senderName, content, clientId);
-
-                // 服务端迟迟不回执时给个明确提示，别让界面永远停在「发送中…」
-                await Task.Delay(TimeSpan.FromSeconds(10));
-                if (_pendingReplyClientId == clientId)
-                {
-                    AgentLog.Write("✗ 回复 10 秒内未收到 reply_ack");
-                    Dispatcher.Invoke(() =>
-                        _popup?.MarkReplyFailed("10 秒内没收到服务端确认，详见日志"));
-                }
-            }
-            catch (Exception ex)
-            {
-                AgentLog.Write($"✗ 回复失败：{ex.GetType().Name} {ex.Message}");
-                Dispatcher.Invoke(() => _popup?.MarkReplyFailed(ex.Message));
+                AgentLog.Write($"✗ 回复 12 秒内未收到 reply_ack（连接状态：{Client.DescribeConnection()}）");
+                Dispatcher.Invoke(() => _popup?.MarkReplyQueued());
             }
         });
+    }
+
+    /// <summary>弹窗设置页保存后：落盘、应用自启、重连。</summary>
+    private void OnSettingsSaved()
+    {
+        Config.Save();
+        AutoStart.Apply(Config.AutoStart);
+        Client.Restart();
     }
 
     /// <summary>弹窗里换了回复昵称 → 存到本地配置（服务端不参与）。</summary>
@@ -133,7 +139,7 @@ public partial class App : Application
         AgentLog.Write(connected ? "== 已连接 ==" : $"== 断开：{message} ==");
         Dispatcher.Invoke(() =>
         {
-            _settings?.UpdateStatus(connected, message);
+            _popup?.SetConnectionStatus(connected, connected ? "已连接" : "未连接");
             if (_tray is not null)
                 _tray.Text = connected ? "家庭消息 Agent · 已连接" : "家庭消息 Agent · 未连接";
         });
@@ -165,7 +171,7 @@ public partial class App : Application
             EnsurePopup().AppendMessage(messageId, sender, content, created, autoClose, history);
 
             // 弹窗已经显示在屏幕上 → 回报 popup_displayed
-            _ = Client.AckAsync(messageId, "popup_displayed");
+            Client.Ack(messageId, "popup_displayed");
         });
     }
 
@@ -236,14 +242,7 @@ public partial class App : Application
     {
         IsSystemShuttingDown = false;
         EnsurePopup().PresentIdle();
-        _ = Client.RequestHistoryAsync(50);
-    }
-
-    /// <summary>设置窗口改了昵称列表后，同步到弹窗的下拉框。</summary>
-    public static void RefreshReplyNames()
-    {
-        if (Current is App app && app._popup is not null)
-            app._popup.SetReplyNames(Config.ReplyNames, Config.ReplyName);
+        Client.RequestHistory(50);
     }
 
     private void OpenConsole()
@@ -276,15 +275,8 @@ public partial class App : Application
 
     private void ShowSettings()
     {
-        if (_settings is null)
-        {
-            _settings = new SettingsWindow();
-            _settings.Closed += (_, _) => _settings = null;
-        }
-        _settings.Show();
-        _settings.WindowState = WindowState.Normal;
-        _settings.Activate();
-        _settings.UpdateStatus(Client.Connected, "");
+        var popup = EnsurePopup();
+        popup.ShowSettingsPage();
     }
 
     // ---------------- 退出 ----------------

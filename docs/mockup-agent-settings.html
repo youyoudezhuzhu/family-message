@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Family Agent · 设置页</title>
+<style>
+  /* 按 PopupWindow.xaml 的设置页 1:1 复刻（覆盖层 760 宽居中面板）。 */
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{width:1920px;height:1080px;overflow:hidden;position:relative;
+       font-family:"Microsoft YaHei","PingFang SC","Segoe UI",sans-serif;
+       background:radial-gradient(circle at 35% 30%, #182133 0%, #12151C 100%);
+       color:#E8EDF7}
+
+  /* 背后被压暗的消息界面（示意） */
+  .behind{position:absolute;inset:0;display:flex;flex-direction:column}
+  .behind .topbar{display:flex;align-items:center;justify-content:space-between;
+                  padding:30px 40px 0 56px}
+  .behind .t{font-size:24px;font-weight:600}
+  .behind .right{display:flex;align-items:center;gap:8px}
+  .behind .dot{width:10px;height:10px;border-radius:50%;background:#5DDBA0}
+  .behind .stat{font-size:15px;color:#93A0B8}
+  .behind .btn-set{font-size:15px;background:#243044;border-radius:9px;padding:10px 18px}
+  .behind .body{flex:1;display:flex;min-height:0}
+  .behind .left{width:73%;padding:18px 40px 40px 56px}
+  .behind .rightcol{width:27%;padding:18px 40px 40px 8px}
+
+  /* 压暗层 */
+  .scrim{position:absolute;inset:0;background:#D910141C;display:flex;
+         align-items:center;justify-content:center}
+
+  .panel{width:760px;max-height:900px;background:#1A1F2B;border:1px solid #2A3243;
+         border-radius:16px;padding:32px;display:flex;flex-direction:column;
+         box-shadow:0 24px 60px rgba(0,0,0,.55)}
+
+  .p-head{display:flex;align-items:center;margin-bottom:22px}
+  .p-head .t{font-size:26px;font-weight:600}
+  .p-head .dot{width:10px;height:10px;border-radius:50%;background:#5DDBA0;
+               margin:0 8px 0 20px}
+  .p-head .s{font-size:15px;color:#93A0B8}
+
+  .field{margin-bottom:14px}
+  .lab{font-size:13px;color:#93A0B8;margin-bottom:6px}
+  .inp{background:#12151C;border:1px solid #2A3243;border-radius:9px;
+       padding:9px 12px;font-size:15px;color:#E8EDF7}
+  .inp.ph{color:#5C6B85}
+
+  .chk{display:flex;align-items:center;gap:9px;font-size:15px;margin:0 0 16px}
+  .box{width:17px;height:17px;border-radius:4px;background:#5AC8FA;position:relative}
+  .box::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;
+              border:solid #06121C;border-width:0 2.5px 2.5px 0;transform:rotate(42deg)}
+
+  .add-row{display:flex;gap:10px;margin-bottom:10px}
+  .add-row .inp{width:240px}
+  .btn{font-size:15px;color:#E8EDF7;background:#243044;border-radius:9px;
+       padding:10px 18px;display:inline-flex;align-items:center}
+  .btn.sm{font-size:14px;padding:6px 16px;border-radius:9px}
+
+  .name-row{display:flex;align-items:center;justify-content:space-between;
+            padding:5px 0;margin-bottom:8px}
+  .name-row .n{font-size:16px;color:#E8EDF7}
+
+  .hint{font-size:13px;color:#5C6B85;margin:14px 0 14px}
+  .actions{display:flex;gap:10px}
+  .btn.primary{background:#5AC8FA;color:#06121C;font-weight:600}
+</style>
+</head>
+<body>
+
+  <div class="behind">
+    <div class="topbar">
+      <span class="t">家庭消息</span>
+      <div class="right">
+        <span class="dot"></span><span class="stat">已连接</span>
+        <span class="btn-set">设置</span>
+      </div>
+    </div>
+    <div class="body">
+      <div class="left"></div>
+      <div class="rightcol"></div>
+    </div>
+  </div>
+
+  <div class="scrim">
+    <div class="panel">
+      <div class="p-head">
+        <span class="t">设置</span>
+        <span class="dot"></span>
+        <span class="s">已连接</span>
+      </div>
+
+      <div class="field">
+        <div class="lab">服务端地址（NAS 的 IP + 端口）</div>
+        <div class="inp">http://192.168.31.50:18801</div>
+      </div>
+
+      <div class="field">
+        <div class="lab">设备名称（显示在网页控制台上的名字）</div>
+        <div class="inp">书房电脑</div>
+      </div>
+
+      <div class="field">
+        <div class="lab">设备 ID（同一台机器保持固定即可）</div>
+        <div class="inp">pc_shufang</div>
+      </div>
+
+      <div class="field">
+        <div class="lab">注册口令（服务端 config.yaml 里的 device.enroll_token）</div>
+        <div class="inp">family-2026</div>
+      </div>
+
+      <div class="chk"><span class="box"></span>Windows 启动时自动运行</div>
+
+      <div class="lab">回复昵称（本机使用，可随时增删改；服务端不记录）</div>
+      <div class="add-row">
+        <div class="inp ph">新昵称</div>
+        <span class="btn">添加</span>
+      </div>
+
+      <div class="name-row"><span class="n">书房电脑</span><span class="btn sm">删除</span></div>
+      <div class="name-row"><span class="n">书房的我</span><span class="btn sm">删除</span></div>
+      <div class="name-row"><span class="n">振辉</span><span class="btn sm">删除</span></div>
+
+      <div class="hint">已添加昵称「振辉」</div>
+
+      <div class="actions">
+        <span class="btn primary">保存并连接</span>
+        <span class="btn">测试连接</span>
+        <span class="btn">打开控制台</span>
+        <span class="btn">打开日志</span>
+        <span class="btn">返回消息</span>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
