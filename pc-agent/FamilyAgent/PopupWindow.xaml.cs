@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Controls;
@@ -15,10 +13,10 @@ using System.Windows.Threading;
 namespace FamilyAgent;
 
 /// <summary>
-/// PC 端主界面（唯一窗口）。
+/// PC 端主界面（唯一窗口），Material Design 3 风格。
 ///
-/// 默认就是「消息界面」：左边是聊天式对话区（网页发来的靠左、本机回复的靠右），
-/// 右边是弹幕式历史流，下面是回复框。右上角「设置」按钮才切到配置页面。
+/// 默认就是「消息界面」：一个聊天式对话区（网页发来的靠左、本机回复的靠右），
+/// 下面是回复框。右上角「设置」按钮才切到配置页面（配色 / 连接 / 开机自启 / 昵称）。
 /// 收到消息时这个窗口会置顶铺满主屏，点「关闭窗口」隐藏回托盘。
 ///
 /// 窗口只创建一次并反复复用：连续来消息是往对话区接着追加，
@@ -31,7 +29,6 @@ public partial class PopupWindow : Window
 
     private readonly DispatcherTimer _topmostTimer;
     private DispatcherTimer? _autoCloseTimer;
-    private readonly ObservableCollection<HistoryItem> _history = new();
     private readonly List<MessageCard> _cards = new();
     private readonly List<long> _pending = new();
     private readonly HashSet<long> _seen = new();
@@ -53,7 +50,8 @@ public partial class PopupWindow : Window
     public PopupWindow()
     {
         InitializeComponent();
-        HistoryList.ItemsSource = _history;
+
+        MdTheme.Apply(App.Config?.ThemeId);
 
         Left = 0;
         Top = 0;
@@ -102,9 +100,6 @@ public partial class PopupWindow : Window
 
         UpdateBadge();
 
-        if (history is not null)
-            ReplaceHistory(history);
-
         _acknowledged = false;
         _idle = false;
         HintText.Text = autoCloseSeconds > 0
@@ -127,7 +122,7 @@ public partial class PopupWindow : Window
         EnsureShown();
     }
 
-    /// <summary>本机回复成功后，把这条也加进主对话区（靠右）。</summary>
+    /// <summary>本机回复成功后，把这条也加进对话区（靠右）。</summary>
     public void AppendOutgoing(string senderName, string content)
     {
         AddCard(0, senderName, content, DateTime.Now.ToString("HH:mm:ss"),
@@ -160,12 +155,11 @@ public partial class PopupWindow : Window
         return false;
     }
 
-    public void ReplaceHistory(IReadOnlyList<HistoryItem> items)
+    /// <summary>用服务端历史把对话区铺满（打开窗口时的上下文）。</summary>
+    public void SeedFromHistory(IReadOnlyList<HistoryItem> items)
     {
-        _history.Clear();
-        foreach (var item in items)
-            _history.Add(item);
-        ScrollHistoryToEnd();
+        SeedThread(items, 0);
+        ScrollToNewest();
     }
 
     public void MarkReplyDelivered() => HintText.Text = "回复已送达服务器";
@@ -178,9 +172,7 @@ public partial class PopupWindow : Window
     /// <summary>更新连接状态（顶栏 + 设置页各一处）。</summary>
     public void SetConnectionStatus(bool connected, string text)
     {
-        var brush = new SolidColorBrush(
-            (Color)ColorConverter.ConvertFromString(connected ? "#5DDBA0" : "#F2705E"));
-
+        var brush = connected ? MdTheme.Ok : MdTheme.Bad;
         StatusDot.Fill = brush;
         SettingsDot.Fill = brush;
         StatusText.Text = text;
@@ -197,6 +189,7 @@ public partial class PopupWindow : Window
         AutoStartBox.IsChecked = config.AutoStart;
         _replyNames = new List<string>(config.ReplyNames);
         RenderReplyNames();
+        RenderThemeGrid();
     }
 
     /// <summary>强制关闭（程序退出时）。</summary>
@@ -316,10 +309,6 @@ public partial class PopupWindow : Window
         Dispatcher.BeginInvoke(new Action(() => MessageScroll.ScrollToEnd()),
                                DispatcherPriority.Background);
 
-    private void ScrollHistoryToEnd() =>
-        Dispatcher.BeginInvoke(new Action(() => HistoryScroll.ScrollToEnd()),
-                               DispatcherPriority.Background);
-
     private void ArmAutoClose(int seconds)
     {
         _autoCloseTimer?.Stop();
@@ -373,9 +362,6 @@ public partial class PopupWindow : Window
 
         ReplyBox.Clear();
 
-        // 右侧弹幕 + 左侧对话区各留一条
-        _history.Add(HistoryItem.Sent(who, text, DateTime.Now));
-        ScrollHistoryToEnd();
         AppendOutgoing(who, text);
 
         HintText.Text = "发送中…";
@@ -427,7 +413,6 @@ public partial class PopupWindow : Window
         PresentIdle();
         _autoCloseTimer?.Stop();
         SettingsHint.Text = "";
-        RenderReplyNames();
         SettingsPage.Visibility = Visibility.Visible;
     }
 
@@ -438,6 +423,7 @@ public partial class PopupWindow : Window
         _autoCloseTimer?.Stop();      // 看设置时别被自动关闭打断
         SettingsHint.Text = "";
         RenderReplyNames();
+        RenderThemeGrid();
         SettingsPage.Visibility = Visibility.Visible;
     }
 
@@ -449,10 +435,73 @@ public partial class PopupWindow : Window
         ReplyBox.Focus();
     }
 
+    /// <summary>配色网格：点一下即时生效并落盘（纯本地）。</summary>
+    private void RenderThemeGrid()
+    {
+        ThemeGrid.Children.Clear();
+
+        foreach (var s in MdTheme.Schemes)
+        {
+            var selected = s.Id == MdTheme.CurrentId;
+
+            var panel = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
+
+            var dot = new Border
+            {
+                Width = 30,
+                Height = 30,
+                CornerRadius = new CornerRadius(15),
+                Background = new SolidColorBrush(MdTheme.Parse(s.Primary)),
+                BorderBrush = selected ? MdTheme.OnSurface : Brushes.Transparent,
+                BorderThickness = new Thickness(2),
+                HorizontalAlignment = HorizontalAlignment.Center,
+            };
+            panel.Children.Add(dot);
+
+            panel.Children.Add(new TextBlock
+            {
+                Text = s.Name,
+                FontSize = 11,
+                Foreground = selected ? MdTheme.Primary : MdTheme.OnVariant,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 6, 0, 0),
+            });
+
+            var btn = new Button
+            {
+                Content = panel,
+                Style = (Style)FindResource("MdText"),
+                Margin = new Thickness(2),
+                Padding = new Thickness(6, 8, 6, 8),
+                Height = double.NaN,
+                Background = selected
+                    ? new SolidColorBrush(MdTheme.Blend(MdTheme.SurfaceHigh.Color,
+                                                        MdTheme.Parse(s.Primary), 0.14))
+                    : Brushes.Transparent,
+                ToolTip = s.Name,
+            };
+
+            var scheme = s;
+            btn.Click += (_, _) => PickTheme(scheme.Id);
+            ThemeGrid.Children.Add(btn);
+        }
+    }
+
+    private void PickTheme(string id)
+    {
+        MdTheme.Apply(id);
+        if (App.Config is not null)
+        {
+            App.Config.ThemeId = id;
+            App.Config.Save();
+        }
+        RenderThemeGrid();
+        SettingsHint.Text = $"配色已切换为「{MdTheme.Current.Name}」";
+    }
+
     private void RenderReplyNames()
     {
         ReplyNamesPanel.Children.Clear();
-        var buttonStyle = (Style)FindResource("DarkButton");
 
         foreach (var name in _replyNames)
         {
@@ -463,13 +512,26 @@ public partial class PopupWindow : Window
             });
             row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
+            var swatch = new Border
+            {
+                Width = 14,
+                Height = 14,
+                CornerRadius = new CornerRadius(7),
+                Background = new SolidColorBrush(MdTheme.NickColor(name)),
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Left,
+                Margin = new Thickness(2, 0, 0, 0),
+            };
+            Grid.SetColumn(swatch, 0);
+            row.Children.Add(swatch);
+
             var label = new TextBlock
             {
                 Text = name,
-                FontSize = 16,
-                Foreground = new SolidColorBrush(
-                    (Color)ColorConverter.ConvertFromString("#E8EDF7")),
+                FontSize = 15,
+                Foreground = new SolidColorBrush(MdTheme.NickColor(name)),
                 VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(26, 0, 0, 0),
             };
             Grid.SetColumn(label, 0);
             row.Children.Add(label);
@@ -478,9 +540,11 @@ public partial class PopupWindow : Window
             var del = new Button
             {
                 Content = "删除",
-                Style = buttonStyle,
-                FontSize = 14,
-                Padding = new Thickness(16, 6, 16, 6),
+                Style = (Style)FindResource("MdText"),
+                FontSize = 13,
+                Foreground = MdTheme.Bad,
+                Padding = new Thickness(12, 4, 12, 4),
+                Height = 32,
                 Margin = new Thickness(0),
             };
             del.Click += (_, _) => RemoveReplyName(captured);
@@ -508,7 +572,7 @@ public partial class PopupWindow : Window
         _replyNames.Add(name);
         NewReplyNameBox.Clear();
         PushReplyNames();
-        SettingsHint.Text = $"已添加昵称「{name}」";
+        SettingsHint.Text = $"已添加昵称「{name}」（颜色按昵称自动分配）";
     }
 
     private void RemoveReplyName(string name)

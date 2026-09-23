@@ -8,27 +8,25 @@ using System.Windows.Media.Animation;
 namespace FamilyAgent;
 
 /// <summary>
-/// 弹窗主区域里的一条消息，按聊天软件的样子排版：
+/// 消息气泡（Material Design 3 风格）。
 ///
-///   收到（网页发来的）  [头像] [气泡]  ← 靠左
-///   发出（本机回复的）        [气泡] [头像]  ← 靠右
+///   网页发来的  [头像] [气泡]  ← 靠左
+///   本机回复的        [气泡] [头像]  ← 靠右
 ///
-/// 新插入的卡片会播放「淡入 + 从下方滑入 + 轻微放大」动画。
-/// 越新的气泡略大一点，越旧的逐级回落（0.90 倍/级，下限 0.80），
-/// 保留层次感但不至于像字号乱跳。
+/// **颜色按昵称分配**：同一个昵称永远是同一个颜色，跟「从哪端发来」无关
+/// （取色算法见 MdTheme.NickColor / docs/DESIGN-TOKENS.md §3）。
+/// 左右位置只表达「谁发的」，不表达颜色含义。
+///
+/// 新插入的卡片播放「淡入 + 从下方滑入 + 微放大」动画。
 /// </summary>
 public sealed class MessageCard : Grid
 {
-    private static readonly Color Accent = Color.FromRgb(0x5A, 0xC8, 0xFA);
-    private static readonly Color InBg = Color.FromRgb(0x16, 0x1D, 0x2B);
-    private static readonly Color OutBg = Color.FromRgb(0x14, 0x2C, 0x42);
-    private static readonly Color Gold = Color.FromRgb(0xC9, 0xA2, 0x4D);
-
     private readonly TextBlock _sender;
     private readonly TextBlock _content;
     private readonly TextBlock _time;
     private readonly Border _bubble;
     private readonly double _baseFontSize;
+    private readonly Color _nick;
 
     public long MessageId { get; }
     public bool IsOut { get; }
@@ -43,6 +41,9 @@ public sealed class MessageCard : Grid
         HorizontalAlignment = isOut ? HorizontalAlignment.Right : HorizontalAlignment.Left;
         Margin = new Thickness(0, 0, 0, 14);
 
+        var name = string.IsNullOrWhiteSpace(senderName) ? "家庭消息" : senderName;
+        _nick = MdTheme.NickColor(name);
+
         // 基准字号按内容长度自适应，长消息不至于把气泡撑爆
         var len = RawContent.Length;
         _baseFontSize = len <= 12 ? 30
@@ -51,14 +52,12 @@ public sealed class MessageCard : Grid
             : len <= 140 ? 19
             : 17;
 
-        var name = string.IsNullOrWhiteSpace(senderName) ? "家庭消息" : senderName;
-
         _sender = new TextBlock
         {
             Text = name,
             FontSize = 14,
-            FontWeight = FontWeights.SemiBold,
-            Foreground = new SolidColorBrush(isOut ? Gold : Accent),
+            FontWeight = FontWeights.Medium,
+            Foreground = new SolidColorBrush(_nick),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 4),
         };
@@ -67,7 +66,7 @@ public sealed class MessageCard : Grid
         {
             Text = RawContent,
             FontSize = _baseFontSize,
-            Foreground = new SolidColorBrush(Color.FromRgb(0xEC, 0xF2, 0xFC)),
+            Foreground = MdTheme.OnSurface,
             TextWrapping = TextWrapping.Wrap,
             LineHeight = _baseFontSize * 1.35,
         };
@@ -76,8 +75,8 @@ public sealed class MessageCard : Grid
         {
             Text = time ?? "",
             FontSize = 12,
-            Foreground = new SolidColorBrush(Color.FromRgb(0x74, 0x84, 0xA1)),
-            Margin = new Thickness(0, 5, 0, 0),
+            Foreground = MdTheme.TimeText,
+            Margin = new Thickness(0, 6, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Right,
         };
 
@@ -86,19 +85,27 @@ public sealed class MessageCard : Grid
         stack.Children.Add(_content);
         stack.Children.Add(_time);
 
+        // 气泡：中性底 + 昵称色淡染（约 10%），左侧/右侧一条昵称色强调条
+        var bubbleBg = MdTheme.Blend(MdTheme.SurfaceC.Color, _nick, 0.10);
+
         _bubble = new Border
         {
             Child = stack,
-            Background = new SolidColorBrush(isOut ? OutBg : InBg),
-            CornerRadius = new CornerRadius(14),
+            Background = new SolidColorBrush(bubbleBg),
+            CornerRadius = new CornerRadius(16, 16, 16, 4),
             Padding = new Thickness(18, 12, 18, 10),
-            BorderThickness = new Thickness(2),
-            BorderBrush = Brushes.Transparent,
-            MaxWidth = 640,
+            BorderThickness = isOut ? new Thickness(0, 0, 3, 0) : new Thickness(3, 0, 0, 0),
+            BorderBrush = new SolidColorBrush(_nick),
+            MaxWidth = 660,
             SnapsToDevicePixels = true,
         };
 
-        var avatar = BuildAvatar(name, isOut);
+        if (isOut)
+        {
+            _bubble.CornerRadius = new CornerRadius(16, 16, 4, 16);
+        }
+
+        var avatar = BuildAvatar(name, _nick);
         var row = new StackPanel
         {
             Orientation = Orientation.Horizontal,
@@ -119,7 +126,7 @@ public sealed class MessageCard : Grid
         Children.Add(row);
     }
 
-    private static Border BuildAvatar(string name, bool isOut)
+    private static Border BuildAvatar(string name, Color nick)
     {
         var initial = "?";
         try
@@ -137,17 +144,15 @@ public sealed class MessageCard : Grid
             Width = 44,
             Height = 44,
             CornerRadius = new CornerRadius(22),
-            Background = new SolidColorBrush(isOut
-                ? Color.FromRgb(0x24, 0x33, 0x24)
-                : Color.FromRgb(0x1B, 0x2A, 0x42)),
+            Background = new SolidColorBrush(MdTheme.Blend(MdTheme.SurfaceHigh.Color, nick, 0.22)),
             Margin = new Thickness(12, 0, 12, 0),
             VerticalAlignment = VerticalAlignment.Top,
             Child = new TextBlock
             {
                 Text = initial,
                 FontSize = 19,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = new SolidColorBrush(isOut ? Gold : Accent),
+                FontWeight = FontWeights.Medium,
+                Foreground = new SolidColorBrush(nick),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             },
@@ -162,10 +167,6 @@ public sealed class MessageCard : Grid
 
         AnimateFont(_content, target, animate);
         _content.LineHeight = Math.Max(20, target * 1.35);
-
-        _bubble.BorderBrush = isNewest
-            ? new SolidColorBrush(IsOut ? Gold : Accent)
-            : Brushes.Transparent;
 
         var targetOpacity = isNewest ? 1.0 : Math.Max(0.68, 1.0 - 0.09 * distance);
         if (animate)

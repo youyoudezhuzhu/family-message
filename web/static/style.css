@@ -1,155 +1,289 @@
+/* ═══════════════════════════════════════════════════════════════
+   家庭消息 · 网页控制台 — Material Design 3 暗色主题
+   令牌来源：docs/DESIGN-TOKENS.md（与 Windows 端共用）
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 1. MD3 surface 体系（共用，不随配色变）─────────────────── */
 :root{
-  --bg:#12151c; --panel:#1a1f2b; --panel2:#20263400; --line:#2a3243;
-  --fg:#e8edf7; --dim:#93a0b8; --accent:#5ac8fa; --ok:#5ddba0;
-  --warn:#f5c451; --bad:#f2705e; --shadow:0 10px 30px rgba(0,0,0,.45);
+  --surface:#141218;
+  --surface-low:#1D1B20;
+  --surface-c:#211F26;
+  --surface-high:#2B2930;
+  --surface-highest:#36343B;
+  --on-surface:#E6E0E9;
+  --on-variant:#CAC4D0;
+  --outline:#938F99;
+  --outline-variant:#49454F;
+  --ok:#A5D6A7;
+  --bad:#EF9A9A;
+
+  /* 主题色：默认靛蓝，切换见 [data-theme] */
+  --primary:#A8C7FA;
+  --primary-c:#0842A0;
+  --on-primary-c:#D3E3FD;
+  --on-primary:#0B1020;
 }
-@media (prefers-color-scheme: light){
-  :root{
-    --bg:#f3f5f9; --panel:#fff; --line:#e0e5ee; --fg:#1a2130;
-    --dim:#69748a; --accent:#0a84d8; --ok:#149e63; --warn:#b7791f; --bad:#c0392b;
-    --shadow:0 8px 24px rgba(20,30,60,.10);
-  }
-}
+
+/* ── 2. 可切换配色（设置里选）──────────────────────────────── */
+[data-theme="indigo"]{--primary:#A8C7FA;--primary-c:#0842A0;--on-primary-c:#D3E3FD;--on-primary:#0B1020}
+[data-theme="violet"]{--primary:#D0BCFF;--primary-c:#4F378B;--on-primary-c:#EADDFF;--on-primary:#0B1020}
+[data-theme="teal"]  {--primary:#80DEEA;--primary-c:#004F58;--on-primary-c:#B2EBF2;--on-primary:#001A1E}
+[data-theme="green"] {--primary:#A5D6A7;--primary-c:#1B5E20;--on-primary-c:#C8E6C9;--on-primary:#00210A}
+[data-theme="amber"] {--primary:#FFD54F;--primary-c:#6D4C00;--on-primary-c:#FFECB3;--on-primary:#221A00}
+[data-theme="coral"] {--primary:#FFB4AB;--primary-c:#93000A;--on-primary-c:#FFDAD6;--on-primary:#2B0002}
+[data-theme="pink"]  {--primary:#F8BBD0;--primary-c:#880E4F;--on-primary-c:#FCE4EC;--on-primary:#2B0016}
+[data-theme="cyan"]  {--primary:#90CAF9;--primary-c:#0B4F6C;--on-primary-c:#CDE7FF;--on-primary:#001A28}
+
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
 body{
-  background:var(--bg); color:var(--fg); font:15px/1.55 -apple-system,BlinkMacSystemFont,
-  "PingFang SC","Microsoft YaHei","Segoe UI",Roboto,sans-serif;
-  padding-bottom:40px;
+  background:var(--surface);
+  color:var(--on-surface);
+  font:14px/1.5 Roboto,-apple-system,BlinkMacSystemFont,"PingFang SC",
+       "Microsoft YaHei","Segoe UI",sans-serif;
+  padding-bottom:48px;
+  -webkit-font-smoothing:antialiased;
 }
 
+/* ── 3. MD 滚动条（消灭默认白条）────────────────────────────── */
+*{scrollbar-width:thin; scrollbar-color:rgba(230,224,233,.28) transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{
+  background:rgba(230,224,233,.28); border-radius:4px;
+}
+::-webkit-scrollbar-thumb:hover{background:rgba(230,224,233,.45)}
+::-webkit-scrollbar-corner{background:transparent}
+
+/* ── 4. 顶栏（MD3 top app bar）──────────────────────────────── */
 .topbar{
-  position:sticky; top:0; z-index:20; display:flex; align-items:center; justify-content:space-between;
-  padding:14px 20px; background:color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter:blur(12px); border-bottom:1px solid var(--line);
+  position:sticky; top:0; z-index:20;
+  display:flex; align-items:center; gap:12px;
+  height:64px; padding:0 16px;
+  background:var(--surface-low);
+  border-bottom:1px solid var(--outline-variant);
 }
-.brand{display:flex; align-items:center; gap:10px}
-.brand h1{font-size:18px; margin:0; letter-spacing:.5px}
-.brand .sub{color:var(--dim); font-size:12px}
-.dot{width:9px;height:9px;border-radius:50%;background:var(--bad);display:inline-block}
-.dot.on{background:var(--ok); box-shadow:0 0 0 4px color-mix(in srgb,var(--ok) 25%,transparent)}
+.brand{display:flex; align-items:center; gap:10px; flex:1; min-width:0}
+.brand h1{font-size:22px; font-weight:400; margin:0; letter-spacing:.2px}
+.brand .sub{color:var(--on-variant); font-size:12px; white-space:nowrap}
+.brand .sub:empty{display:none}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bad);flex:0 0 10px}
+.dot.on{background:var(--ok)}
 
-main{max-width:920px; margin:18px auto; padding:0 16px; display:grid; gap:16px}
+main{max-width:960px; margin:16px auto; padding:0 16px; display:grid; gap:16px}
 
-.card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px; box-shadow:var(--shadow)}
+/* ── 5. 卡片 ─────────────────────────────────────────────────── */
+.card{
+  background:var(--surface-low);
+  border-radius:12px;
+  padding:16px;
+}
 .card-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:14px}
-.card-head h2{font-size:15px; margin:0; font-weight:600; letter-spacing:.3px}
+.card-head h2{font-size:16px; margin:0; font-weight:500; letter-spacing:.15px}
 
-.field{display:block; margin-bottom:14px}
-.field > span{display:block; font-size:12px; color:var(--dim); margin-bottom:6px; letter-spacing:.4px}
-
-select, textarea, input{
-  width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line);
-  border-radius:10px; padding:10px 12px; font:inherit; outline:none;
+/* ── 6. 按钮 ─────────────────────────────────────────────────── */
+button{font:inherit; cursor:pointer; border:none; background:none; color:inherit}
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  height:40px; padding:0 20px; border-radius:999px;
+  font-size:14px; font-weight:500; letter-spacing:.1px;
+  transition:background .15s cubic-bezier(.2,0,0,1);
 }
-select:focus, textarea:focus{border-color:var(--accent)}
-textarea{resize:vertical; min-height:64px}
+.btn-filled{background:var(--primary); color:var(--on-primary)}
+.btn-filled:hover{box-shadow:inset 0 0 0 99px rgba(255,255,255,.08)}
+.btn-filled:disabled{opacity:.38; cursor:not-allowed; box-shadow:none}
+.btn-tonal{background:var(--primary-c); color:var(--on-primary-c)}
+.btn-tonal:hover{box-shadow:inset 0 0 0 99px rgba(255,255,255,.08)}
+.btn-outlined{border:1px solid var(--outline); color:var(--primary); background:transparent}
+.btn-outlined:hover{background:color-mix(in srgb,var(--primary) 8%,transparent)}
+.btn-text{color:var(--primary); padding:0 14px}
+.btn-text:hover{background:color-mix(in srgb,var(--primary) 8%,transparent)}
+.btn-danger{background:#FFB4AB; color:#2B0002}
+.btn.small{height:34px; padding:0 14px; font-size:13px}
+.icon-btn{
+  width:40px;height:40px;border-radius:999px;
+  display:inline-flex;align-items:center;justify-content:center;
+  color:var(--on-variant);
+}
+.icon-btn:hover{background:rgba(230,224,233,.08)}
 
+/* ── 7. 输入框（outlined）────────────────────────────────────── */
+.field{display:block; margin-bottom:16px}
+.field > .label{display:block; font-size:12px; color:var(--on-variant); margin-bottom:6px}
+input[type=text],textarea,select,input:not([type]){
+  width:100%; background:var(--surface-c); color:var(--on-surface);
+  border:1px solid var(--outline); border-radius:12px;
+  padding:12px 14px; font:inherit; outline:none;
+  transition:border-color .15s,box-shadow .15s;
+}
+input:focus,textarea:focus,select:focus{
+  border-color:var(--primary);
+  box-shadow:inset 0 0 0 1px var(--primary);   /* 视觉上加粗到 2px */
+}
+textarea{resize:vertical; min-height:72px}
+input::placeholder,textarea::placeholder{color:color-mix(in srgb,var(--on-variant) 70%,transparent)}
+
+/* ── 8. 下拉（自绘，MD3 exposed dropdown）────────────────────── */
+.md-select{position:relative; user-select:none}
+.md-select-btn{
+  width:100%; display:flex; align-items:center; justify-content:space-between;
+  gap:10px; background:var(--surface-c); color:var(--on-surface);
+  border:1px solid var(--outline); border-radius:12px;
+  padding:12px 14px; font:inherit; text-align:left;
+}
+.md-select-btn:hover{border-color:var(--on-variant)}
+.md-select.open .md-select-btn{border-color:var(--primary); box-shadow:inset 0 0 0 1px var(--primary)}
+.md-select-btn .chev{color:var(--on-variant); flex:0 0 auto; transition:transform .2s}
+.md-select.open .chev{transform:rotate(180deg)}
+.md-select-menu{
+  position:absolute; left:0; right:0; top:calc(100% + 4px); z-index:40;
+  background:var(--surface-high); border-radius:12px; padding:8px 0;
+  max-height:280px; overflow-y:auto;
+  box-shadow:0 4px 8px 3px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.3);
+  display:none;
+}
+.md-select.open .md-select-menu{display:block}
+.md-select-item{
+  display:flex; align-items:center; gap:10px;
+  width:100%; padding:11px 16px; font-size:14px; text-align:left;
+  color:var(--on-surface);
+}
+.md-select-item:hover{background:rgba(230,224,233,.08)}
+.md-select-item.sel{background:var(--primary-c); color:var(--on-primary-c)}
+.md-select-item .swatch{width:14px;height:14px;border-radius:50%;flex:0 0 14px}
+
+/* ── 9. 设备选择 chips ──────────────────────────────────────── */
 .targets{display:flex; flex-wrap:wrap; gap:8px}
-.target{
-  display:flex; align-items:center; gap:7px; padding:8px 12px; border:1px solid var(--line);
-  border-radius:10px; cursor:pointer; user-select:none; font-size:14px; transition:.15s;
+.chip{
+  display:inline-flex; align-items:center; gap:8px;
+  height:36px; padding:0 14px; border-radius:8px;
+  border:1px solid var(--outline); font-size:13px;
+  cursor:pointer; user-select:none;
+  transition:background .15s,border-color .15s;
 }
-.target:hover{border-color:var(--accent)}
-.target.sel{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 14%,transparent)}
-.target.off{opacity:.55}
-.target .sdot{width:7px;height:7px;border-radius:50%;background:var(--bad)}
-.target .sdot.on{background:var(--ok)}
+.chip:hover{border-color:var(--on-variant)}
+.chip.sel{background:var(--primary-c); border-color:transparent; color:var(--on-primary-c)}
+.chip.off{opacity:.5}
+.chip .sdot{width:8px;height:8px;border-radius:50%;background:var(--bad);flex:0 0 8px}
+.chip .sdot.on{background:var(--ok)}
 
-.quick{display:flex; flex-wrap:wrap; gap:8px; margin:2px 0 14px}
+.quick{display:flex; flex-wrap:wrap; gap:8px; margin:2px 0 16px}
 .quick button{
-  background:transparent; border:1px dashed var(--line); color:var(--dim);
-  border-radius:20px; padding:5px 12px; font-size:13px; cursor:pointer;
+  border:1px dashed var(--outline-variant); color:var(--on-variant);
+  border-radius:999px; height:32px; padding:0 14px; font-size:13px;
 }
-.quick button:hover{color:var(--fg); border-color:var(--accent)}
+.quick button:hover{color:var(--on-surface); border-color:var(--primary)}
 
 .actions{display:flex; align-items:center; gap:12px}
-button.primary{
-  background:var(--accent); color:#06121c; border:none; border-radius:10px;
-  padding:11px 26px; font-size:15px; font-weight:600; cursor:pointer;
-}
-button.primary:disabled{opacity:.45; cursor:not-allowed}
-button.ghost{
-  background:transparent; border:1px solid var(--line); color:var(--dim);
-  border-radius:9px; padding:8px 14px; cursor:pointer; font-size:13px;
-}
-button.ghost:hover{color:var(--fg); border-color:var(--accent)}
-button.ghost.small{padding:5px 11px; font-size:12px}
-.hint{font-size:12px; color:var(--dim)}
+.hint{font-size:12px; color:var(--on-variant)}
+.empty{color:var(--on-variant); font-size:13px; margin:6px 0 0}
 
-/* 设备卡片 */
+/* ── 10. 设备列表 ───────────────────────────────────────────── */
 .devices{display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:12px}
-.dev{border:1px solid var(--line); border-radius:12px; padding:14px; background:var(--bg)}
-.dev-top{display:flex; align-items:center; gap:9px; margin-bottom:6px}
-.dev-name{font-weight:600; font-size:15px}
-.dev-state{font-size:12px; color:var(--dim)}
+.dev{background:var(--surface-c); border-radius:12px; padding:14px}
+.dev-top{display:flex; align-items:center; gap:9px; margin-bottom:4px}
+.dev-name{font-weight:500; font-size:15px}
+.dev-state{font-size:12px; color:var(--on-variant)}
 .dev-state.on{color:var(--ok)}
-.dev-meta{font-size:12px; color:var(--dim); margin:6px 0 12px; min-height:18px}
+.dev-meta{font-size:12px; color:var(--on-variant); margin:6px 0 12px; min-height:18px}
 .dev-acts{display:flex; flex-wrap:wrap; gap:8px}
 .dev-acts button{
-  flex:1 1 auto; background:transparent; border:1px solid var(--line); color:var(--fg);
-  border-radius:9px; padding:8px 10px; font-size:13px; cursor:pointer; white-space:nowrap;
+  flex:1 1 auto; height:34px; border-radius:999px;
+  border:1px solid var(--outline); color:var(--primary);
+  font-size:13px; white-space:nowrap; transition:background .15s;
 }
-.dev-acts button:hover:not(:disabled){border-color:var(--accent); color:var(--accent)}
+.dev-acts button:hover:not(:disabled){background:color-mix(in srgb,var(--primary) 10%,transparent)}
 .dev-acts button:disabled{opacity:.4; cursor:not-allowed}
-.empty{color:var(--dim); font-size:13px; margin:6px 0 0}
 
-/* 消息记录 */
-.log{display:flex; flex-direction:column; gap:10px; max-height:520px; overflow:auto}
-.msg{border:1px solid var(--line); border-radius:11px; padding:12px 14px; background:var(--bg)}
-.msg-head{display:flex; justify-content:space-between; gap:10px; font-size:13px; color:var(--dim); margin-bottom:6px}
-.msg-sender{color:var(--accent); font-weight:600}
-.msg-body{font-size:16px; white-space:pre-wrap; word-break:break-word}
+/* ── 11. 消息记录 ───────────────────────────────────────────── */
+.log{display:flex; flex-direction:column; gap:10px; max-height:560px; overflow-y:auto; padding-right:4px}
+.msg{
+  background:var(--surface-c); border-radius:12px;
+  padding:12px 14px; border-left:4px solid var(--nick,var(--outline-variant));
+}
+.msg-head{display:flex; justify-content:space-between; gap:10px; font-size:12px;
+  color:var(--on-variant); margin-bottom:6px}
+.msg-sender{color:var(--nick,var(--primary)); font-weight:500; font-size:13px}
+.msg-body{font-size:15px; color:var(--on-surface); white-space:pre-wrap; word-break:break-word}
 .tags{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px}
-.tag{font-size:11px; border-radius:6px; padding:3px 8px; border:1px solid var(--line); color:var(--dim)}
+.tag{font-size:11px; border-radius:8px; padding:3px 8px;
+  border:1px solid var(--outline-variant); color:var(--on-variant)}
 .tag.s-done{border-color:var(--ok); color:var(--ok)}
 .tag.s-fail{border-color:var(--bad); color:var(--bad)}
+.badge{font-size:11px; border-radius:8px; padding:2px 7px; margin-left:8px;
+  background:var(--surface-highest); color:var(--on-variant)}
 
-/* 弹窗 */
-.modal{position:fixed; inset:0; background:rgba(6,9,14,.8); display:none; align-items:center; justify-content:center; z-index:60; padding:20px}
+/* ── 12. 对话框 ─────────────────────────────────────────────── */
+.modal{
+  position:fixed; inset:0; background:rgba(0,0,0,.6);
+  display:none; align-items:center; justify-content:center; z-index:60; padding:20px;
+}
 .modal.show{display:flex}
-.modal-box{background:var(--panel); border:1px solid var(--line); border-radius:14px; max-width:96vw; max-height:92vh; display:flex; flex-direction:column; overflow:hidden}
-.modal-head{display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--line)}
-.modal-body{padding:12px; overflow:auto}
-.modal-body img{max-width:88vw; max-height:70vh; display:block; border-radius:8px}
-.modal-foot{padding:10px 16px; border-top:1px solid var(--line); font-size:12px; color:var(--dim)}
+.modal-box{
+  background:var(--surface-high); border-radius:28px;
+  max-width:96vw; max-height:92vh; display:flex; flex-direction:column; overflow:hidden;
+  box-shadow:0 8px 12px 6px rgba(0,0,0,.15), 0 4px 4px rgba(0,0,0,.3);
+}
+.modal-head{display:flex; justify-content:space-between; align-items:center;
+  gap:12px; padding:16px 20px; }
+.modal-head strong{font-size:18px; font-weight:500}
+.modal-body{padding:8px 20px 20px; overflow:auto}
+.modal-body img{max-width:88vw; max-height:70vh; display:block; border-radius:12px}
+.modal-foot{padding:12px 20px 20px; font-size:12px; color:var(--on-variant)}
 
-/* 设备回复气泡 */
-.msg.reply{border-left:3px solid var(--warn)}
-.msg.reply .msg-sender{color:var(--warn)}
-.badge{font-size:11px; border-radius:5px; padding:1px 6px; margin-left:8px;
-  background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn)}
-
-/* 对话视图 */
-.conv-box{width:min(560px, 94vw); height:min(620px, 86vh)}
-.conv-body{flex:1; overflow:auto; padding:16px; display:flex; flex-direction:column; gap:12px}
-.bubble{max-width:80%; padding:9px 13px; border-radius:12px; font-size:15px;
-  white-space:pre-wrap; word-break:break-word; line-height:1.45}
-.bubble .meta{display:block; font-size:11px; opacity:.75; margin-bottom:3px}
-.bubble.in{align-self:flex-start; background:var(--bg); border:1px solid var(--line)}
-.bubble.out{align-self:flex-end; background:color-mix(in srgb,var(--accent) 22%,transparent);
-  border:1px solid color-mix(in srgb,var(--accent) 45%,transparent)}
-.conv-input{display:flex; gap:8px; padding:12px 16px; border-top:1px solid var(--line)}
-.conv-input select{width:auto; min-width:96px; padding:9px 10px}
+/* ── 13. 对话视图 ───────────────────────────────────────────── */
+.conv-box{width:min(600px,94vw); height:min(680px,88vh)}
+.conv-body{flex:1; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:12px}
+.bubble{max-width:78%; padding:10px 14px; font-size:15px; line-height:1.45;
+  white-space:pre-wrap; word-break:break-word;
+  background:var(--surface-c); color:var(--on-surface);
+  border-radius:16px; border-top-left-radius:4px; align-self:flex-start;
+  border-left:3px solid var(--nick,var(--outline-variant));
+}
+.bubble.out{align-self:flex-end; border-radius:16px; border-top-left-radius:16px;
+  border-top-right-radius:4px; border-left:none;
+  border-right:3px solid var(--nick,var(--outline-variant))}
+.bubble .meta{display:block; font-size:11px; margin-bottom:3px;
+  color:var(--nick,var(--on-variant)); font-weight:500}
+.conv-input{display:flex; gap:10px; padding:12px 20px 20px; align-items:center}
+.conv-input .md-select{min-width:110px; flex:0 0 auto}
 .conv-input input{flex:1}
-button.primary.small{padding:9px 18px; font-size:14px}
 
-/* 昵称管理 */
-a.link{color:var(--accent); font-size:12px; margin-left:8px; cursor:pointer; text-decoration:none}
-a.link:hover{text-decoration:underline}
-.names-box{width:min(420px, 92vw); max-height:80vh}
-.names-body{padding:16px; overflow:auto}
-.names-add{display:flex; gap:8px; margin-bottom:14px}
+/* ── 14. 昵称管理 / 设置 ────────────────────────────────────── */
+.names-box{width:min(460px,92vw); max-height:84vh}
+.names-body{padding:0 20px 20px; overflow:auto}
+.names-add{display:flex; gap:10px; margin-bottom:14px}
 .names-add input{flex:1}
-.name-row{display:flex; align-items:center; gap:8px; padding:8px 10px;
-  border:1px solid var(--line); border-radius:9px; margin-bottom:8px; background:var(--bg)}
-.name-row input{flex:1; border:none; background:transparent; padding:4px 0; font-size:15px}
-.name-row button{background:transparent; border:1px solid var(--line); color:var(--dim);
-  border-radius:7px; padding:5px 10px; font-size:12px; cursor:pointer}
-.name-row button:hover{color:var(--bad); border-color:var(--bad)}
+.name-row{display:flex; align-items:center; gap:10px; padding:10px 14px;
+  background:var(--surface-c); border-radius:12px; margin-bottom:8px}
+.name-row input{
+  flex:1; background:transparent; border:none; padding:4px 0;
+  font-size:15px; color:var(--on-surface);
+}
+.name-row input:focus{border:none; box-shadow:none}
+.name-row .del{color:var(--bad); font-size:13px; padding:4px 8px; border-radius:8px}
+.name-row .del:hover{background:color-mix(in srgb,var(--bad) 12%,transparent)}
+
+/* 配色选择行 */
+.theme-grid{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:12px 0 4px}
+.theme-item{
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  padding:12px 4px; border-radius:12px; border:1px solid transparent;
+}
+.theme-item:hover{background:rgba(230,224,233,.06)}
+.theme-item.sel{border-color:var(--primary); background:color-mix(in srgb,var(--primary) 10%,transparent)}
+.theme-item .sw{width:32px;height:32px;border-radius:50%}
+.theme-item .t{font-size:11px; color:var(--on-variant)}
+
+.section-label{font-size:12px; color:var(--on-variant); margin:18px 0 8px; display:block}
+.divider{height:1px; background:var(--outline-variant); margin:18px 0; border:0}
+
+a.link{color:var(--primary); cursor:pointer; text-decoration:none; font-size:12px; margin-left:6px}
+a.link:hover{text-decoration:underline}
 
 @media (max-width:600px){
+  .brand h1{font-size:18px}
   .brand .sub{display:none}
   main{padding:0 10px}
-  .card{padding:14px}
+  .theme-grid{grid-template-columns:repeat(3,1fr)}
 }

@@ -41,6 +41,10 @@ public sealed class AgentConfig
     [JsonPropertyName("reply_name")]
     public string ReplyName { get; set; } = "";
 
+    /// <summary>配色方案 id（纯本地，可选值见 MdTheme.Schemes）。</summary>
+    [JsonPropertyName("theme")]
+    public string ThemeId { get; set; } = "indigo";
+
     [JsonIgnore]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(ServerUrl) &&
@@ -105,6 +109,10 @@ public sealed class AgentConfig
 
         for (var i = 0; i < ReplyNames.Count; i++)
             ReplyNames[i] = ReplyNames[i].Trim();
+
+        // 配色 id 不认识就回默认（家里手改坏了配置也不至于起不来）
+        if (MdTheme.Find(ThemeId) is null)
+            ThemeId = MdTheme.Schemes[0].Id;
     }
 
     public void Save()
