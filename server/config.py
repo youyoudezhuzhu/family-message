@@ -22,13 +22,11 @@ _DEFAULTS: dict = {
     },
     "message": {"popup_auto_close_seconds": 0, "max_targets": 20, "history_limit": 30},
     "xiaomi": {
+        # 官方 OAuth2（不保存账号密码）：redirect_url 必须是小米那边为该 client_id
+        # 注册过的地址，默认沿用官方 HA 集成的注册地址；
+        # oauth_device_id 首次使用时自动生成并固定。
         "enabled": False,
-        "username": "",
-        "password": "",
         "region": "cn",
-        "refresh_ahead_seconds": 86400,
-        # 官方 OAuth2：redirect_url 必须是小米那边为 client_id 注册过的地址，
-        # 默认沿用官方 HA 集成的注册地址；oauth_device_id 首次使用时自动生成并固定。
         "redirect_url": "http://homeassistant.local:8123",
         "oauth_device_id": "",
     },
@@ -60,10 +58,6 @@ def load_config() -> dict:
         cfg["web"]["password"] = os.environ["FM_WEB_PASSWORD"]
     if os.environ.get("FM_ENROLL_TOKEN") is not None:
         cfg["device"]["enroll_token"] = os.environ["FM_ENROLL_TOKEN"]
-    if os.environ.get("FM_XIAOMI_USERNAME"):
-        cfg["xiaomi"]["username"] = os.environ["FM_XIAOMI_USERNAME"]
-    if os.environ.get("FM_XIAOMI_PASSWORD"):
-        cfg["xiaomi"]["password"] = os.environ["FM_XIAOMI_PASSWORD"]
 
     Path(cfg["data_dir"]).mkdir(parents=True, exist_ok=True)
     return cfg
