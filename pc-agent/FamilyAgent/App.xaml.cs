@@ -24,10 +24,28 @@ public partial class App : Application
     {
         base.OnStartup(e);
 
+        // ★ 第一件事就是装崩溃兜底。
+        // 没有日志的闪退根本没法查 —— 之前那次「回复发不出去」就是因为所有异常
+        // 都被静默吞掉，查了很久。这里把三类未处理异常全部落盘。
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            AgentLog.Write("!! 未处理异常(AppDomain): " + args.ExceptionObject);
+        DispatcherUnhandledException += (_, args) =>
+        {
+            AgentLog.Write("!! 未处理异常(UI): " + args.Exception);
+            args.Handled = true;          // UI 线程的异常别直接把进程杀掉
+        };
+        TaskScheduler.UnobservedTaskException += (_, args) =>
+        {
+            AgentLog.Write("!! 未观察的任务异常: " + args.Exception);
+            args.SetObserved();
+        };
+        AgentLog.Write($"=== 进程启动 pid={Environment.ProcessId} exe={Environment.ProcessPath} ===");
+
         // 单实例：重复启动（开机自启 + 手动双击）时直接退出
         _singleInstance = new Mutex(true, @"Global\FamilyAgent.SingleInstance", out var isNew);
         if (!isNew)
         {
+            AgentLog.Write("已有实例在运行，本进程退出");
             Shutdown();
             return;
         }
@@ -39,8 +57,8 @@ public partial class App : Application
         AgentLog.Rotate();
 
         Config = AgentConfig.Load();
-        MdTheme.Apply(Config.ThemeId);
-        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} theme={MdTheme.CurrentId} ===");
+        MdTheme.Apply(Config.ThemeId, Config.ThemeMode);
+        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} theme={MdTheme.CurrentId} agent={AgentClient.ReportedVersion} ===");
         Client = new AgentClient(Config);
         Client.ConnectionChanged += OnConnectionChanged;
         Client.MessageReceived += OnMessageReceived;

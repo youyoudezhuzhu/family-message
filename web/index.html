@@ -1,189 +1,328 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-scheme="indigo" data-mode="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#141218">
+<meta name="theme-color" content="#1E1F25">
 <title>家庭消息 · 控制台</title>
-<link rel="stylesheet" href="static/style.css">
+<!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
+     表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
+<link rel="stylesheet" href="static/tokens.css?v=0.7.0">
+<link rel="stylesheet" href="static/style.css?v=0.7.0">
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand">
-    <span class="dot" id="ws-dot"></span>
-    <h1>家庭消息</h1>
-    <span class="sub" id="server-time"></span>
-    <span class="sub" id="server-ver" title="当前运行的服务端版本（升级后没变说明旧进程还在跑）"></span>
+<!-- ══ Material Symbols 图标精灵 ══════════════════════════════════
+     规范 §10：统一用 Material 图标，不用 emoji 当 UI 图标。
+     内联 SVG 而不是引 Google 字体 —— 这是家庭内网 NAS，不能依赖外网。 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></symbol>
+    <symbol id="i-computer" viewBox="0 0 24 24"><path d="M20 18c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></symbol>
+    <symbol id="i-expand" viewBox="0 0 24 24"><path d="M16.59 8.59L12 13.17 7.41 8.59 6 10l6 6 6-6z"/></symbol>
+    <symbol id="i-add" viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></symbol>
+    <symbol id="i-delete" viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></symbol>
+    <symbol id="i-error" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24"><path d="M1 21h22L12 2 1 21zm12-3h-2v-2h2v2zm0-4h-2v-4h2v4z"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42A6.92 6.92 0 0 1 19 12c0 3.87-3.13 7-7 7A6.995 6.995 0 0 1 7.58 6.58L6.17 5.17A8.932 8.932 0 0 0 3 12a9 9 0 0 0 18 0c0-2.74-1.23-5.18-3.17-6.83z"/></symbol>
+    <symbol id="i-power-off" viewBox="0 0 24 24"><path d="M8.7 5.5c.63.37 1.08.98 1.23 1.68.1.5.03 1.02-.2 1.47l3.28 3.28c.45-.23.97-.3 1.47-.2.7.15 1.31.6 1.68 1.23.3.5.4 1.1.26 1.68l2.48 2.48c.9-1.5 1.2-3.3.7-5.02-.6-2.06-2.3-3.7-4.4-4.2-1.2-.3-1.9-1.4-1.6-2.6l.2-1.1-.3-.1c-3.3-.9-6.8.4-8.6 3.1l.3.3 1.4 1.4zM4.1 3.6L2.7 5l3.1 3.1c-1.4 1.5-2.1 3.6-1.7 5.8.6 3.3 3.5 5.7 6.9 5.4 1.3-.1 2.6-.6 3.6-1.4l3.4 3.4 1.4-1.4L4.1 3.6z"/></symbol>
+    <symbol id="i-screenshot" viewBox="0 0 24 24"><path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2h-3.17L15 2H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5z"/></symbol>
+    <symbol id="i-devices" viewBox="0 0 24 24"><path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z"/></symbol>
+    <symbol id="i-history" viewBox="0 0 24 24"><path d="M13 3c-4.97 0-9 4.03-9 9H1l3.89 3.89.07.14L9 12H6c0-3.87 3.13-7 7-7s7 3.13 7 7-3.13 7-7 7c-1.93 0-3.68-.79-4.94-2.06l-1.42 1.42A8.954 8.954 0 0 0 13 21c4.97 0 9-4.03 9-9s-4.03-9-9-9zm-1 5v5l4.28 2.54.72-1.21-3.5-2.08V8H12z"/></symbol>
+    <symbol id="i-person" viewBox="0 0 24 24"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></symbol>
+    <symbol id="i-light" viewBox="0 0 24 24"><path d="M20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6zm0-10c-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4-1.79-4-4-4z"/></symbol>
+    <symbol id="i-dark" viewBox="0 0 24 24"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><path d="M10.85 12.65h2.3L12 9l-1.15 3.65zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12 20 8.69zM14.3 16l-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9h-1.9z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 24 24"><path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7c-2.76 0-5 2.24-5 5s2.24 5 5 5h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4c2.76 0 5-2.24 5-5s-2.24-5-5-5z"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/></symbol>
+  </defs>
+</svg>
+
+<!-- ══ 顶栏 ═════════════════════════════════════════════════════ -->
+<header class="md-top-bar">
+  <div class="md-top-bar__brand">
+    <span class="md-top-bar__mark"><svg class="md-icon" aria-hidden="true"><use href="#i-chat"/></svg></span>
+    <h1 class="md-top-bar__title">家庭消息</h1>
   </div>
-  <button class="icon-btn" id="btn-settings" title="设置" aria-label="设置">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="#CAC4D0">
-      <path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/>
-    </svg>
+
+  <div class="md-top-bar__status" id="conn-status">
+    <span class="md-dot" id="ws-dot"></span>
+    <span id="ws-text">连接中…</span>
+  </div>
+
+  <div class="md-top-bar__meta">
+    <span id="server-ver" title="当前运行的服务端版本（升级后没变说明旧进程还在跑）"></span>
+    <span id="server-time"></span>
+  </div>
+
+  <button class="md-icon-btn" id="btn-refresh" aria-label="刷新设备与消息">
+    <svg class="md-icon" aria-hidden="true"><use href="#i-refresh"/></svg>
   </button>
-  <button class="icon-btn" id="btn-refresh" title="刷新" aria-label="刷新">
-    <svg width="22" height="22" viewBox="0 0 24 24" fill="#CAC4D0">
-      <path d="M17.65 6.35A7.96 7.96 0 0 0 12 4c-4.42 0-8 3.58-8 8s3.58 8 8 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-    </svg>
+  <button class="md-icon-btn" id="btn-settings" aria-label="打开设置">
+    <svg class="md-icon" aria-hidden="true"><use href="#i-tune"/></svg>
   </button>
 </header>
 
-<main>
+<main class="md-app">
 
-  <!-- ── 发送区 ───────────────────────────────── -->
-  <section class="card">
-    <div class="card-head"><h2>发送消息</h2></div>
+  <!-- ══ 左栏：发送 ═══════════════════════════════════════════ -->
+  <div class="md-col md-col--left">
+    <section class="md-card" aria-labelledby="t-compose">
+      <div class="md-card__head">
+        <h2 class="md-title-medium" id="t-compose">发送消息</h2>
+      </div>
 
-    <div class="field">
-      <span class="label">发送人</span>
-      <div class="md-select" id="sender-sel"></div>
-    </div>
+      <div class="md-field" style="margin-bottom:var(--md-sp-4)">
+        <span class="md-field__label" style="position:static;display:block;background:none;padding:0;margin-bottom:var(--md-sp-2);color:var(--md-on-surface-variant);font-size:var(--md-label-medium-size)">发送人</span>
+        <div class="md-select" id="sender-sel"></div>
+      </div>
 
-    <div class="field">
-      <span class="label">发送给</span>
-      <div class="targets" id="targets"></div>
-    </div>
+      <span class="md-section-label" style="margin-top:0">发送给</span>
+      <div class="dev-grid" style="display:flex;flex-wrap:wrap;gap:var(--md-sp-2)" id="targets" role="group" aria-label="选择接收设备"></div>
 
-    <label class="field">
-      <span class="label">消息内容</span>
-      <textarea id="content" rows="3" placeholder="输入消息，例如：下来吃饭了"></textarea>
-    </label>
+      <div class="md-field" style="margin:var(--md-sp-4) 0">
+        <textarea id="content" rows="3" placeholder=" " maxlength="2000"></textarea>
+        <span class="md-field__label">留言内容</span>
+        <span class="md-field__support">Ctrl/⌘ + Enter 快速发送</span>
+      </div>
 
-    <div class="quick" id="quick"></div>
+      <div style="display:flex;flex-wrap:wrap;gap:var(--md-sp-2);margin-bottom:var(--md-sp-4)" id="quick" role="group" aria-label="快捷短语"></div>
 
-    <div class="actions">
-      <button class="btn btn-filled" id="btn-send">发送</button>
-      <span class="hint" id="send-hint"></span>
-    </div>
-  </section>
+      <div style="display:flex;align-items:center;gap:var(--md-sp-3);flex-wrap:wrap">
+        <button class="md-btn md-btn--filled" id="btn-send">
+          <svg class="md-btn__icon" aria-hidden="true"><use href="#i-send"/></svg>
+          <span>发送</span>
+        </button>
+        <span class="md-body-small md-muted" id="send-hint" role="status" aria-live="polite"></span>
+      </div>
+    </section>
 
-  <!-- ── 设备 ─────────────────────────────────── -->
-  <section class="card">
-    <div class="card-head">
-      <h2>设备</h2>
-      <span class="hint" id="dev-count"></span>
-    </div>
-    <div class="devices" id="devices"></div>
-    <p class="empty" id="dev-empty">还没有设备接入。在 PC 上运行 Family Agent 后会自动出现在这里。</p>
-  </section>
+    <section class="md-card" aria-labelledby="t-devices">
+      <div class="md-card__head">
+        <h2 class="md-title-medium" id="t-devices">设备</h2>
+        <span class="md-body-small md-muted" id="dev-count"></span>
+      </div>
+      <div class="dev-grid" id="devices"></div>
+      <div class="md-empty" id="dev-empty">
+        <svg class="md-icon md-icon--lg" aria-hidden="true"><use href="#i-devices"/></svg>
+        <span class="md-empty__title">暂无设备</span>
+        <span class="md-empty__hint">在 Windows PC 上运行 Family Agent，并填好服务端地址与设备注册口令，它就会出现在这里。</span>
+      </div>
+    </section>
 
-  <!-- ── 消息记录 ─────────────────────────────── -->
-  <section class="card">
-    <div class="card-head">
-      <h2>消息记录</h2>
-      <button class="btn btn-text small" id="btn-history">加载更早</button>
-    </div>
-    <div class="log" id="log"></div>
-  </section>
+  </div>
 
+  <!-- ══ 右栏：设备 + 记录 ════════════════════════════════════ -->
+  <div class="md-col">
+
+    <section class="md-card" aria-labelledby="t-log">
+      <div class="md-card__head">
+        <h2 class="md-title-medium" id="t-log">消息记录</h2>
+        <button class="md-btn md-btn--text" id="btn-history" style="height:32px">
+          <svg class="md-btn__icon" aria-hidden="true"><use href="#i-history"/></svg>
+          <span>更早</span>
+        </button>
+      </div>
+      <div class="msg-list" id="log"></div>
+      <div class="md-empty" id="log-empty">
+        <svg class="md-icon md-icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
+        <span class="md-empty__title">还没有消息</span>
+        <span class="md-empty__hint">在上面的「发送消息」里写一条留言，选好接收的设备就能发出去。</span>
+      </div>
+    </section>
+
+  </div>
 </main>
 
-<!-- 截图 -->
-<div class="modal" id="modal">
-  <div class="modal-box">
-    <div class="modal-head">
-      <strong id="modal-title">桌面截图</strong>
-      <button class="btn btn-text small" id="modal-close">关闭</button>
+<!-- ══ 对话框：截图 ═════════════════════════════════════════════ -->
+<div class="md-scrim" id="dlg-shot" role="dialog" aria-modal="true" aria-labelledby="shot-title">
+  <div class="md-dialog">
+    <div class="md-dialog__head">
+      <svg class="md-icon" aria-hidden="true"><use href="#i-screenshot"/></svg>
+      <h2 class="md-dialog__title" id="shot-title">桌面截图</h2>
+      <button class="md-icon-btn" id="shot-close" aria-label="关闭截图对话框">
+        <svg class="md-icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
     </div>
-    <div class="modal-body"><img id="modal-img" alt="桌面截图"></div>
-    <div class="modal-foot" id="modal-foot"></div>
+    <div class="md-dialog__body">
+      <div class="shot-frame" id="shot-frame">
+        <div class="shot-loading" id="shot-loading">
+          <span class="md-spinner" role="progressbar" aria-label="正在获取桌面截图"></span>
+          <span class="md-body-small" id="shot-loading-text">正在获取桌面截图……</span>
+        </div>
+        <img id="shot-img" alt="" hidden>
+      </div>
+      <div class="shot-meta" id="shot-meta"></div>
+    </div>
+    <div class="md-dialog__actions">
+      <button class="md-btn md-btn--text" id="shot-again">
+        <svg class="md-btn__icon" aria-hidden="true"><use href="#i-sync"/></svg>
+        <span>重新获取</span>
+      </button>
+      <button class="md-btn md-btn--filled" id="shot-done">关闭</button>
+    </div>
   </div>
 </div>
 
-<!-- 对话 -->
-<div class="modal" id="conv">
-  <div class="modal-box conv-box">
-    <div class="modal-head">
-      <strong id="conv-title">对话</strong>
-      <span class="hint" id="conv-state"></span>
-      <button class="btn btn-text small" id="conv-close">关闭</button>
+<!-- ══ 对话框：对话 ═════════════════════════════════════════════ -->
+<div class="md-scrim" id="dlg-conv" role="dialog" aria-modal="true" aria-labelledby="conv-title">
+  <div class="md-dialog" style="width:min(600px,100%);height:min(720px,88dvh)">
+    <div class="md-dialog__head" style="padding-bottom:var(--md-sp-2)">
+      <svg class="md-icon" aria-hidden="true"><use href="#i-computer"/></svg>
+      <div style="flex:1;min-width:0">
+        <h2 class="md-dialog__title" id="conv-title">对话</h2>
+        <span class="md-body-small md-muted" id="conv-state"></span>
+      </div>
+      <button class="md-icon-btn" id="conv-close" aria-label="关闭对话">
+        <svg class="md-icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
     </div>
     <div class="conv-body" id="conv-body"></div>
     <div class="conv-input">
-      <div class="md-select" id="conv-sender-sel" title="以谁的名义发送"></div>
-      <input id="conv-text" placeholder="输入消息，回车发送">
-      <button class="btn btn-filled small" id="conv-send">发送</button>
+      <div class="md-select" id="conv-sender-sel" aria-label="以谁的名义发送"></div>
+      <div class="md-field">
+        <input id="conv-text" placeholder=" " maxlength="2000">
+        <span class="md-field__label">输入消息，回车发送</span>
+      </div>
+      <button class="md-icon-btn md-icon-btn--filled" id="conv-send" aria-label="发送">
+        <svg class="md-icon" aria-hidden="true"><use href="#i-send"/></svg>
+      </button>
     </div>
   </div>
 </div>
 
-<!-- 设置 -->
-<div class="modal" id="settings">
-  <div class="modal-box settings-box">
-    <div class="modal-head">
-      <strong>设置</strong>
-      <button class="btn btn-text small" id="settings-close">关闭</button>
+<!-- ══ 对话框：设置 ═════════════════════════════════════════════ -->
+<div class="md-scrim" id="dlg-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+  <div class="md-dialog md-dialog--settings">
+    <div class="md-dialog__head">
+      <svg class="md-icon" aria-hidden="true"><use href="#i-tune"/></svg>
+      <h2 class="md-dialog__title" id="settings-title">设置</h2>
+      <button class="md-icon-btn" id="settings-close" aria-label="关闭设置">
+        <svg class="md-icon" aria-hidden="true"><use href="#i-close"/></svg>
+      </button>
     </div>
-    <div class="names-body">
-      <span class="section-label">配色方案</span>
-      <div class="theme-grid" id="theme-grid"></div>
 
-      <hr class="divider">
+    <div class="md-dialog__body">
+      <span class="md-section-label" style="margin-top:0">外观</span>
+      <div class="mode-row" id="mode-row" role="radiogroup" aria-label="明暗模式"></div>
 
-      <span class="section-label">米家开关（配置好后，设备清单里对应的 PC 会出现「开机」按钮）</span>
-      <div id="xm-state-line" class="hint" style="margin-bottom:12px"></div>
+      <span class="md-section-label">配色方案</span>
+      <div class="scheme-grid" id="scheme-grid" role="radiogroup" aria-label="配色方案"></div>
+
+      <hr class="md-divider">
+
+      <span class="md-section-label" style="margin-top:0">米家开关</span>
+      <p class="md-body-small md-muted" style="margin:0 0 var(--md-sp-3)">
+        配置好后，设备清单里对应的 PC 上会出现「开机」按钮 —— 点它就去执行米家的开/关动作。
+      </p>
+      <div id="xm-state-line" class="md-body-small" style="margin-bottom:var(--md-sp-3)"></div>
 
       <!-- 未授权 -->
-      <div id="xm-login" style="display:none">
-        <p class="hint" style="margin:0 0 14px;line-height:1.7">
+      <div id="xm-login" hidden>
+        <p class="md-body-small md-muted" style="margin:0 0 var(--md-sp-3);line-height:1.7">
           米家走<strong>官方 OAuth2 授权</strong>（不保存账号密码）。两步：
-          拿到授权链接在浏览器里同意；回调页打不开是正常的，把地址栏整段粘回来即可。<br>
-          回调地址：<code id="xm-redirect" style="word-break:break-all"></code>
+          拿到授权链接在浏览器里同意；回调页打不开是正常的，把地址栏整段粘回来即可。
         </p>
-        <div class="actions">
-          <button class="btn btn-filled small" id="xm-get-url">1. 获取授权链接</button>
-          <span class="hint" id="xm-url-hint"></span>
+        <div class="md-btn-group" style="display:flex;gap:var(--md-sp-2);flex-wrap:wrap;align-items:center">
+          <button class="md-btn md-btn--tonal" id="xm-get-url">
+            <svg class="md-btn__icon" aria-hidden="true"><use href="#i-link"/></svg>
+            <span>获取授权链接</span>
+          </button>
+          <span class="md-body-small md-muted" id="xm-url-hint"></span>
         </div>
-        <div id="xm-url-box" style="display:none;margin-top:14px">
-          <a class="link" id="xm-auth-link" target="_blank" rel="noopener"
-             style="font-size:13px;word-break:break-all"></a>
-          <div class="field" style="margin-top:14px">
-            <span class="label">2. 把回调地址（或其中的 code）粘贴到这里</span>
-            <input id="xm-code" placeholder="http://homeassistant.local:8123/?code=xxxx&amp;state=...">
+        <div id="xm-url-box" hidden style="margin-top:var(--md-sp-4)">
+          <a id="xm-auth-link" target="_blank" rel="noopener"
+             class="md-body-small" style="word-break:break-all;display:block;margin-bottom:var(--md-sp-3)"></a>
+          <div class="md-field">
+            <input id="xm-code" placeholder=" ">
+            <span class="md-field__label">把回调地址整段（或其中的 code）粘到这里</span>
+            <span class="md-field__support">回调地址：<code id="xm-redirect" class="md-mono"></code></span>
           </div>
-          <div class="actions">
-            <button class="btn btn-filled small" id="xm-exchange">完成授权</button>
-            <span class="hint" id="xm-exchange-hint"></span>
+          <div style="display:flex;gap:var(--md-sp-2);align-items:center;flex-wrap:wrap;margin-top:var(--md-sp-3)">
+            <button class="md-btn md-btn--filled" id="xm-exchange">完成授权</button>
+            <span class="md-body-small md-muted" id="xm-exchange-hint"></span>
           </div>
         </div>
       </div>
 
       <!-- 已授权 -->
-      <div id="xm-authed" style="display:none">
-        <div class="actions" style="margin-bottom:14px">
-          <button class="btn btn-outlined small" id="xm-discover">刷新米家设备</button>
-          <button class="btn btn-text small" id="xm-logout">退出米家</button>
-          <span class="hint" id="xm-login-info"></span>
+      <div id="xm-authed" hidden>
+        <div style="display:flex;gap:var(--md-sp-2);flex-wrap:wrap;align-items:center;margin-bottom:var(--md-sp-3)">
+          <button class="md-btn md-btn--outlined" id="xm-discover">
+            <svg class="md-btn__icon" aria-hidden="true"><use href="#i-sync"/></svg>
+            <span>刷新米家设备</span>
+          </button>
+          <button class="md-btn md-btn--danger-text" id="xm-logout">
+            <svg class="md-btn__icon" aria-hidden="true"><use href="#i-logout"/></svg>
+            <span>退出米家</span>
+          </button>
+          <span class="md-body-small md-muted" id="xm-login-info"></span>
         </div>
 
-        <span class="section-label" style="margin-top:0">新增一条绑定</span>
+        <span class="md-section-label">新增一条绑定</span>
         <div class="xm-form">
-          <div class="md-select" id="xm-dev-pick"></div>
-          <div class="md-select" id="xm-act-pick"></div>
-          <div class="md-select" id="xm-pc-pick"></div>
-          <button class="btn btn-filled small" id="xm-add">添加绑定</button>
+          <div class="md-select" id="xm-dev-pick" aria-label="选择米家设备"></div>
+          <div class="md-select" id="xm-act-pick" aria-label="选择开关动作"></div>
+          <div class="md-select" id="xm-pc-pick" aria-label="关联到哪台 PC"></div>
+          <button class="md-btn md-btn--filled" id="xm-add">
+            <svg class="md-btn__icon" aria-hidden="true"><use href="#i-add"/></svg>
+            <span>添加绑定</span>
+          </button>
         </div>
 
         <div id="xm-bound"></div>
       </div>
 
-      <hr class="divider">
+      <hr class="md-divider">
 
-      <span class="section-label">发送昵称</span>
-      <div class="names-add">
-        <input id="name-new" placeholder="输入新昵称，回车添加" maxlength="16">
-        <button class="btn btn-filled small" id="name-add">添加</button>
+      <span class="md-section-label" style="margin-top:0">发送昵称</span>
+      <div style="display:flex;gap:var(--md-sp-2);margin-bottom:var(--md-sp-3)">
+        <div class="md-field" style="flex:1">
+          <input id="name-new" placeholder=" " maxlength="16">
+          <span class="md-field__label">输入新昵称，回车添加</span>
+        </div>
+        <button class="md-btn md-btn--filled" id="name-add">添加</button>
       </div>
       <div id="names-list"></div>
 
-      <p class="hint" style="margin-top:14px; line-height:1.6">
-        配色和昵称都只保存在<strong>这台设备的浏览器</strong>里（localStorage），服务端不记录。
+      <p class="md-body-small md-muted" style="margin-top:var(--md-sp-4);line-height:1.6">
+        配色、外观、昵称都只保存在<strong>这台设备的浏览器</strong>里（localStorage），服务端不记录。
         同一个昵称就当作同一个人 —— 消息颜色也按昵称分配，换浏览器要重新设置。
       </p>
     </div>
   </div>
 </div>
 
-<script src="static/app.js"></script>
+<!-- ══ 通用确认对话框（替代 confirm / alert / prompt）═══════════ -->
+<div class="md-scrim" id="dlg-confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
+  <div class="md-dialog" style="width:min(480px,100%)">
+    <div class="md-dialog__head">
+      <svg class="md-icon" id="confirm-icon" aria-hidden="true"><use href="#i-warning"/></svg>
+      <h2 class="md-dialog__title" id="confirm-title">确认</h2>
+    </div>
+    <div class="md-dialog__body">
+      <p id="confirm-body"></p>
+      <div class="md-field" id="confirm-input-wrap" hidden style="margin-top:var(--md-sp-3)">
+        <input id="confirm-input" placeholder=" ">
+        <span class="md-field__label" id="confirm-input-label">请输入</span>
+      </div>
+    </div>
+    <div class="md-dialog__actions">
+      <button class="md-btn md-btn--text" id="confirm-cancel">取消</button>
+      <button class="md-btn md-btn--filled" id="confirm-ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ Snackbar 容器 ════════════════════════════════════════════ -->
+<div class="md-snackbar-host" id="snackbar-host" role="status" aria-live="polite"></div>
+
+<script src="static/app.js?v=0.7.0"></script>
 </body>
 </html>

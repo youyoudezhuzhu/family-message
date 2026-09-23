@@ -51,7 +51,7 @@ public partial class PopupWindow : Window
     {
         InitializeComponent();
 
-        MdTheme.Apply(App.Config?.ThemeId);
+        MdTheme.Apply(App.Config?.ThemeId, App.Config?.ThemeMode);
 
         Left = 0;
         Top = 0;
@@ -423,6 +423,7 @@ public partial class PopupWindow : Window
         _autoCloseTimer?.Stop();      // 看设置时别被自动关闭打断
         SettingsHint.Text = "";
         RenderReplyNames();
+        RenderModeGrid();
         RenderThemeGrid();
         SettingsPage.Visibility = Visibility.Visible;
     }
@@ -489,7 +490,7 @@ public partial class PopupWindow : Window
 
     private void PickTheme(string id)
     {
-        MdTheme.Apply(id);
+        MdTheme.Apply(id, App.Config?.ThemeMode);
         if (App.Config is not null)
         {
             App.Config.ThemeId = id;
@@ -497,6 +498,48 @@ public partial class PopupWindow : Window
         }
         RenderThemeGrid();
         SettingsHint.Text = $"配色已切换为「{MdTheme.Current.Name}」";
+    }
+
+    /// <summary>明暗模式三选一（跟随系统 / 浅色 / 深色）。</summary>
+    private void RenderModeGrid()
+    {
+        ModeGrid.Children.Clear();
+
+        var options = new (string Id, string Name)[]
+        {
+            ("system", "跟随系统"),
+            ("light",  "浅色"),
+            ("dark",   "深色"),
+        };
+        var current = App.Config?.ThemeMode ?? "system";
+
+        foreach (var (id, name) in options)
+        {
+            var btn = new Button
+            {
+                Content = name,
+                Style = (Style)FindResource(current == id ? "MdFilled" : "MdOutlined"),
+                Margin = new Thickness(2),
+                Padding = new Thickness(18, 0, 18, 0),
+                Height = 40,
+            };
+            var picked = id;
+            btn.Click += (_, _) => PickMode(picked);
+            ModeGrid.Children.Add(btn);
+        }
+    }
+
+    private void PickMode(string id)
+    {
+        MdTheme.Apply(App.Config?.ThemeId, id);
+        if (App.Config is not null)
+        {
+            App.Config.ThemeMode = id;
+            App.Config.Save();
+        }
+        RenderModeGrid();
+        var shown = id switch { "light" => "浅色", "dark" => "深色", _ => "跟随系统" };
+        SettingsHint.Text = $"外观已切换为「{shown}」";
     }
 
     private void RenderReplyNames()
