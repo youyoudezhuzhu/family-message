@@ -45,6 +45,10 @@ public sealed class AgentConfig
     [JsonPropertyName("theme")]
     public string ThemeId { get; set; } = "indigo";
 
+    /// <summary>明暗模式：system / light / dark（纯本地，默认跟随系统）。</summary>
+    [JsonPropertyName("theme_mode")]
+    public string ThemeMode { get; set; } = "system";
+
     [JsonIgnore]
     public bool IsConfigured =>
         !string.IsNullOrWhiteSpace(ServerUrl) &&

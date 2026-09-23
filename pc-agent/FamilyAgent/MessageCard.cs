@@ -27,6 +27,48 @@ public sealed class MessageCard : Grid
     private readonly Border _bubble;
     private readonly double _baseFontSize;
     private readonly Color _nick;
+    private static bool _emojiWarned;
+
+    /// <summary>
+    /// 建一个消息文本控件。
+    ///
+    /// 优先用 Emoji.Wpf 的 TextBlock —— WPF 原生 TextBlock 会把 emoji 渲染成黑白轮廓。
+    /// 但那个库内部要解析字体的 COLR/CPAL 彩色图层，**一旦它抛异常就会把整个进程带走**
+    /// （v0.6.0 的闪退就是这样）。所以这里兜住：库不可用时退回系统 TextBlock，
+    /// emoji 变黑白，但应用不会崩。首次失败会写进日志，方便定位。
+    /// </summary>
+    private static TextBlock NewTextBlock(string text, double fontSize, Brush foreground)
+    {
+        try
+        {
+            var tb = new Emoji.Wpf.TextBlock
+            {
+                FontSize = fontSize,
+                Foreground = foreground,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = fontSize * 1.35,
+            };
+            tb.Text = text;      // Text 放最后设：库在处理文本时会用到字体相关属性
+            return tb;
+        }
+        catch (Exception ex)
+        {
+            if (!_emojiWarned)
+            {
+                _emojiWarned = true;
+                AgentLog.Write("!! 彩色 emoji 不可用，已退回系统字体（不影响使用）："
+                               + ex.GetType().Name + " " + ex.Message);
+            }
+            return new TextBlock
+            {
+                Text = text,
+                FontSize = fontSize,
+                Foreground = foreground,
+                TextWrapping = TextWrapping.Wrap,
+                LineHeight = fontSize * 1.35,
+            };
+        }
+    }
 
     public long MessageId { get; }
     public bool IsOut { get; }
@@ -46,37 +88,23 @@ public sealed class MessageCard : Grid
 
         // 基准字号按内容长度自适应，长消息不至于把气泡撑爆
         var len = RawContent.Length;
-        _baseFontSize = len <= 12 ? 30
-            : len <= 28 ? 26
-            : len <= 60 ? 22
-            : len <= 140 ? 19
-            : 17;
+        // 全部取自 MD3 Type Scale 的档位，不再随手写字号（规范 §6）
+        _baseFontSize = len <= 12 ? MdTheme.Type.HeadlineLarge     // 32 —— 强提醒，字要大
+            : len <= 28 ? MdTheme.Type.HeadlineMedium              // 28
+            : len <= 60 ? MdTheme.Type.HeadlineSmall               // 24
+            : len <= 140 ? MdTheme.Type.TitleLarge                 // 22
+            : MdTheme.Type.BodyLarge;                              // 16 —— 长消息回到正文号
 
-        _sender = new Emoji.Wpf.TextBlock
-        {
-            Text = name,
-            FontSize = 14,
-            FontWeight = FontWeights.Medium,
-            Foreground = new SolidColorBrush(_nick),
-            TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 0, 0, 4),
-        };
+        _sender = NewTextBlock(name, 14, new SolidColorBrush(_nick));
+        _sender.FontWeight = FontWeights.Medium;
+        _sender.Margin = new Thickness(0, 0, 0, 4);
 
-        // 用 Emoji.Wpf 的 TextBlock：WPF 原生 TextBlock 会把 emoji 渲染成黑白轮廓，
-        // 这个子类把 Segoe UI Emoji 的彩色图层解析成矢量图，表情才是彩色的。
-        _content = new Emoji.Wpf.TextBlock
-        {
-            Text = RawContent,
-            FontSize = _baseFontSize,
-            Foreground = MdTheme.OnSurface,
-            TextWrapping = TextWrapping.Wrap,
-            LineHeight = _baseFontSize * 1.35,
-        };
+        _content = NewTextBlock(RawContent, _baseFontSize, MdTheme.OnSurface);
 
         _time = new TextBlock
         {
             Text = time ?? "",
-            FontSize = 12,
+            FontSize = MdTheme.Type.LabelSmall,
             Foreground = MdTheme.TimeText,
             Margin = new Thickness(0, 6, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Right,
@@ -94,7 +122,7 @@ public sealed class MessageCard : Grid
         {
             Child = stack,
             Background = new SolidColorBrush(bubbleBg),
-            CornerRadius = new CornerRadius(16, 16, 16, 4),
+            CornerRadius = new CornerRadius(MdTheme.Shape.Large, MdTheme.Shape.Large, MdTheme.Shape.Large, MdTheme.Shape.ExtraSmall),
             Padding = new Thickness(18, 12, 18, 10),
             BorderThickness = isOut ? new Thickness(0, 0, 3, 0) : new Thickness(3, 0, 0, 0),
             BorderBrush = new SolidColorBrush(_nick),
@@ -104,7 +132,7 @@ public sealed class MessageCard : Grid
 
         if (isOut)
         {
-            _bubble.CornerRadius = new CornerRadius(16, 16, 4, 16);
+            _bubble.CornerRadius = new CornerRadius(MdTheme.Shape.Large, MdTheme.Shape.Large, MdTheme.Shape.ExtraSmall, MdTheme.Shape.Large);
         }
 
         var avatar = BuildAvatar(name, _nick);
@@ -145,14 +173,14 @@ public sealed class MessageCard : Grid
         {
             Width = 44,
             Height = 44,
-            CornerRadius = new CornerRadius(22),
+            CornerRadius = new CornerRadius(MdTheme.Shape.Full),
             Background = new SolidColorBrush(MdTheme.Blend(MdTheme.SurfaceHigh.Color, nick, 0.22)),
             Margin = new Thickness(12, 0, 12, 0),
             VerticalAlignment = VerticalAlignment.Top,
             Child = new TextBlock
             {
                 Text = initial,
-                FontSize = 19,
+                FontSize = MdTheme.Type.TitleLarge,
                 FontWeight = FontWeights.Medium,
                 Foreground = new SolidColorBrush(nick),
                 HorizontalAlignment = HorizontalAlignment.Center,

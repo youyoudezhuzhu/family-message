@@ -1,0 +1,612 @@
+/* ═══════════════════════════════════════════════════════════════
+   MD3 色彩令牌 —— 由 tools/gen_tokens.py 生成，请勿手改
+   8 套配色 × Light/Dark。每条色板从源色按 CIELAB 各 tone 推导，
+   与 Material Design 3 的色调板做法一致。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 靛蓝 ─────────────────────────────────── */
+[data-scheme="indigo"]{
+  --md-primary: #3A5CA4;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #DCE1FF;
+  --md-on-primary-container: #001B41;
+  --md-secondary: #585D77;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #DCE1FF;
+  --md-on-secondary-container: #131B30;
+  --md-tertiary: #814F6A;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #FED8EB;
+  --md-on-tertiary-container: #360925;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #F8F9FF;
+  --md-surface-dim: #D8DAE1;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #F2F3FB;
+  --md-surface-container: #ECEDF5;
+  --md-surface-container-high: #E7E8EF;
+  --md-surface-container-highest: #E1E2EA;
+  --md-on-surface: #1A1B21;
+  --md-on-surface-variant: #444653;
+  --md-outline: #747684;
+  --md-outline-variant: #C3C6D5;
+  --md-inverse-surface: #2F3036;
+  --md-inverse-on-surface: #EFF0F8;
+  --md-inverse-primary: #B6C4FF;
+  --md-surface-tint: #3A5CA4;
+}
+[data-scheme="indigo"][data-mode="dark"]{
+  --md-primary: #B6C4FF;
+  --md-on-primary: #002F67;
+  --md-primary-container: #174589;
+  --md-on-primary-container: #DCE1FF;
+  --md-secondary: #C0C5E3;
+  --md-on-secondary: #292F47;
+  --md-secondary-container: #40465F;
+  --md-on-secondary-container: #DCE1FF;
+  --md-tertiary: #EFB6D4;
+  --md-on-tertiary: #4E203B;
+  --md-tertiary-container: #673752;
+  --md-on-tertiary-container: #FED8EB;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #121319;
+  --md-surface-dim: #121319;
+  --md-surface-container-lowest: #0D0E15;
+  --md-surface-container-low: #1A1B21;
+  --md-surface-container: #1E1F25;
+  --md-surface-container-high: #292A2F;
+  --md-surface-container-highest: #33343A;
+  --md-on-surface: #E1E2EA;
+  --md-on-surface-variant: #C3C6D5;
+  --md-outline: #8E909E;
+  --md-outline-variant: #444653;
+  --md-inverse-surface: #E1E2EA;
+  --md-inverse-on-surface: #2F3036;
+  --md-inverse-primary: #3A5CA4;
+  --md-surface-tint: #B6C4FF;
+}
+
+/* ── 紫罗 ─────────────────────────────────── */
+[data-scheme="violet"]{
+  --md-primary: #675299;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #E9DDFF;
+  --md-on-primary-container: #1B104D;
+  --md-secondary: #635A74;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #E9DEFB;
+  --md-on-secondary-container: #1F182D;
+  --md-tertiary: #874D5B;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #FED9E0;
+  --md-on-tertiary-container: #3A0719;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #FBF8FF;
+  --md-surface-dim: #DCD9E0;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #F5F2FA;
+  --md-surface-container: #EFEDF4;
+  --md-surface-container-high: #EAE7EE;
+  --md-surface-container-highest: #E4E1E9;
+  --md-on-surface: #1D1B20;
+  --md-on-surface-variant: #494551;
+  --md-outline: #7A7582;
+  --md-outline-variant: #CAC4D3;
+  --md-inverse-surface: #322F35;
+  --md-inverse-on-surface: #F2EFF7;
+  --md-inverse-primary: #D3BBFF;
+  --md-surface-tint: #675299;
+}
+[data-scheme="violet"][data-mode="dark"]{
+  --md-primary: #D3BBFF;
+  --md-on-primary: #342566;
+  --md-primary-container: #4E3B7F;
+  --md-on-primary-container: #E9DDFF;
+  --md-secondary: #CCC2DF;
+  --md-on-secondary: #342D43;
+  --md-secondary-container: #4B435B;
+  --md-on-secondary-container: #E9DEFB;
+  --md-tertiary: #F7B5C3;
+  --md-on-tertiary: #531F2E;
+  --md-tertiary-container: #6C3644;
+  --md-on-tertiary-container: #FED9E0;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #151218;
+  --md-surface-dim: #151218;
+  --md-surface-container-lowest: #100D14;
+  --md-surface-container-low: #1D1B20;
+  --md-surface-container: #211F24;
+  --md-surface-container-high: #2B292F;
+  --md-surface-container-highest: #363439;
+  --md-on-surface: #E4E1E9;
+  --md-on-surface-variant: #CAC4D3;
+  --md-outline: #948E9C;
+  --md-outline-variant: #494551;
+  --md-inverse-surface: #E4E1E9;
+  --md-inverse-on-surface: #322F35;
+  --md-inverse-primary: #675299;
+  --md-surface-tint: #D3BBFF;
+}
+
+/* ── 青碧 ─────────────────────────────────── */
+[data-scheme="teal"]{
+  --md-primary: #01696F;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #9EF0F6;
+  --md-on-primary-container: #002022;
+  --md-secondary: #386569;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #BBEBEF;
+  --md-on-secondary-container: #002022;
+  --md-tertiary: #386188;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #D0E4FF;
+  --md-on-tertiary-container: #001D34;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #F0FCFC;
+  --md-surface-dim: #D1DCDD;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #EAF6F7;
+  --md-surface-container: #E5F0F1;
+  --md-surface-container-high: #DFEAEB;
+  --md-surface-container-highest: #D9E5E5;
+  --md-on-surface: #151D1E;
+  --md-on-surface-variant: #364A4C;
+  --md-outline: #667B7C;
+  --md-outline-variant: #B4CBCC;
+  --md-inverse-surface: #293233;
+  --md-inverse-on-surface: #E7F3F4;
+  --md-inverse-primary: #82D4DA;
+  --md-surface-tint: #01696F;
+}
+[data-scheme="teal"][data-mode="dark"]{
+  --md-primary: #82D4DA;
+  --md-on-primary: #00373A;
+  --md-primary-container: #014F54;
+  --md-on-primary-container: #9EF0F6;
+  --md-secondary: #A0CFD2;
+  --md-on-secondary: #02363A;
+  --md-secondary-container: #1F4D51;
+  --md-on-secondary-container: #BBEBEF;
+  --md-tertiary: #A4CAF6;
+  --md-on-tertiary: #003353;
+  --md-tertiary-container: #1A4A6F;
+  --md-on-tertiary-container: #D0E4FF;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #0A1516;
+  --md-surface-dim: #0A1516;
+  --md-surface-container-lowest: #031011;
+  --md-surface-container-low: #151D1E;
+  --md-surface-container: #192122;
+  --md-surface-container-high: #232C2C;
+  --md-surface-container-highest: #2D3637;
+  --md-on-surface: #D9E5E5;
+  --md-on-surface-variant: #B4CBCC;
+  --md-outline: #7F9596;
+  --md-outline-variant: #364A4C;
+  --md-inverse-surface: #D9E5E5;
+  --md-inverse-on-surface: #293233;
+  --md-inverse-primary: #01696F;
+  --md-surface-tint: #82D4DA;
+}
+
+/* ── 松绿 ─────────────────────────────────── */
+[data-scheme="green"]{
+  --md-primary: #2C6A3D;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #B0F2BC;
+  --md-on-primary-container: #002204;
+  --md-secondary: #4C6450;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #CEEAD2;
+  --md-on-secondary-container: #0A200E;
+  --md-tertiary: #036971;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #9DF0F9;
+  --md-on-tertiary-container: #002023;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #F4FBF5;
+  --md-surface-dim: #D5DCD6;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #EEF5EF;
+  --md-surface-container: #E9F0EA;
+  --md-surface-container-high: #E3EAE4;
+  --md-surface-container-highest: #DDE4DE;
+  --md-on-surface: #181D19;
+  --md-on-surface-variant: #3E4A40;
+  --md-outline: #6E7A70;
+  --md-outline-variant: #BCCABE;
+  --md-inverse-surface: #2C322D;
+  --md-inverse-on-surface: #ECF2EC;
+  --md-inverse-primary: #95D5A1;
+  --md-surface-tint: #2C6A3D;
+}
+[data-scheme="green"][data-mode="dark"]{
+  --md-primary: #95D5A1;
+  --md-on-primary: #003915;
+  --md-primary-container: #0F5227;
+  --md-on-primary-container: #B0F2BC;
+  --md-secondary: #B2CDB6;
+  --md-on-secondary: #1F3523;
+  --md-secondary-container: #354C39;
+  --md-on-secondary-container: #CEEAD2;
+  --md-tertiary: #81D4DC;
+  --md-on-tertiary: #00363B;
+  --md-tertiary-container: #004F55;
+  --md-on-tertiary-container: #9DF0F9;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #0F1510;
+  --md-surface-dim: #0F1510;
+  --md-surface-container-lowest: #081009;
+  --md-surface-container-low: #181D19;
+  --md-surface-container: #1C211D;
+  --md-surface-container-high: #262B27;
+  --md-surface-container-highest: #313631;
+  --md-on-surface: #DDE4DE;
+  --md-on-surface-variant: #BCCABE;
+  --md-outline: #879489;
+  --md-outline-variant: #3E4A40;
+  --md-inverse-surface: #DDE4DE;
+  --md-inverse-on-surface: #2C322D;
+  --md-inverse-primary: #2C6A3D;
+  --md-surface-tint: #95D5A1;
+}
+
+/* ── 琥珀 ─────────────────────────────────── */
+[data-scheme="amber"]{
+  --md-primary: #7A5810;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #FFDEAD;
+  --md-on-primary-container: #261900;
+  --md-secondary: #6C5C45;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #F4E0C5;
+  --md-on-secondary-container: #261A00;
+  --md-tertiary: #456642;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #C7EDC2;
+  --md-on-tertiary-container: #042100;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #FEF9F2;
+  --md-surface-dim: #DFD9D2;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #F8F3EC;
+  --md-surface-container: #F3EDE6;
+  --md-surface-container-high: #EDE7E1;
+  --md-surface-container-highest: #E7E2DB;
+  --md-on-surface: #1F1B16;
+  --md-on-surface-variant: #4E463B;
+  --md-outline: #7F766A;
+  --md-outline-variant: #CFC5B8;
+  --md-inverse-surface: #34302B;
+  --md-inverse-on-surface: #F5F0E9;
+  --md-inverse-primary: #EDBF75;
+  --md-surface-tint: #7A5810;
+}
+[data-scheme="amber"][data-mode="dark"]{
+  --md-primary: #EDBF75;
+  --md-on-primary: #412D00;
+  --md-primary-container: #5E4200;
+  --md-on-primary-container: #FFDEAD;
+  --md-secondary: #D7C4A9;
+  --md-on-secondary: #3B2E19;
+  --md-secondary-container: #53442E;
+  --md-on-secondary-container: #F4E0C5;
+  --md-tertiary: #ABD0A7;
+  --md-on-tertiary: #173717;
+  --md-tertiary-container: #2E4E2C;
+  --md-on-tertiary-container: #C7EDC2;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #17130C;
+  --md-surface-dim: #17130C;
+  --md-surface-container-lowest: #130D05;
+  --md-surface-container-low: #1F1B16;
+  --md-surface-container: #231F1A;
+  --md-surface-container-high: #2D2924;
+  --md-surface-container-highest: #38342F;
+  --md-on-surface: #E7E2DB;
+  --md-on-surface-variant: #CFC5B8;
+  --md-outline: #998F83;
+  --md-outline-variant: #4E463B;
+  --md-inverse-surface: #E7E2DB;
+  --md-inverse-on-surface: #34302B;
+  --md-inverse-primary: #7A5810;
+  --md-surface-tint: #EDBF75;
+}
+
+/* ── 珊瑚 ─────────────────────────────────── */
+[data-scheme="coral"]{
+  --md-primary: #9C423A;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #FFDAD4;
+  --md-on-primary-container: #3E0600;
+  --md-secondary: #785651;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #FFDAD4;
+  --md-on-secondary-container: #2F140F;
+  --md-tertiary: #6A5E33;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #F3E1B1;
+  --md-on-tertiary-container: #221B00;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #FFF8F7;
+  --md-surface-dim: #E2D8D6;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #FCF1EF;
+  --md-surface-container: #F6EBEA;
+  --md-surface-container-high: #F1E6E4;
+  --md-surface-container-highest: #EBE0DE;
+  --md-on-surface: #211A19;
+  --md-on-surface-variant: #544340;
+  --md-outline: #857370;
+  --md-outline-variant: #D7C2BF;
+  --md-inverse-surface: #372F2D;
+  --md-inverse-on-surface: #F9EEED;
+  --md-inverse-primary: #FEB4A9;
+  --md-surface-tint: #9C423A;
+}
+[data-scheme="coral"][data-mode="dark"]{
+  --md-primary: #FEB4A9;
+  --md-on-primary: #630D0F;
+  --md-primary-container: #7F2924;
+  --md-on-primary-container: #FFDAD4;
+  --md-secondary: #E6BDB7;
+  --md-on-secondary: #462824;
+  --md-secondary-container: #5F3F3A;
+  --md-on-secondary-container: #FFDAD4;
+  --md-tertiary: #D6C596;
+  --md-on-tertiary: #393006;
+  --md-tertiary-container: #51461D;
+  --md-on-tertiary-container: #F3E1B1;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #1A1110;
+  --md-surface-dim: #1A1110;
+  --md-surface-container-lowest: #160C09;
+  --md-surface-container-low: #211A19;
+  --md-surface-container: #251E1D;
+  --md-surface-container-high: #302827;
+  --md-surface-container-highest: #3B3332;
+  --md-on-surface: #EBE0DE;
+  --md-on-surface-variant: #D7C2BF;
+  --md-outline: #A08C89;
+  --md-outline-variant: #544340;
+  --md-inverse-surface: #EBE0DE;
+  --md-inverse-on-surface: #372F2D;
+  --md-inverse-primary: #9C423A;
+  --md-surface-tint: #FEB4A9;
+}
+
+/* ── 品红 ─────────────────────────────────── */
+[data-scheme="pink"]{
+  --md-primary: #983E6D;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #FFD8E9;
+  --md-on-primary-container: #3F0025;
+  --md-secondary: #755564;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #FED8E9;
+  --md-on-secondary-container: #2D1320;
+  --md-tertiary: #82533F;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #FFDBCD;
+  --md-on-tertiary-container: #321200;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #FFF7FA;
+  --md-surface-dim: #E1D8DB;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #FBF1F5;
+  --md-surface-container: #F5EBEF;
+  --md-surface-container-high: #EFE6EA;
+  --md-surface-container-highest: #E9E0E4;
+  --md-on-surface: #201A1D;
+  --md-on-surface-variant: #524349;
+  --md-outline: #83737A;
+  --md-outline-variant: #D4C2C9;
+  --md-inverse-surface: #362E32;
+  --md-inverse-on-surface: #F8EEF2;
+  --md-inverse-primary: #FFAFD4;
+  --md-surface-tint: #983E6D;
+}
+[data-scheme="pink"][data-mode="dark"]{
+  --md-primary: #FFAFD4;
+  --md-on-primary: #62023E;
+  --md-primary-container: #7D2355;
+  --md-on-primary-container: #FFD8E9;
+  --md-secondary: #E1BDCD;
+  --md-on-secondary: #442835;
+  --md-secondary-container: #5C3E4C;
+  --md-on-secondary-container: #FED8E9;
+  --md-tertiary: #F2BAA3;
+  --md-on-tertiary: #4D2514;
+  --md-tertiary-container: #673C29;
+  --md-on-tertiary-container: #FFDBCD;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #191115;
+  --md-surface-dim: #191115;
+  --md-surface-container-lowest: #150C10;
+  --md-surface-container-low: #201A1D;
+  --md-surface-container: #241E21;
+  --md-surface-container-high: #2F282B;
+  --md-surface-container-highest: #3A3336;
+  --md-on-surface: #E9E0E4;
+  --md-on-surface-variant: #D4C2C9;
+  --md-outline: #9D8C94;
+  --md-outline-variant: #524349;
+  --md-inverse-surface: #E9E0E4;
+  --md-inverse-on-surface: #362E32;
+  --md-inverse-primary: #983E6D;
+  --md-surface-tint: #FFAFD4;
+}
+
+/* ── 天青 ─────────────────────────────────── */
+[data-scheme="cyan"]{
+  --md-primary: #19648B;
+  --md-on-primary: #FFFFFF;
+  --md-primary-container: #C9E6FF;
+  --md-on-primary-container: #001E2F;
+  --md-secondary: #456277;
+  --md-on-secondary: #FFFFFF;
+  --md-secondary-container: #C9E6FE;
+  --md-on-secondary-container: #001E2F;
+  --md-tertiary: #6D557D;
+  --md-on-tertiary: #FFFFFF;
+  --md-tertiary-container: #F1DBFF;
+  --md-on-tertiary-container: #261335;
+  --md-error: #B3261E;
+  --md-on-error: #FFFFFF;
+  --md-error-container: #F9DEDC;
+  --md-on-error-container: #410E0B;
+  --md-surface: #F5FAFF;
+  --md-surface-dim: #D4DBE1;
+  --md-surface-container-lowest: #FFFFFF;
+  --md-surface-container-low: #EDF4FB;
+  --md-surface-container: #E8EFF5;
+  --md-surface-container-high: #E2E9EF;
+  --md-surface-container-highest: #DCE3EA;
+  --md-on-surface: #171C21;
+  --md-on-surface-variant: #3C4852;
+  --md-outline: #6C7984;
+  --md-outline-variant: #BAC8D4;
+  --md-inverse-surface: #2C3136;
+  --md-inverse-on-surface: #EBF2F8;
+  --md-inverse-primary: #91CDF9;
+  --md-surface-tint: #19648B;
+}
+[data-scheme="cyan"][data-mode="dark"]{
+  --md-primary: #91CDF9;
+  --md-on-primary: #00344D;
+  --md-primary-container: #004C6D;
+  --md-on-primary-container: #C9E6FF;
+  --md-secondary: #ADCAE3;
+  --md-on-secondary: #133346;
+  --md-secondary-container: #2C4A5E;
+  --md-on-secondary-container: #C9E6FE;
+  --md-tertiary: #D8BDEA;
+  --md-on-tertiary: #3C284C;
+  --md-tertiary-container: #543E64;
+  --md-on-tertiary-container: #F1DBFF;
+  --md-error: #F2B8B5;
+  --md-on-error: #601410;
+  --md-error-container: #8C1D18;
+  --md-on-error-container: #F9DEDC;
+  --md-surface: #0E1419;
+  --md-surface-dim: #0E1419;
+  --md-surface-container-lowest: #070F15;
+  --md-surface-container-low: #171C21;
+  --md-surface-container: #1B2025;
+  --md-surface-container-high: #252B2F;
+  --md-surface-container-highest: #30353A;
+  --md-on-surface: #DCE3EA;
+  --md-on-surface-variant: #BAC8D4;
+  --md-outline: #85929E;
+  --md-outline-variant: #3C4852;
+  --md-inverse-surface: #DCE3EA;
+  --md-inverse-on-surface: #2C3136;
+  --md-inverse-primary: #19648B;
+  --md-surface-tint: #91CDF9;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   非颜色令牌：排版 / 形状 / 高度 / 间距 / 动效 / 状态层
+   规范 §6 §7 §8 §25 —— 组件一律从这里取值，不允许自己写死
+   ═══════════════════════════════════════════════════════════════ */
+:root{
+  /* ── Typography（MD3 Type Scale，字号/行高/字距）──────────── */
+  --md-font: "Roboto","Segoe UI",-apple-system,BlinkMacSystemFont,
+             "PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  --md-font-mono: "Roboto Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+
+  --md-display-large-size:3.5625rem;  --md-display-large-lh:4rem;    --md-display-large-ls:-0.25px;
+  --md-display-medium-size:2.8125rem; --md-display-medium-lh:3.25rem;--md-display-medium-ls:0;
+  --md-display-small-size:2.25rem;    --md-display-small-lh:2.75rem; --md-display-small-ls:0;
+  --md-headline-large-size:2rem;      --md-headline-large-lh:2.5rem; --md-headline-large-ls:0;
+  --md-headline-medium-size:1.75rem;  --md-headline-medium-lh:2.25rem;--md-headline-medium-ls:0;
+  --md-headline-small-size:1.5rem;    --md-headline-small-lh:2rem;   --md-headline-small-ls:0;
+  --md-title-large-size:1.375rem;     --md-title-large-lh:1.75rem;   --md-title-large-ls:0;
+  --md-title-medium-size:1rem;        --md-title-medium-lh:1.5rem;   --md-title-medium-ls:0.15px;
+  --md-title-small-size:0.875rem;     --md-title-small-lh:1.25rem;  --md-title-small-ls:0.1px;
+  --md-body-large-size:1rem;          --md-body-large-lh:1.5rem;    --md-body-large-ls:0.5px;
+  --md-body-medium-size:0.875rem;     --md-body-medium-lh:1.25rem;  --md-body-medium-ls:0.25px;
+  --md-body-small-size:0.75rem;       --md-body-small-lh:1rem;      --md-body-small-ls:0.4px;
+  --md-label-large-size:0.875rem;     --md-label-large-lh:1.25rem;  --md-label-large-ls:0.1px;
+  --md-label-medium-size:0.75rem;     --md-label-medium-lh:1rem;    --md-label-medium-ls:0.5px;
+  --md-label-small-size:0.6875rem;    --md-label-small-lh:1rem;     --md-label-small-ls:0.5px;
+
+  /* ── Shape（按组件类型分级，不是全都大圆角）─────────────── */
+  --md-shape-none:0;
+  --md-shape-xs:4px;        /* 输入框 / 菜单 / Snackbar / 工具提示 */
+  --md-shape-sm:8px;        /* Chip / 小卡片 */
+  --md-shape-md:12px;       /* Card / 列表容器 */
+  --md-shape-lg:16px;       /* FAB / 大卡片 / 面板 */
+  --md-shape-xl:28px;       /* Dialog / Bottom Sheet 顶部 */
+  --md-shape-full:999px;    /* Button / Switch / 徽标 */
+
+  /* ── Elevation（克制；层次主要靠 surface 容器）──────────── */
+  --md-elev-0:none;
+  --md-elev-1:0 1px 2px rgba(0,0,0,.30), 0 1px 3px 1px rgba(0,0,0,.15);
+  --md-elev-2:0 1px 2px rgba(0,0,0,.30), 0 2px 6px 2px rgba(0,0,0,.15);
+  --md-elev-3:0 4px 8px 3px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.30);
+  --md-elev-4:0 6px 10px 4px rgba(0,0,0,.15), 0 2px 3px rgba(0,0,0,.30);
+  --md-elev-5:0 8px 12px 6px rgba(0,0,0,.15), 0 4px 4px rgba(0,0,0,.30);
+
+  /* ── Spacing（4dp 栅格）────────────────────────────────── */
+  --md-sp-1:4px; --md-sp-2:8px; --md-sp-3:12px; --md-sp-4:16px;
+  --md-sp-5:24px; --md-sp-6:32px; --md-sp-7:48px; --md-sp-8:64px;
+
+  /* ── Motion（快、自然、克制）──────────────────────────── */
+  --md-dur-short:150ms; --md-dur-medium:250ms; --md-dur-long:400ms;
+  --md-ease-standard:cubic-bezier(.2,0,0,1);
+  --md-ease-emphasized:cubic-bezier(.2,0,0,1);
+  --md-ease-decelerate:cubic-bezier(0,0,0,1);
+
+  /* ── State layer（交互反馈叠加层不透明度）───────────────── */
+  --md-state-hover:0.08; --md-state-focus:0.10;
+  --md-state-press:0.10; --md-state-drag:0.16;
+
+  /* ── 布局 ─────────────────────────────────────────────── */
+  --md-maxw:1440px;
+  --md-tap:48px;                 /* 最小可点区域，无障碍要求 */
+}

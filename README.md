@@ -249,6 +249,7 @@ ss -lntp | grep 18801
 - [x] **Phase 3** 双向对话：PC 端弹窗回复、消息堆叠、历史弹幕流
 - [x] **Phase 4** 米家官方 OAuth2 接入：授权、设备发现、开关绑定、远程开机
 - [x] **Phase 4.5** 远程关机（服务端下发指令，PC Agent 执行）；两端彩色 emoji
+- [x] **Phase 6** 完整 Material Design 3 设计系统（两段共用令牌；Light/Dark/System 三态；MD3 组件层与图标系统）
 - [ ] **Phase 5** 消息历史分页、图片/文件、广播组、Android/Linux/macOS Agent
 
 ## 许可

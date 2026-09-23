@@ -746,7 +746,12 @@ async def index():
     idx = WEB_DIR / "index.html"
     if not idx.exists():
         return JSONResponse({"ok": True, "service": "family-message", "web": "not built"})
-    return FileResponse(str(idx))
+    # HTML 必须每次回源校验，否则升级后浏览器会拿缓存的旧页面
+    # （旧页面引用的还是旧版 static 资源，米家设置之类的新功能就「看不见」）
+    return FileResponse(str(idx), headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+    })
 
 
 def _detect_version() -> str:
