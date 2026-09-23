@@ -1,6 +1,6 @@
 [
     {
-        "stepTitle": "访问口令",
+        "stepTitle": "访问与接入",
         "items": [
             {
                 "type": "password",
@@ -18,18 +18,6 @@
                 "rules": [
                     { "required": true, "message": "请填写设备注册口令" }
                 ]
-            }
-        ]
-    },
-    {
-        "stepTitle": "说明",
-        "items": [
-            {
-                "type": "text",
-                "field": "wizard_note",
-                "label": "发送昵称在网页里随时维护（这里不用填）",
-                "initValue": "装好后打开 http://<NAS的IP>:18801 即可添加/修改昵称",
-                "helpText": "昵称是纯本地概念：网页端存在浏览器里，PC 端存在 Agent 配置里，服务端不参与管理。"
             }
         ]
     }

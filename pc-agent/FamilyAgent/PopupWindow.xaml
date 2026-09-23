@@ -8,232 +8,366 @@
         Topmost="True"
         AllowsTransparency="False"
         WindowStartupLocation="Manual"
-        Background="#0B0F17">
+        Background="#12151C">
+
+    <Window.Resources>
+        <!-- ── 深色输入框 ───────────────────────────── -->
+        <Style x:Key="DarkTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#12151C"/>
+            <Setter Property="Foreground" Value="#E8EDF7"/>
+            <Setter Property="BorderBrush" Value="#2A3243"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="12,9"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="CaretBrush" Value="#5AC8FA"/>
+            <Setter Property="Margin" Value="0,0,0,14"/>
+        </Style>
+
+        <!-- ── 深色按钮 ─────────────────────────────── -->
+        <Style x:Key="DarkButton" TargetType="Button">
+            <Setter Property="Background" Value="#243044"/>
+            <Setter Property="Foreground" Value="#E8EDF7"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="18,10"/>
+            <Setter Property="FontSize" Value="15"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Margin" Value="0,0,10,0"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border CornerRadius="9" Background="{TemplateBinding Background}"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#32425C"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource DarkButton}">
+            <Setter Property="Background" Value="#5AC8FA"/>
+            <Setter Property="Foreground" Value="#06121C"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+        </Style>
+
+        <!-- ── 深色下拉框（默认模板在暗色下是纯白底，必须整个换掉）── -->
+        <Style x:Key="DarkCombo" TargetType="ComboBox">
+            <Setter Property="Foreground" Value="#E8EDF7"/>
+            <Setter Property="FontSize" Value="16"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid>
+                            <ToggleButton Focusable="False" ClickMode="Press"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                                      RelativeSource={RelativeSource TemplatedParent}}">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border x:Name="Chrome" Background="#12151C"
+                                                BorderBrush="#2A3243" BorderThickness="1"
+                                                CornerRadius="9">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <ContentPresenter Grid.Column="0"
+                                                                  Margin="14,10,0,10"
+                                                                  VerticalAlignment="Center"/>
+                                                <Path Grid.Column="1" Data="M 0 0 L 5 5 L 10 0"
+                                                      Stroke="#7C8BA6" StrokeThickness="1.6"
+                                                      Margin="10,0,14,0"
+                                                      VerticalAlignment="Center"/>
+                                            </Grid>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Chrome" Property="BorderBrush"
+                                                        Value="#5AC8FA"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+
+                                <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
+                                                  TextElement.Foreground="#E8EDF7"
+                                                  TextElement.FontSize="16"
+                                                  VerticalAlignment="Center"/>
+                            </ToggleButton>
+
+                            <Popup x:Name="PART_Popup" Placement="Bottom"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True" Focusable="False"
+                                   PopupAnimation="Fade">
+                                <Border Background="#1A1F2B" BorderBrush="#2A3243"
+                                        BorderThickness="1" CornerRadius="9"
+                                        MinWidth="{Binding ActualWidth,
+                                                  RelativeSource={RelativeSource TemplatedParent}}"
+                                        MaxHeight="300" Margin="0,4,0,0">
+                                    <ScrollViewer>
+                                        <StackPanel IsItemsHost="True"
+                                                    KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground" Value="#E8EDF7"/>
+                        <Setter Property="FontSize" Value="16"/>
+                        <Setter Property="Padding" Value="14,9"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ComboBoxItem">
+                                    <Border x:Name="ItemChrome" Background="Transparent"
+                                            Padding="{TemplateBinding Padding}">
+                                        <ContentPresenter/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsHighlighted" Value="True">
+                                            <Setter TargetName="ItemChrome" Property="Background"
+                                                    Value="#2A3B52"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="ItemChrome" Property="Background"
+                                                    Value="#24405C"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
 
     <Grid>
         <Grid.Background>
             <RadialGradientBrush Center="0.35,0.3" RadiusX="1.3" RadiusY="1.3">
                 <GradientStop Color="#182133" Offset="0"/>
-                <GradientStop Color="#0B0F17" Offset="1"/>
+                <GradientStop Color="#12151C" Offset="1"/>
             </RadialGradientBrush>
         </Grid.Background>
 
-        <Grid.ColumnDefinitions>
-            <!-- 左：新消息堆叠 + 回复 -->
-            <ColumnDefinition Width="73*"/>
-            <!-- 右：弹幕式对话流（窄条） -->
-            <ColumnDefinition Width="27*"/>
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
 
-        <!-- ══════════ 左侧：消息堆叠 + 回复 ══════════ -->
-        <Grid Grid.Column="0" Margin="56,40,40,40">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto"/>
-                <RowDefinition Height="*"/>
-                <RowDefinition Height="Auto"/>
-            </Grid.RowDefinitions>
-
-            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,16">
-                <TextBlock Text="家庭消息"
-                           FontSize="26"
-                           FontWeight="SemiBold"
-                           Foreground="#E8EDF7"/>
-                <Border x:Name="CountBadge"
-                        Background="#1D3550"
-                        CornerRadius="9"
-                        Padding="10,3"
-                        Margin="14,0,0,0"
-                        VerticalAlignment="Center"
+        <!-- ══════════ 顶部栏（通栏）：标题 + 状态 + 设置入口 ══════════ -->
+        <Grid Grid.Row="0" Margin="56,30,40,0">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                <TextBlock Text="家庭消息" FontSize="24" FontWeight="SemiBold"
+                           Foreground="#E8EDF7" VerticalAlignment="Center"/>
+                <Border x:Name="CountBadge" Background="#1D3550" CornerRadius="9"
+                        Padding="10,3" Margin="14,0,0,0" VerticalAlignment="Center"
                         Visibility="Collapsed">
-                    <TextBlock x:Name="CountText"
-                               Text="1 条新消息"
-                               FontSize="16"
+                    <TextBlock x:Name="CountText" Text="1 条新消息" FontSize="15"
                                Foreground="#5AC8FA"/>
                 </Border>
             </StackPanel>
 
-            <!-- 消息堆叠区：最早的在上，最新的在下 -->
-            <ScrollViewer x:Name="MessageScroll"
-                          Grid.Row="1"
-                          VerticalScrollBarVisibility="Auto"
-                          HorizontalScrollBarVisibility="Disabled">
-                <StackPanel x:Name="MessageStack" VerticalAlignment="Bottom"/>
-            </ScrollViewer>
-
-            <!-- 回复区 -->
-            <StackPanel Grid.Row="2" Margin="0,20,0,0">
-                <TextBlock Text="回复"
-                           FontSize="20"
-                           Foreground="#8FA0BC"
-                           Margin="0,0,0,10"/>
-
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <ComboBox x:Name="ReplyNameBox"
-                              Grid.Column="0"
-                              FontSize="20"
-                              Padding="12,10"
-                              Margin="0,0,12,0"
-                              MinWidth="120"
-                              VerticalContentAlignment="Center"
-                              Background="#1B2130"
-                              Foreground="#E8EDF7"
-                              BorderBrush="#2A3243"
-                              SelectionChanged="ReplyNameBox_SelectionChanged"/>
-
-                    <TextBox x:Name="ReplyBox"
-                             Grid.Column="1"
-                             FontSize="26"
-                             Padding="18,14"
-                             Background="#1B2130"
-                             Foreground="#E8EDF7"
-                             CaretBrush="#5AC8FA"
-                             BorderBrush="#2A3243"
-                             BorderThickness="1"
-                             MaxLength="2000"
-                             AcceptsReturn="False"
-                             KeyDown="ReplyBox_KeyDown"/>
-
-                    <Button x:Name="SendButton"
-                            Grid.Column="2"
-                            Content="回复"
-                            Click="SendButton_Click"
-                            Margin="14,0,0,0"
-                            Padding="44,0"
-                            FontSize="26"
-                            FontWeight="SemiBold"
-                            Foreground="#06121C"
-                            Cursor="Hand">
-                        <Button.Style>
-                            <Style TargetType="Button">
-                                <Setter Property="Background" Value="#5AC8FA"/>
-                                <Setter Property="BorderThickness" Value="0"/>
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="Button">
-                                            <Border CornerRadius="12"
-                                                    Background="{TemplateBinding Background}"
-                                                    Padding="{TemplateBinding Padding}">
-                                                <ContentPresenter HorizontalAlignment="Center"
-                                                                  VerticalAlignment="Center"/>
-                                            </Border>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                                <Style.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="#8FDCFF"/>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-                </Grid>
-
-                <Grid Margin="0,20,0,0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-
-                    <Button x:Name="OkButton"
-                            Grid.Column="0"
-                            Content="关闭窗口"
-                            Click="OkButton_Click"
-                            Padding="52,14"
-                            FontSize="24"
-                            FontWeight="SemiBold"
-                            Foreground="#E8EDF7"
-                            Cursor="Hand">
-                        <Button.Style>
-                            <Style TargetType="Button">
-                                <Setter Property="Background" Value="#243044"/>
-                                <Setter Property="BorderThickness" Value="0"/>
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="Button">
-                                            <Border CornerRadius="12"
-                                                    Background="{TemplateBinding Background}"
-                                                    Padding="{TemplateBinding Padding}">
-                                                <ContentPresenter HorizontalAlignment="Center"
-                                                                  VerticalAlignment="Center"/>
-                                            </Border>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                                <Style.Triggers>
-                                    <Trigger Property="IsMouseOver" Value="True">
-                                        <Setter Property="Background" Value="#32425C"/>
-                                    </Trigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                    </Button>
-
-                    <TextBlock x:Name="HintText"
-                               Grid.Column="1"
-                               Text="Enter 直接回复"
-                               FontSize="18"
-                               Foreground="#5C6B85"
-                               VerticalAlignment="Center"
-                               Margin="20,0,0,0"/>
-                </Grid>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#F2705E"
+                         VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock x:Name="StatusText" Text="未连接" FontSize="15"
+                           Foreground="#93A0B8" VerticalAlignment="Center"
+                           Margin="0,0,16,0"/>
+                <Button x:Name="SettingsButton" Content="设置" Style="{StaticResource DarkButton}"
+                        Margin="0" Click="SettingsButton_Click"/>
             </StackPanel>
         </Grid>
 
-        <!-- ══════════ 右侧：弹幕式对话流 ══════════ -->
-        <!-- 不画面板边框、不做卡片，就让文字像直播弹幕一样往上流，
-             顶部用透明度蒙版渐隐，越往上越淡。 -->
-        <Grid Grid.Column="1" Margin="8,40,40,40">
-            <ScrollViewer x:Name="HistoryScroll"
-                          VerticalScrollBarVisibility="Hidden"
-                          HorizontalScrollBarVisibility="Disabled"
-                          Opacity="0.95">
-                <ScrollViewer.OpacityMask>
-                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                        <GradientStop Color="#00000000" Offset="0"/>
-                        <GradientStop Color="#66000000" Offset="0.10"/>
-                        <GradientStop Color="#FF000000" Offset="0.42"/>
-                        <GradientStop Color="#FF000000" Offset="1"/>
-                    </LinearGradientBrush>
-                </ScrollViewer.OpacityMask>
+        <!-- ══════════ 主体 ══════════ -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="73*"/>
+                <ColumnDefinition Width="27*"/>
+            </Grid.ColumnDefinitions>
 
-                <ItemsControl x:Name="HistoryList" VerticalAlignment="Bottom">
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate>
-                            <StackPanel Margin="0,0,0,18">
-                                <TextBlock Text="{Binding Header}"
-                                           FontSize="15"
-                                           FontWeight="SemiBold"
-                                           TextWrapping="Wrap">
-                                    <TextBlock.Style>
-                                        <Style TargetType="TextBlock">
-                                            <Setter Property="Foreground" Value="#4FA9D6"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding IsOut}" Value="True">
-                                                    <Setter Property="Foreground" Value="#C9A24D"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </TextBlock.Style>
-                                </TextBlock>
+            <!-- ── 左：聊天式对话区 + 回复 ── -->
+            <Grid Grid.Column="0" Margin="56,18,40,40">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-                                <TextBlock Text="{Binding Content}"
-                                           FontSize="21"
-                                           Foreground="#D7E1F2"
-                                           TextWrapping="Wrap"
-                                           LineHeight="27"
-                                           Margin="0,3,0,0"/>
+                <ScrollViewer x:Name="MessageScroll" Grid.Row="0"
+                              VerticalScrollBarVisibility="Auto"
+                              HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel x:Name="MessageStack" VerticalAlignment="Bottom"/>
+                </ScrollViewer>
+
+                <StackPanel Grid.Row="1" Margin="0,18,0,0">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <ComboBox x:Name="ReplyNameBox" Grid.Column="0"
+                                  Style="{StaticResource DarkCombo}"
+                                  MinWidth="130" Margin="0,0,12,0"
+                                  VerticalContentAlignment="Center"
+                                  SelectionChanged="ReplyNameBox_SelectionChanged"/>
+
+                        <TextBox x:Name="ReplyBox" Grid.Column="1" Style="{StaticResource DarkTextBox}"
+                                 FontSize="24" Padding="18,13" Margin="0"
+                                 MaxLength="2000" AcceptsReturn="False"
+                                 KeyDown="ReplyBox_KeyDown"/>
+
+                        <Button x:Name="SendButton" Grid.Column="2" Content="回复"
+                                Style="{StaticResource PrimaryButton}"
+                                Margin="12,0,0,0" Padding="44,0" FontSize="24"
+                                Click="SendButton_Click"/>
+                    </Grid>
+
+                    <Grid Margin="0,18,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="OkButton" Grid.Column="0" Content="关闭窗口"
+                                Style="{StaticResource DarkButton}" Margin="0"
+                                Padding="52,14" FontSize="22"
+                                Click="OkButton_Click"/>
+                        <TextBlock x:Name="HintText" Grid.Column="1" Text="Enter 直接回复"
+                                   FontSize="17" Foreground="#5C6B85"
+                                   VerticalAlignment="Center" Margin="20,0,0,0"/>
+                    </Grid>
+                </StackPanel>
+            </Grid>
+
+            <!-- ── 右：弹幕式对话流 ── -->
+            <Grid Grid.Column="1" Margin="8,18,40,40">
+                <ScrollViewer x:Name="HistoryScroll"
+                              VerticalScrollBarVisibility="Hidden"
+                              HorizontalScrollBarVisibility="Disabled"
+                              Opacity="0.95">
+                    <ScrollViewer.OpacityMask>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#00000000" Offset="0"/>
+                            <GradientStop Color="#66000000" Offset="0.10"/>
+                            <GradientStop Color="#FF000000" Offset="0.42"/>
+                            <GradientStop Color="#FF000000" Offset="1"/>
+                        </LinearGradientBrush>
+                    </ScrollViewer.OpacityMask>
+
+                    <ItemsControl x:Name="HistoryList" VerticalAlignment="Bottom">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Margin="0,0,0,18">
+                                    <TextBlock Text="{Binding Header}" FontSize="15"
+                                               FontWeight="SemiBold" TextWrapping="Wrap">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Foreground" Value="#4FA9D6"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding IsOut}" Value="True">
+                                                        <Setter Property="Foreground" Value="#C9A24D"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding Content}" FontSize="20"
+                                               Foreground="#D7E1F2" TextWrapping="Wrap"
+                                               LineHeight="26" Margin="0,3,0,0"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+        </Grid>
+
+        <!-- ══════════ 设置页（覆盖层）══════════ -->
+        <Grid x:Name="SettingsPage" Grid.RowSpan="2" Visibility="Collapsed"
+              Background="#D910141C">
+            <Border Width="760" MaxHeight="900" CornerRadius="16"
+                    Background="#1A1F2B" BorderBrush="#2A3243" BorderThickness="1"
+                    Padding="32" VerticalAlignment="Center">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,22">
+                        <TextBlock Text="设置" FontSize="26" FontWeight="SemiBold"
+                                   Foreground="#E8EDF7"/>
+                        <Ellipse x:Name="SettingsDot" Width="10" Height="10" Fill="#F2705E"
+                                 VerticalAlignment="Center" Margin="20,0,8,0"/>
+                        <TextBlock x:Name="SettingsStatus" Text="未连接" FontSize="15"
+                                   Foreground="#93A0B8" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+                            <TextBlock Text="服务端地址（NAS 的 IP + 端口）" FontSize="13"
+                                       Foreground="#93A0B8" Margin="0,0,0,6"/>
+                            <TextBox x:Name="ServerBox" Style="{StaticResource DarkTextBox}"/>
+
+                            <TextBlock Text="设备名称（显示在网页控制台上的名字）" FontSize="13"
+                                       Foreground="#93A0B8" Margin="0,0,0,6"/>
+                            <TextBox x:Name="NameBox" Style="{StaticResource DarkTextBox}"/>
+
+                            <TextBlock Text="设备 ID（同一台机器保持固定即可）" FontSize="13"
+                                       Foreground="#93A0B8" Margin="0,0,0,6"/>
+                            <TextBox x:Name="IdBox" Style="{StaticResource DarkTextBox}"/>
+
+                            <TextBlock Text="注册口令（服务端 config.yaml 里的 device.enroll_token）"
+                                       FontSize="13" Foreground="#93A0B8" Margin="0,0,0,6"/>
+                            <TextBox x:Name="EnrollBox" Style="{StaticResource DarkTextBox}"/>
+
+                            <CheckBox x:Name="AutoStartBox" Content="Windows 启动时自动运行"
+                                      Foreground="#E8EDF7" Margin="0,0,0,16"/>
+
+                            <TextBlock Text="回复昵称（本机使用，可随时增删改；服务端不记录）"
+                                       FontSize="13" Foreground="#93A0B8" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                                <TextBox x:Name="NewReplyNameBox" Width="240" Margin="0,0,10,0"
+                                         Style="{StaticResource DarkTextBox}"/>
+                                <Button Content="添加" Style="{StaticResource DarkButton}"
+                                        Click="AddReplyName_Click"/>
                             </StackPanel>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
+                            <StackPanel x:Name="ReplyNamesPanel"/>
+                        </StackPanel>
+                    </ScrollViewer>
+
+                    <StackPanel Grid.Row="2" Margin="0,24,0,0">
+                        <TextBlock x:Name="SettingsHint" Text="" FontSize="13"
+                                   Foreground="#5C6B85" TextWrapping="Wrap" Margin="0,0,0,14"/>
+                        <StackPanel Orientation="Horizontal">
+                            <Button Content="保存并连接" Style="{StaticResource PrimaryButton}"
+                                    Click="SaveSettings_Click"/>
+                            <Button Content="测试连接" Style="{StaticResource DarkButton}"
+                                    Click="TestConnection_Click"/>
+                            <Button Content="打开控制台" Style="{StaticResource DarkButton}"
+                                    Click="OpenConsole_Click"/>
+                            <Button Content="打开日志" Style="{StaticResource DarkButton}"
+                                    Click="OpenLog_Click"/>
+                            <Button Content="返回消息" Style="{StaticResource DarkButton}"
+                                    Click="CloseSettings_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+            </Border>
         </Grid>
     </Grid>
 </Window>

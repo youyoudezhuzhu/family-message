@@ -33,6 +33,21 @@ public sealed class AgentClient
 
     public bool Connected => _ws is { State: WebSocketState.Open };
 
+    /// <summary>给日志用的连接状态描述（排查时能直接看出卡在哪）。</summary>
+    public string DescribeConnection()
+    {
+        var ws = _ws;
+        if (ws is null)
+            return "无连接对象";
+        return ws.State.ToString();
+    }
+
+    /// <summary>积压未发出的消息条数。</summary>
+    public int OutboxCount
+    {
+        get { lock (_outboxGate) { return _outbox.Count; } }
+    }
+
     public void Start()
     {
         if (_cts is not null)
@@ -144,6 +159,10 @@ public sealed class AgentClient
             {
                 await Task.Delay(TimeSpan.FromSeconds(15), ct).ConfigureAwait(false);
                 await SendRawAsync(ws, "{\"type\":\"heartbeat\"}", ct).ConfigureAwait(false);
+
+                // 顺手把积压的消息补发掉（断线期间的回不会丢）
+                if (OutboxCount > 0)
+                    FlushOutbox();
             }
         }
         catch
@@ -212,6 +231,7 @@ public sealed class AgentClient
                     }
                 }
                 Log?.Invoke("已上线");
+                FlushOutbox();
                 break;
 
             case "message":
@@ -261,37 +281,86 @@ public sealed class AgentClient
         }
     }
 
-    /// <summary>发送一条 JSON。失败会抛异常，不再静默吞掉。</summary>
-    public async Task SendJsonAsync<T>(T payload, string kind)
-    {
-        var ws = _ws;
-        if (ws is null)
-            throw new InvalidOperationException("尚未建立连接");
+    // ---------------- 发送队列 ----------------
+    //
+    // 教训：之前用 `if (!Connected) 报失败` 做前置判断，结果连接正常但状态判断
+    // 出过一次偏差，回复就永远发不出去。现在改成「不预判，直接发；失败才入队」，
+    // 并在心跳里定期重试补发 —— 断网期间的回也不会丢。
 
+    private readonly List<(string Json, string Kind)> _outbox = new();
+    private readonly object _outboxGate = new();
+
+    /// <summary>发送一条消息。返回 true = 已进入发送流程；false = 当前无连接，已入队。</summary>
+    public bool SendOrQueue<T>(T payload, string kind)
+    {
         var json = JsonSerializer.Serialize(payload);
-        await SendRawAsync(ws, json, CancellationToken.None).ConfigureAwait(false);
-        AgentLog.Write($"→ {kind}（{Encoding.UTF8.GetByteCount(json)} 字节）");
+        var ws = _ws;
+
+        if (ws is not null)
+        {
+            _ = SendNowAsync(ws, json, kind);   // 内部失败会自己入队
+            return true;
+        }
+
+        lock (_outboxGate)
+        {
+            _outbox.Add((json, kind));
+        }
+        AgentLog.Write($"… {kind} 无连接对象，已入队等待补发");
+        return false;
     }
 
-    /// <summary>发送但不抛异常，只记日志 —— 给 ACK 这类「发不出去也不该崩」的场景用。</summary>
-    private async Task TrySendJsonAsync<T>(T payload, string kind)
+    private async Task SendNowAsync(ClientWebSocket ws, string json, string kind)
     {
         try
         {
-            await SendJsonAsync(payload, kind).ConfigureAwait(false);
+            await SendRawAsync(ws, json, CancellationToken.None).ConfigureAwait(false);
+            AgentLog.Write($"→ {kind}（{Encoding.UTF8.GetByteCount(json)} 字节）");
         }
         catch (Exception ex)
         {
-            AgentLog.Write($"✗ {kind} 发送失败：{ex.GetType().Name} {ex.Message}");
+            AgentLog.Write($"✗ {kind} 发送失败（{DescribeConnection()}）：{ex.GetType().Name} {ex.Message}");
+            lock (_outboxGate)
+            {
+                _outbox.Add((json, kind));
+            }
         }
     }
 
-    public Task AckAsync(long messageId, string status) =>
-        TrySendJsonAsync(new { type = "ack", message_id = messageId, status }, $"ack:{status}");
+    /// <summary>把积压的消息补发出去（连上时、以及心跳里定期调用）。</summary>
+    public void FlushOutbox()
+    {
+        List<(string Json, string Kind)> pending;
+        lock (_outboxGate)
+        {
+            if (_outbox.Count == 0)
+                return;
+            pending = new List<(string, string)>(_outbox);
+            _outbox.Clear();
+        }
 
-    /// <summary>把弹窗里的回复发给服务端（昵称由本机本地维护）。</summary>
-    public Task ReplyAsync(string senderName, string content, string clientId) =>
-        SendJsonAsync(new
+        var ws = _ws;
+        if (ws is null)
+        {
+            lock (_outboxGate)
+            {
+                _outbox.AddRange(pending);   // 还是没连接，原样放回
+            }
+            return;
+        }
+
+        AgentLog.Write($"⇡ 补发 {pending.Count} 条积压消息");
+        foreach (var (json, kind) in pending)
+            _ = SendNowAsync(ws, json, kind);
+    }
+
+    public void Ack(long messageId, string status) =>
+        SendOrQueue(new { type = "ack", message_id = messageId, status }, $"ack:{status}");
+
+    /// <summary>把弹窗里的回复发给服务端（昵称由本机本地维护）。
+    /// 返回 true = 已尝试发送；false = 无连接，已入队等重连自动补发。</summary>
+    public bool Reply(string senderName, string content, string clientId) =>
+        SendOrQueue(new
         {
             type = "reply",
             sender_name = senderName,
@@ -300,37 +369,47 @@ public sealed class AgentClient
         }, "reply");
 
     /// <summary>主动拉一次历史对话（从托盘打开对话窗口时用）。</summary>
-    public Task RequestHistoryAsync(int limit = 30) =>
-        TrySendJsonAsync(new
+    public void RequestHistory(int limit = 30) =>
+        SendOrQueue(new
         {
             type = "history_request",
             request_id = Guid.NewGuid().ToString("N")[..12],
             limit,
         }, "history_request");
 
+    /// <summary>回传截图。截图有时效性，连不上就丢弃并记日志，不排队。</summary>
     public async Task SendScreenshotAsync(string requestId, string? base64, int width, int height,
                                           string? error)
     {
-        if (string.IsNullOrEmpty(base64))
+        var ws = _ws;
+        if (ws is null)
         {
-            await TrySendJsonAsync(new
+            AgentLog.Write("✗ screenshot_response 无连接对象，丢弃");
+            return;
+        }
+
+        object payload = string.IsNullOrEmpty(base64)
+            ? new
             {
                 type = "screenshot_response",
                 request_id = requestId,
                 error = string.IsNullOrEmpty(error) ? "截图失败" : error,
-            }, "screenshot_response:error").ConfigureAwait(false);
-            return;
-        }
+            }
+            : new
+            {
+                type = "screenshot_response",
+                request_id = requestId,
+                format = "jpeg",
+                data_base64 = base64,
+                width,
+                height,
+                screen_locked = false,
+            };
 
-        await TrySendJsonAsync(new
-        {
-            type = "screenshot_response",
-            request_id = requestId,
-            format = "jpeg",
-            data_base64 = base64,
-            width,
-            height,
-            screen_locked = false,
-        }, $"screenshot_response:{width}x{height}").ConfigureAwait(false);
+        var kind = string.IsNullOrEmpty(base64)
+            ? "screenshot_response:error"
+            : $"screenshot_response:{width}x{height}";
+
+        await SendNowAsync(ws, JsonSerializer.Serialize(payload), kind).ConfigureAwait(false);
     }
 }
