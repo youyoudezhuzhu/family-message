@@ -61,9 +61,18 @@ async function boot() {
     $('quick').appendChild(b);
   });
 
-  await Promise.all([loadDevices(), loadMessages()]);
+  await Promise.all([loadDevices(), loadMessages(), loadVersion()]);
   connectWS();
   setInterval(refreshTimes, 1000);
+}
+
+/* 显示当前运行的服务端版本 —— 升级后如果这个号没变，说明旧进程还在跑 */
+async function loadVersion() {
+  try {
+    const r = await fetch(`${BASE}/healthz`, { cache: 'no-store' });
+    const d = await r.json();
+    if (d && d.version) $('server-ver').textContent = `v${d.version}`;
+  } catch (_) { /* 拿不到就不显示 */ }
 }
 
 /* ── 设备 ─────────────────────────────────────── */

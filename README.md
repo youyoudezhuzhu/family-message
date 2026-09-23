@@ -172,9 +172,46 @@ python tools/cli_agent.py --server ws://127.0.0.1:18801 \
 Windows Agent 由 GitHub Actions 云编译（`.github/workflows/build-windows-agent.yml`），
 不需要本地装 .NET SDK + Windows SDK。
 
+## 故障排查
+
+### 升级之后功能没变化？
+
+**先看网页控制台左上角的版本号**（和 `curl http://<NAS>:18801/healthz` 的 `version` 字段）。
+
+如果它没变成新版本，说明**旧进程还在跑旧代码**。fnOS 升级只替换文件，不会自动停旧进程；
+旧进程把旧代码留在内存里、还占着端口，新进程绑不上端口就退出，而 PID 文件还在，
+所以「状态」看起来一切正常。
+
+本项目的 `upgrade_init` 会在升级前停服务，`cmd/main start` 也会在启动前清理占用端口的
+陈旧进程，正常情况下不会再出现。真遇到了就手动停一次再启动：
+
+```bash
+# 看谁占着端口
+ss -lntp | grep 18801
+```
+
+`tools/simulate-upgrade.sh` 会把这套流程跑一遍回归。
+
+### PC 端发的消息网页上看不到 / 截图取不到
+
+两者都是「PC → 服务器」方向，属于同一类问题。Agent 现在有发送侧看门狗：
+心跳 45 秒收不到回执、或消息积压超过 12 秒发不出去，就自动重连并补发，
+**不需要再手动点「保存并连接」**。
+
+排查时看 `%APPDATA%\FamilyAgent\agent.log`（设置页有「打开日志」按钮），
+搜这些标记：
+
+- `⚠ 45 秒没收到心跳回执` / `⚠ 有 N 条消息积压` —— 发送链路断过，已自动恢复
+- `→ reply` / `→ screenshot_response` —— 确实发出去了
+- `✗ reply 发送失败` —— 发送失败原因
+
+服务端对应的留痕在 `/api/events`（`handler_error` / `bad_frame`）。
+
 ## 文档
 
 - [设计文档 docs/DESIGN.md](docs/DESIGN.md) — 架构、数据库 Schema、API、WS 协议、米家模块设计
+- [通信协议 docs/PROTOCOL.md](docs/PROTOCOL.md) — 跨平台实现契约（写 Android/macOS Agent 看这份）
+- [视觉规范 docs/DESIGN-TOKENS.md](docs/DESIGN-TOKENS.md) — 三端共用的调色板/组件/动效
 - [server/](server/) — 服务端源码
 - [pc-agent/](pc-agent/) — Windows Agent 源码
 

@@ -1,8 +1,11 @@
 #!/bin/bash
-### upgrade_callback — 升级后：保留数据与配置，只补齐依赖
+### upgrade_callback — 升级后：保留数据与配置，补齐依赖并【重新拉起服务】
+FILEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GNOME="${TRIM_PKGHOME:-/vol1/@apphome/family-message}"
+APPDEST="${TRIM_APPDEST:-/var/apps/family-message/target}"
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/family-message}"
 export PATH="/var/apps/python312/target/bin:$PATH"
-echo "$(date '+%Y-%m-%d %H:%M:%S') - upgrade_callback" >> "$TRIM_APPDEST/info.log" 2>/dev/null
+echo "$(date '+%Y-%m-%d %H:%M:%S') - upgrade_callback" >> "$VAR/info.log" 2>/dev/null
 
 VENV="$GNOME/venv"
 if [ ! -x "$VENV/bin/python" ]; then
@@ -10,5 +13,23 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 "$VENV/bin/pip" install -q --upgrade fastapi uvicorn websockets pyyaml httpx \
     || { echo "升级后依赖安装失败" > "$TRIM_TEMP_LOGFILE"; exit 1; }
+
 # config.yaml / data 目录保持不动
+
+# 关键：upgrade_init 已经把旧进程停了，这里必须把新版拉起来。
+# 若应用中心随后也会调 start，那是幂等的（已在跑就直接返回）。
+CMD_MAIN=""
+for c in "$FILEDIR/main" "$APPDEST/../cmd/main" "$APPDEST/cmd/main" \
+         "/var/apps/family-message/cmd/main"; do
+    if [ -f "$c" ]; then CMD_MAIN="$c"; break; fi
+done
+
+if [ -n "$CMD_MAIN" ]; then
+    if ! /bin/bash "$CMD_MAIN" start >/dev/null 2>&1; then
+        echo "升级已完成，但服务未能自动启动，请在应用中心手动启动一次。" > "$TRIM_TEMP_LOGFILE"
+    fi
+else
+    echo "升级已完成，但未找到启动脚本，请在应用中心手动启动一次。" > "$TRIM_TEMP_LOGFILE"
+fi
+
 exit 0
