@@ -172,14 +172,24 @@ public static class MdTheme
     // XAML 的 x:Static 不支持访问嵌套类型：{x:Static local:MdTheme.Shape.Full}
     // 会报 MC3050。所以把 XAML 需要的档位以扁平名字再暴露一次；
     // C# 里仍用 MdTheme.Type / MdTheme.Shape。
-    public const double RadiusNone = Shape.None;
-    public const double RadiusExtraSmall = Shape.ExtraSmall;
-    public const double RadiusSmall = Shape.Small;
-    public const double RadiusMedium = Shape.Medium;
-    public const double RadiusLarge = Shape.Large;
-    public const double RadiusExtraLarge = Shape.ExtraLarge;
-    public const double RadiusFull = Shape.Full;
+    // ⚠️ 这里必须是 CornerRadius 而不是 double。
+    //
+    // XAML 里 {x:Static} 的返回值**不会走类型转换**：传一个 double 常量给
+    // Border.CornerRadius（类型是 CornerRadius 结构），WPF 会把 double 原样
+    // 存进属性；等到布局阶段 Border.ArrangeOverride → get_CornerRadius()
+    // 拆箱时才炸，抛 InvalidCastException: Specified cast is not valid。
+    // 异常发生在 Show() 内部，所以现象是「窗口永远打不开」——
+    // 而它出现在 EnsureShown 里，跟窗口逻辑本身看起来毫无关系，极难定位。
+    // （写死字面量 CornerRadius="999" 反而没事，因为字面量会走类型转换。）
+    public static readonly CornerRadius RadiusNone = new(Shape.None);
+    public static readonly CornerRadius RadiusExtraSmall = new(Shape.ExtraSmall);
+    public static readonly CornerRadius RadiusSmall = new(Shape.Small);
+    public static readonly CornerRadius RadiusMedium = new(Shape.Medium);
+    public static readonly CornerRadius RadiusLarge = new(Shape.Large);
+    public static readonly CornerRadius RadiusExtraLarge = new(Shape.ExtraLarge);
+    public static readonly CornerRadius RadiusFull = new(Shape.Full);
 
+    // Font* 保持 double —— FontSize 属性本身就是 double，类型是对得上的。
     public const double FontDisplayLarge = Type.DisplayLarge;
     public const double FontHeadlineLarge = Type.HeadlineLarge;
     public const double FontHeadlineMedium = Type.HeadlineMedium;
