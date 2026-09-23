@@ -62,15 +62,17 @@ message:
   # 0 表示弹窗必须手动点关闭才消失
   popup_auto_close_seconds: 0
   max_targets: 20
-  # 弹窗右侧历史对话条数
+  # 弹窗里带上多少条历史对话（用来铺对话区）
   history_limit: 30
 
 xiaomi:
+  # 米家走官方 OAuth2（不保存账号密码）。下面的 redirect_url 必须是小米那边为
+  # 该 client_id 注册过的地址，默认沿用官方 HA 集成的注册地址，所以授权后需要
+  # 把回调地址里的 code 粘回网页端。oauth_device_id 首次使用时自动生成。
   enabled: false
-  username: ""
-  password: ""
   region: "cn"
-  refresh_ahead_seconds: 86400
+  redirect_url: "http://homeassistant.local:8123"
+  oauth_device_id: ""
 """
 Path(cfg_path).write_text(content, encoding="utf-8")
 print("config.yaml written:", cfg_path)

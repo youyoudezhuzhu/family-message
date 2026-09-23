@@ -117,6 +117,14 @@ def _redirect_url() -> str:
     return (CONFIG["xiaomi"].get("redirect_url") or "").strip() or DEFAULT_REDIRECT_URL
 
 
+def _api_host() -> str:
+    """按区域选接口主机。官方实现：cn 用 ha.api.io.mi.com，其他区域加前缀。"""
+    region = (CONFIG["xiaomi"].get("region") or "cn").strip() or "cn"
+    if region == "cn":
+        return DEFAULT_OAUTH2_API_HOST
+    return f"{region}.{DEFAULT_OAUTH2_API_HOST}"
+
+
 def auth_status() -> dict:
     row = _get_auth()
     if not row or not row["access_token"]:
@@ -160,7 +168,7 @@ def build_auth_url() -> dict:
 
 async def _get_token(data: dict) -> dict:
     """官方 `__get_token_async`：GET /app/v2/ha/oauth/get_token?data=<json>"""
-    url = f"https://{DEFAULT_OAUTH2_API_HOST}/app/v2/ha/oauth/get_token"
+    url = f"https://{_api_host()}/app/v2/ha/oauth/get_token"
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as c:
         r = await c.get(
             url,
@@ -254,7 +262,7 @@ async def ensure_auth() -> dict:
 def _headers(token: str) -> dict:
     # 注意：Bearer 与 token 之间**没有空格**，这是官方实现的写法，照抄。
     return {
-        "Host": DEFAULT_OAUTH2_API_HOST,
+        "Host": _api_host(),
         "X-Client-BizId": "haapi",
         "Content-Type": "application/json",
         "Authorization": f"Bearer{token}",
@@ -271,7 +279,7 @@ async def _api(method: str, path: str, payload: Optional[dict] = None,
     if row is None or not row["access_token"]:
         raise NeedLogin("米家未登录")
     token = row["access_token"]
-    url = f"https://{DEFAULT_OAUTH2_API_HOST}{path}"
+    url = f"https://{_api_host()}{path}"
 
     async with httpx.AsyncClient(timeout=timeout) as c:
         if method == "POST":

@@ -39,12 +39,16 @@ message:
   # 推给 PC Agent 的弹窗右侧历史对话条数
   history_limit: 30
 
+# ------------------------------------------------------------
+# 米家（官方 OAuth2，对照 XiaoMi/ha_xiaomi_home 实现）
+# 不保存账号密码：网页端「设置 → 米家」走浏览器授权 + 粘贴 code 换 token。
+# redirect_url 必须是小米那边为该 client_id **注册过**的地址，
+# 默认沿用官方 HA 集成的注册地址，所以授权后要把回调里的 code 粘回来。
+# oauth_device_id 首次使用时自动生成并固定，不用手填。
+# ------------------------------------------------------------
 xiaomi:
   enabled: false
-  # 米家账号（仅用于首次获取 token，成功后可留空）
-  username: ""
-  password: ""
-  # 地区服务器：cn / de / us / sg / ru / i2
+  # 地区：cn / de / us / sg / ru / i2（非 cn 会走 <region>.ha.api.io.mi.com）
   region: "cn"
-  # token 剩余多少秒时提前刷新
-  refresh_ahead_seconds: 86400
+  redirect_url: "http://homeassistant.local:8123"
+  oauth_device_id: ""
