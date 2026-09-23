@@ -225,6 +225,11 @@ def main() -> int:
             print("  ✗ " + e)
         return 1
     print("  ✓ 静态引用检查全部通过")
+
+    # ── 跨类调用检查（防 CS0103，省一轮云端编译）──
+    if check_cross_class_calls() != 0:
+        return 1
+
     return 0
 
 
@@ -250,6 +255,154 @@ NOT_A_CONTROL = {
     "Screen", "Rectangle", "Graphics", "EventArgs", "Console", "CornerRadius",
     "AgentLog", "PowerControl", "AutoStart", "ScreenCapture", "MdTheme", "MdPalette",
 }
+
+# ═══════════════════════════════════════════════════════════════════
+#  跨类调用检查（CS0103）
+#
+#  本机没有 .NET，无法编译，所以任何一句 C# 语义错误都要等云端编译
+#  跑完才知道 —— 一轮 3 分钟，而且编译器的报错位置离真正原因很远。
+#  实际踩过的例子：
+#      error CS0103: The name 'ToFluent' does not exist in the current context
+#  原因只是 ToFluent 定义在 App 里，从 PopupWindow 调用时漏了 App. 前缀。
+#
+#  规则：在文件 F 里看到一次「不加限定的调用 Ident(...)」，而 Ident 只被
+#  其它文件的类定义过 —— 那就是编译错误。
+#
+#  为了不误报，只在「F 里没有任何类定义过 Ident」时才报；也就是同文件
+#  内多类/嵌套类的情况一律放过。
+# ═══════════════════════════════════════════════════════════════════
+
+_ID = r"[A-Za-z_][A-Za-z0-9_]*"
+
+# 语言关键字和伪函数，后面跟 "(" 但不是方法调用
+_NOT_A_CALL = {
+    "if", "for", "foreach", "while", "switch", "catch", "using", "lock", "return",
+    "new", "nameof", "typeof", "sizeof", "default", "checked", "unchecked", "fixed",
+    "while", "do", "else", "get", "set", "throw", "await", "yield", "case", "when",
+    "stackalloc", "in", "out", "ref", "params", "is", "as", "this", "base",
+}
+
+
+def _strip_comments(src: str) -> str:
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", " ", src)
+    # 字符串字面量里的内容不算代码
+    src = re.sub(r'@"(?:[^"]|"")*"', '""', src, flags=re.S)
+    src = re.sub(r'\$?"(?:\\.|[^"\\])*"', '""', src)
+    return src
+
+
+# C# 关键字/内建类型名，不能当成员名
+_CS_KEYWORDS = {
+    "var", "int", "long", "short", "byte", "sbyte", "uint", "ulong", "ushort",
+    "float", "double", "decimal", "bool", "char", "string", "object", "void",
+    "dynamic", "nint", "nuint", "when", "else", "try", "finally", "catch",
+    "get", "set", "add", "remove", "init", "record", "struct", "class", "enum",
+    "interface", "namespace", "using", "lock", "fixed", "checked", "unchecked",
+}
+
+
+def _file_decls(src: str) -> dict:
+    """提取「本文件定义过的成员 → 所属类名」。
+
+    只用作白名单，所以宁可多收不漏收；但关键字必须排除，
+    否则 `var x = ...` 会让 var 变成一个「成员」，到处误报。
+    """
+    decls: dict = {}
+    cur_class = ""
+    for line in src.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+
+        # 类/结构体声明，用于把成员归属到正确的类
+        m = re.match(
+            r"(?:(?:public|private|protected|internal|static|sealed|abstract|partial)\s+)*"
+            r"(?:class|struct|record|interface)\s+(" + _ID + r")", line)
+        if m:
+            cur_class = m.group(1)
+            continue
+
+        # 方法声明：修饰符? 返回类型 名字(
+        m = re.match(
+            r"(?:\[[^\]]*\]\s*)*(?:(?:public|private|protected|internal|static|virtual|"
+            r"override|async|sealed|partial|new|unsafe|extern|readonly)\s+)*"
+            r"[\w<>\[\],\.\?]+\s+(" + _ID + r")\s*[(<]", line)
+        if m:
+            name = m.group(1)
+            if name not in _CS_KEYWORDS:
+                decls[name] = cur_class
+            continue
+
+        # 构造函数：类名(
+        m = re.match(r"(?:(?:public|private|protected|internal|static)\s+)?(" + _ID + r")\s*\(", line)
+        if m:
+            name = m.group(1)
+            if name == cur_class or (name and name[0].isupper() and name not in _CS_KEYWORDS):
+                decls[name] = cur_class
+            continue
+
+        # 本地函数 / 委托赋值：名字 = ( 或 名字 => 
+        m = re.search(r"\b(" + _ID + r")\s*=\s*(?:\([^)]*\)\s*=>|delegate|async)", line)
+        if m and m.group(1) not in _CS_KEYWORDS:
+            decls[m.group(1)] = cur_class
+    return decls
+
+
+def check_cross_class_calls() -> int:
+    proj = Path(__file__).resolve().parent.parent / "pc-agent" / "FamilyAgent"
+    files = sorted(proj.glob("*.cs"))
+    if not files:
+        print("  (跳过跨类调用检查：找不到 .cs 文件)")
+        return 0
+
+    decls_by_file = {}
+    for f in files:
+        decls_by_file[f] = _file_decls(_strip_comments(
+            f.read_text(encoding="utf-8", errors="replace")))
+
+    # 某个名字被哪些「文件」定义过（同文件内多类一律放过，避免嵌套类误报）
+    owners = {}
+    for f, decls in decls_by_file.items():
+        for name in decls:
+            owners.setdefault(name, set()).add(f)
+
+    bad = []
+    for f in files:
+        mine = set(decls_by_file[f])
+        src = _strip_comments(f.read_text(encoding="utf-8", errors="replace"))
+        # 收集本文件的局部变量/参数名，避免把变量当方法
+        locals_ = set(re.findall(r"\b(?:var|" + _ID + r"(?:<[^>]*>)?)\s+(" + _ID + r")\s*=", src))
+        locals_ |= set(re.findall(r"\b(" + _ID + r")\s*=>", src))
+        for i, line in enumerate(src.splitlines(), 1):
+            for m in re.finditer(r"(?<![.\w])(" + _ID + r")\s*\(", line):
+                name = m.group(1)
+                if name in _NOT_A_CALL or name in mine or name in locals_:
+                    continue
+                # `new Xxx(` 是构造函数调用，不是漏了类名前缀
+                if re.search(r"\bnew\s+$", line[:m.start()]):
+                    continue
+                others = owners.get(name, set()) - {f}
+                if others:
+                    cls = next((decls_by_file[o].get(name) for o in others
+                                if decls_by_file[o].get(name)), "")
+                    bad.append((f.name, i, name, sorted(x.name for x in others), cls))
+
+    if bad:
+        print("\n  ✗ 跨类调用缺少类名前缀（C# 会报 CS0103）：")
+        seen = set()
+        for fname, ln, name, where, cls in bad:
+            key = (fname, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            print(f"      {fname}:{ln}  {name}(...)  ←  定义在 {', '.join(where)}")
+            hint = f"{cls}.{name}(...)" if cls else "加类名前缀"
+            print(f"          应写成 {hint}")
+        return 1
+    print("  ✓ 跨类调用检查通过")
+    return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
