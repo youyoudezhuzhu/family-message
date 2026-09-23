@@ -440,8 +440,27 @@ async def ws_device(websocket: WebSocket, device_id: str):
                 msg_svc.advance(m["id"], device_id, "device_received")
 
         while True:
-            data = await websocket.receive_json()
-            await handle_device_message(device_id, data)
+            try:
+                data = await websocket.receive_json()
+            except WebSocketDisconnect:
+                raise
+            except Exception as e:
+                # 单帧解析失败不该拖垮整条连接
+                db.log_event(device_id, "bad_frame", f"{type(e).__name__}: {e}"[:500])
+                print(f"[ws_device:{device_id}] 帧解析失败: {type(e).__name__}: {e}", flush=True)
+                continue
+
+            try:
+                await handle_device_message(device_id, data)
+            except Exception as e:
+                # ★ 处理某一帧出错时，如果直接往上抛，整条连接会被关掉。
+                # 设备侧表现就是「能收不能发，而且很随机」—— 每发一次就把自己搞掉线，
+                # 看起来像连接问题，实际是这里。所以必须吞掉并留痕。
+                kind = (data or {}).get("type", "?")
+                db.log_event(device_id, "handler_error",
+                             f"{kind}: {type(e).__name__}: {e}"[:500])
+                print(f"[ws_device:{device_id}] 处理 {kind} 出错: {type(e).__name__}: {e}",
+                      flush=True)
     except WebSocketDisconnect:
         pass
     except Exception as e:
@@ -568,10 +587,35 @@ async def index():
     return FileResponse(str(idx))
 
 
+def _detect_version() -> str:
+    """当前正在运行的代码版本。
+
+    存在的意义：升级时若旧进程没被杀掉，它会继续用旧代码占着端口服务，
+    从外面完全看不出异常。把版本暴露到 /healthz，这类隐形故障一眼可查。
+    """
+    v = (os.environ.get("FM_VERSION") or "").strip()
+    if v:
+        return v
+    for p in (Path(__file__).resolve().parent.parent / "manifest",
+              Path(__file__).resolve().parent / "manifest"):
+        try:
+            if p.exists():
+                for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+                    if line.strip().startswith("version"):
+                        return line.split("=", 1)[1].strip().strip('"').strip("'")
+        except Exception:
+            continue
+    return "unknown"
+
+
+APP_VERSION = _detect_version()
+
+
 @app.get("/healthz")
 async def healthz():
     return {
         "ok": True,
+        "version": APP_VERSION,
         "devices": len(dev_svc.list_devices()),
         "online": len(HUB.devices),
         "web_clients": len(HUB.web_clients),
@@ -582,5 +626,5 @@ async def healthz():
 @app.on_event("startup")
 async def _startup():
     HUB.start_sweeper()
-    print(f"[family-message] data_dir={CONFIG['data_dir']} "
+    print(f"[family-message] v{APP_VERSION} data_dir={CONFIG['data_dir']} "
           f"port={CONFIG['server']['port']}", flush=True)

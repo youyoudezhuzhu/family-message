@@ -1,3 +1,51 @@
 #!/bin/bash
 ### upgrade_init — 升级前调用
+#
+# 【必须在这里停掉服务】
+# 之前这里是空的（exit 0），结果是：升级时 target/ 换成了新代码，但旧进程还在内存里
+# 跑着旧代码、还占着端口。新进程绑不上端口就退出，用户看到「应用在运行」，
+# 实际一直跟旧版本对话 —— 表现为「升级了但功能没变化」，极难排查。
+#
+# 真实案例：升级到 v0.3.0 后 PC 端回复一直不可用，卸载重装立刻正常。
+
+FILEDIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APPDEST="${TRIM_APPDEST:-/var/apps/family-message/target}"
+VAR="${TRIM_PKGVAR:-/vol1/@appdata/family-message}"
+PORT="${TRIM_SERVICE_PORT:-18801}"
+LOG="$VAR/family-message.log"
+
+log() { echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" >> "$LOG" 2>/dev/null; }
+log "upgrade_init：准备升级，停止旧版本服务"
+
+# 找出 main 脚本（cmd 与 target 是同级目录；不同版本布局都试一遍）
+CMD_MAIN=""
+for c in "$FILEDIR/main" "$APPDEST/../cmd/main" "$APPDEST/cmd/main" \
+         "/var/apps/family-message/cmd/main"; do
+    if [ -f "$c" ]; then CMD_MAIN="$c"; break; fi
+done
+
+if [ -n "$CMD_MAIN" ]; then
+    log "upgrade_init：调用 $CMD_MAIN stop"
+    /bin/bash "$CMD_MAIN" stop >/dev/null 2>&1 || true
+else
+    log "upgrade_init：找不到 cmd/main，改用端口清理"
+fi
+
+# 兜底：端口上还有残留进程就直接清掉，确保新进程能绑上
+for round in 1 2; do
+    left=$(ss -lntp 2>/dev/null | grep -E "[:.]${PORT}[[:space:]]" \
+           | grep -oE 'pid=[0-9]+' | cut -d= -f2 | sort -u)
+    [ -z "$left" ] && break
+    for p in $left; do
+        log "upgrade_init：清理残留进程 $p（第 $round 轮）"
+        if [ "$round" = "1" ]; then
+            kill -TERM "$p" 2>/dev/null
+        else
+            kill -KILL "$p" 2>/dev/null
+        fi
+    done
+    sleep 2
+done
+
+rm -f "$VAR/family-message.pid"
 exit 0

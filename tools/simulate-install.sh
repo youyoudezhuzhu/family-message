@@ -59,10 +59,10 @@ set +e
 set -e
 
 sleep 3
-echo "▶ 健康检查"
-curl -s -m 8 http://127.0.0.1:18801/healthz; echo
+echo "▶ 健康检查（端口 ${TRIM_SERVICE_PORT:-18801}）"
+curl -s -m 8 "http://127.0.0.1:${TRIM_SERVICE_PORT:-18801}/healthz"; echo
 echo "▶ 首页"
-curl -s -m 8 -o /dev/null -w "  index=%{http_code}\n" http://127.0.0.1:18801/
+curl -s -m 8 -o /dev/null -w "  index=%{http_code}\n" "http://127.0.0.1:${TRIM_SERVICE_PORT:-18801}/"
 echo "▶ unix socket"
 curl -s -m 8 --unix-socket "$TRIM_APPDEST/family-message.sock" -o /dev/null -w "  sock=%{http_code}\n" http://localhost/healthz || true
 
