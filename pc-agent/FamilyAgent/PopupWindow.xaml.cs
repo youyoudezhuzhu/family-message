@@ -53,10 +53,14 @@ public partial class PopupWindow : Window
 
         MdTheme.Apply(App.Config?.ThemeId, App.Config?.ThemeMode);
 
-        Left = 0;
-        Top = 0;
-        Width = SystemParameters.PrimaryScreenWidth;
-        Height = SystemParameters.PrimaryScreenHeight;
+        // 用「工作区」而不是整屏：任务栏留给用户，窗口不至于糊满整屏。
+        // SystemParameters.WorkArea 给的是 DIP，配合 app.manifest 里的
+        // PerMonitorV2 声明，在高缩放屏上尺寸才正确。
+        var work = SystemParameters.WorkArea;
+        Left = work.Left;
+        Top = work.Top;
+        Width = work.Width;
+        Height = work.Height;
 
         _topmostTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _topmostTimer.Tick += (_, _) =>
@@ -471,7 +475,7 @@ public partial class PopupWindow : Window
             var btn = new Button
             {
                 Content = panel,
-                Style = (Style)FindResource("MdText"),
+                Style = (Style)FindResource("MdTile"),
                 Margin = new Thickness(2),
                 Padding = new Thickness(6, 8, 6, 8),
                 Height = double.NaN,

@@ -9,11 +9,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.8.2</Version>
+    <Version>0.8.3</Version>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
+    <!-- 声明 PerMonitorV2 DPI 感知（见同目录 app.manifest）。
+         不声明的话高缩放屏上整个界面会被 Windows 位图放大 = 糊 + 拉伸。 -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
