@@ -189,6 +189,19 @@ public sealed class MessageCard : Grid
         };
     }
 
+    /// <summary>
+    /// 换主题后刷新与主题相关的颜色。
+    /// 画刷现在是不可变的（旧实例可能已被 WPF 冻结），所以这里重新取当前实例，
+    /// 而不是去改旧画刷的颜色。
+    /// </summary>
+    public void ApplyTheme()
+    {
+        _content.Foreground = MdTheme.OnSurface;
+        _time.Foreground = MdTheme.TimeText;
+        _bubble.Background = new SolidColorBrush(
+            MdTheme.Blend(MdTheme.SurfaceC.Color, _nick, 0.10));
+    }
+
     /// <summary>按「距最新一条的距离」调整字号与高亮。distance = 0 表示最新。</summary>
     public void ApplyProminence(bool isNewest, int distance, bool animate)
     {

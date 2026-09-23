@@ -9,7 +9,7 @@
         Topmost="True"
         AllowsTransparency="False"
         WindowStartupLocation="Manual"
-        Background="{x:Static local:MdTheme.Surface}">
+        Background="{DynamicResource MdSurface}">
 
     <Window.Resources>
 
@@ -20,14 +20,14 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Thumb">
-                        <Border x:Name="B" Background="{x:Static local:MdTheme.ScrollThumb}"
+                        <Border x:Name="B" Background="{DynamicResource MdScrollThumb}"
                                                 CornerRadius="{x:Static local:MdTheme.RadiusFull}" Margin="1"/>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{x:Static local:MdTheme.ScrollThumbHover}"/>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource MdScrollThumbHover}"/>
                             </Trigger>
                             <Trigger Property="IsDragging" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{x:Static local:MdTheme.Outline}"/>
+                                <Setter TargetName="B" Property="Background" Value="{DynamicResource MdOutline}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -87,7 +87,7 @@
 
         <!-- ══ MD 按钮 ══════════════════════════════════════ -->
         <Style x:Key="MdBase" TargetType="Button">
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.Primary}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdPrimary}"/>
             <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontLabelLarge}"/>
             <Setter Property="FontWeight" Value="Medium"/>
             <Setter Property="Cursor" Value="Hand"/>
@@ -108,7 +108,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="Shell" Property="Background"
-                                        Value="{x:Static local:MdTheme.StateHover}"/>
+                                        Value="{DynamicResource MdStateHover}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Shell" Property="Opacity" Value="0.38"/>
@@ -120,16 +120,16 @@
         </Style>
 
         <Style x:Key="MdFilled" TargetType="Button" BasedOn="{StaticResource MdBase}">
-            <Setter Property="Background" Value="{x:Static local:MdTheme.Primary}"/>
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnPrimary}"/>
+            <Setter Property="Background" Value="{DynamicResource MdPrimary}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdOnPrimary}"/>
             <Setter Property="FontWeight" Value="Medium"/>
         </Style>
 
         <Style x:Key="MdOutlined" TargetType="Button" BasedOn="{StaticResource MdBase}">
             <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="BorderBrush" Value="{x:Static local:MdTheme.Outline}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource MdOutline}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.Primary}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdPrimary}"/>
         </Style>
 
         <Style x:Key="MdText" TargetType="Button" BasedOn="{StaticResource MdBase}">
@@ -139,9 +139,9 @@
 
         <!-- ══ MD 输入框（outlined）═════════════════════════ -->
         <Style x:Key="MdTextBox" TargetType="TextBox">
-            <Setter Property="Background" Value="{x:Static local:MdTheme.SurfaceC}"/>
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
-            <Setter Property="CaretBrush" Value="{x:Static local:MdTheme.Primary}"/>
+            <Setter Property="Background" Value="{DynamicResource MdSurfaceC}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdOnSurface}"/>
+            <Setter Property="CaretBrush" Value="{DynamicResource MdPrimary}"/>
             <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
             <Setter Property="Padding" Value="14,12"/>
             <Setter Property="Margin" Value="0,0,0,14"/>
@@ -150,7 +150,7 @@
                     <ControlTemplate TargetType="TextBox">
                         <Border x:Name="Shell" CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}"
                                 Background="{TemplateBinding Background}"
-                                BorderBrush="{x:Static local:MdTheme.Outline}"
+                                BorderBrush="{DynamicResource MdOutline}"
                                 BorderThickness="1">
                             <ScrollViewer x:Name="PART_ContentHost"
                                           Margin="{TemplateBinding Padding}"
@@ -159,7 +159,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsFocused" Value="True">
                                 <Setter TargetName="Shell" Property="BorderBrush"
-                                        Value="{x:Static local:MdTheme.Primary}"/>
+                                        Value="{DynamicResource MdPrimary}"/>
                                 <Setter TargetName="Shell" Property="BorderThickness" Value="2"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -170,7 +170,7 @@
 
         <!-- ══ MD 下拉（默认模板在暗色下浮层纯白，必须整套换掉）══ -->
         <Style x:Key="MdCombo" TargetType="ComboBox">
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdOnSurface}"/>
             <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -183,8 +183,8 @@
                                 <ToggleButton.Template>
                                     <ControlTemplate TargetType="ToggleButton">
                                         <Border x:Name="Chrome"
-                                                Background="{x:Static local:MdTheme.SurfaceC}"
-                                                BorderBrush="{x:Static local:MdTheme.Outline}"
+                                                Background="{DynamicResource MdSurfaceC}"
+                                                BorderBrush="{DynamicResource MdOutline}"
                                                 BorderThickness="1" CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}">
                                             <Grid>
                                                 <Grid.ColumnDefinitions>
@@ -194,7 +194,7 @@
                                                 <ContentPresenter Grid.Column="0" Margin="14,10,0,10"
                                                                   VerticalAlignment="Center"/>
                                                 <Path Grid.Column="1" Data="M 0 0 L 5 5 L 10 0"
-                                                      Stroke="{x:Static local:MdTheme.OnVariant}"
+                                                      Stroke="{DynamicResource MdOnVariant}"
                                                       StrokeThickness="1.6" Margin="10,0,14,0"
                                                       VerticalAlignment="Center"/>
                                             </Grid>
@@ -202,7 +202,7 @@
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
                                                 <Setter TargetName="Chrome" Property="BorderBrush"
-                                                        Value="{x:Static local:MdTheme.Primary}"/>
+                                                        Value="{DynamicResource MdPrimary}"/>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
@@ -211,7 +211,7 @@
                                 <ContentPresenter Content="{TemplateBinding SelectionBoxItem}"
                                                   ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
                                                   ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}"
-                                                  TextElement.Foreground="{x:Static local:MdTheme.OnSurface}"
+                                                  TextElement.Foreground="{DynamicResource MdOnSurface}"
                                                   TextElement.FontSize="{x:Static local:MdTheme.FontBodyLarge}"
                                                   VerticalAlignment="Center"/>
                             </ToggleButton>
@@ -220,8 +220,8 @@
                                    IsOpen="{TemplateBinding IsDropDownOpen}"
                                    AllowsTransparency="True" Focusable="False"
                                    PopupAnimation="Fade">
-                                <Border Background="{x:Static local:MdTheme.SurfaceHigh}"
-                                        BorderBrush="{x:Static local:MdTheme.OutlineVariant}"
+                                <Border Background="{DynamicResource MdSurfaceHigh}"
+                                        BorderBrush="{DynamicResource MdOutlineVariant}"
                                         BorderThickness="1"
                                         CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}"
                                         MinWidth="{Binding ActualWidth,
@@ -240,7 +240,7 @@
             <Setter Property="ItemContainerStyle">
                 <Setter.Value>
                     <Style TargetType="ComboBoxItem">
-                        <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
+                        <Setter Property="Foreground" Value="{DynamicResource MdOnSurface}"/>
                         <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
                         <Setter Property="Padding" Value="16,12"/>
                         <Setter Property="Template">
@@ -253,13 +253,13 @@
                                     <ControlTemplate.Triggers>
                                         <Trigger Property="IsHighlighted" Value="True">
                                             <Setter TargetName="ItemChrome" Property="Background"
-                                                    Value="{x:Static local:MdTheme.StateHover}"/>
+                                                    Value="{DynamicResource MdStateHover}"/>
                                         </Trigger>
                                         <Trigger Property="IsSelected" Value="True">
                                             <Setter TargetName="ItemChrome" Property="Background"
-                                                    Value="{x:Static local:MdTheme.PrimaryContainer}"/>
+                                                    Value="{DynamicResource MdPrimaryContainer}"/>
                                             <Setter Property="Foreground"
-                                                    Value="{x:Static local:MdTheme.OnPrimaryContainer}"/>
+                                                    Value="{DynamicResource MdOnPrimaryContainer}"/>
                                         </Trigger>
                                     </ControlTemplate.Triggers>
                                 </ControlTemplate>
@@ -272,7 +272,7 @@
 
         <!-- ══ MD 勾选框 ════════════════════════════════════ -->
         <Style x:Key="MdCheck" TargetType="CheckBox">
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnSurface}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdOnSurface}"/>
             <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontBodyLarge}"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -280,10 +280,10 @@
                     <ControlTemplate TargetType="CheckBox">
                         <StackPanel Orientation="Horizontal" Background="Transparent">
                             <Border x:Name="Box" Width="20" Height="20" CornerRadius="{x:Static local:MdTheme.RadiusExtraSmall}"
-                                    BorderBrush="{x:Static local:MdTheme.Outline}"
+                                    BorderBrush="{DynamicResource MdOutline}"
                                     BorderThickness="2" VerticalAlignment="Center">
                                 <Path x:Name="Tick" Data="M 0 4 L 3.5 7.5 L 9 1"
-                                      Stroke="{x:Static local:MdTheme.OnPrimary}"
+                                      Stroke="{DynamicResource MdOnPrimary}"
                                       StrokeThickness="2" Visibility="Collapsed"
                                       HorizontalAlignment="Center" VerticalAlignment="Center"/>
                             </Border>
@@ -292,9 +292,9 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Box" Property="Background"
-                                        Value="{x:Static local:MdTheme.Primary}"/>
+                                        Value="{DynamicResource MdPrimary}"/>
                                 <Setter TargetName="Box" Property="BorderBrush"
-                                        Value="{x:Static local:MdTheme.Primary}"/>
+                                        Value="{DynamicResource MdPrimary}"/>
                                 <Setter TargetName="Tick" Property="Visibility" Value="Visible"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -306,7 +306,7 @@
         <!-- 设置页里的小标题 -->
         <Style x:Key="MdLabel" TargetType="TextBlock">
             <Setter Property="FontSize" Value="{x:Static local:MdTheme.FontLabelMedium}"/>
-            <Setter Property="Foreground" Value="{x:Static local:MdTheme.OnVariant}"/>
+            <Setter Property="Foreground" Value="{DynamicResource MdOnVariant}"/>
             <Setter Property="Margin" Value="0,0,0,6"/>
         </Style>
     </Window.Resources>
@@ -318,44 +318,44 @@
         </Grid.RowDefinitions>
 
         <!-- ══════ 顶部应用栏 ══════ -->
-        <Border Grid.Row="0" Background="{x:Static local:MdTheme.SurfaceLow}"
-                BorderBrush="{x:Static local:MdTheme.OutlineVariant}"
+        <Border Grid.Row="0" Background="{DynamicResource MdSurfaceLow}"
+                BorderBrush="{DynamicResource MdOutlineVariant}"
                 BorderThickness="0,0,0,1" Padding="56,0,32,0" Height="64">
             <Grid>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Left"
                             VerticalAlignment="Center">
                     <!-- Material 图标：chat（规范 §10 —— 不用 emoji 当 UI 图标）-->
                     <Path Data="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"
-                          Fill="{x:Static local:MdTheme.Primary}"
+                          Fill="{DynamicResource MdPrimary}"
                           Width="26" Height="26" Stretch="Uniform"
                           VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <TextBlock Text="家庭消息"
                                FontSize="{x:Static local:MdTheme.FontTitleLarge}"
                                FontWeight="Normal"
-                               Foreground="{x:Static local:MdTheme.OnSurface}"
+                               Foreground="{DynamicResource MdOnSurface}"
                                VerticalAlignment="Center"/>
-                    <Border x:Name="CountBadge" Background="{x:Static local:MdTheme.PrimaryContainer}"
+                    <Border x:Name="CountBadge" Background="{DynamicResource MdPrimaryContainer}"
                             CornerRadius="8" Padding="9,2" Margin="14,0,0,0"
                             VerticalAlignment="Center" Visibility="Collapsed">
                         <TextBlock x:Name="CountText" Text="1 条新消息"
                                    FontSize="{x:Static local:MdTheme.FontLabelSmall}"
-                                   Foreground="{x:Static local:MdTheme.OnPrimaryContainer}"/>
+                                   Foreground="{DynamicResource MdOnPrimaryContainer}"/>
                     </Border>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                             VerticalAlignment="Center">
-                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{x:Static local:MdTheme.Bad}"
+                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{DynamicResource MdBad}"
                              VerticalAlignment="Center" Margin="0,0,8,0"/>
                     <TextBlock x:Name="StatusText" Text="未连接"
                                FontSize="{x:Static local:MdTheme.FontLabelMedium}"
-                               Foreground="{x:Static local:MdTheme.OnVariant}"
+                               Foreground="{DynamicResource MdOnVariant}"
                                VerticalAlignment="Center" Margin="0,0,12,0"/>
                     <Button x:Name="SettingsButton" Style="{StaticResource MdText}"
                             Margin="0" Padding="12,0" Height="40" Click="SettingsButton_Click"
                             ToolTip="设置">
                         <Path Data="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"
-                              Fill="{x:Static local:MdTheme.OnVariant}"
+                              Fill="{DynamicResource MdOnVariant}"
                               Width="22" Height="22" Stretch="Uniform"/>
                     </Button>
                 </StackPanel>
@@ -403,7 +403,7 @@
                             Click="SendButton_Click">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"
-                                  Fill="{x:Static local:MdTheme.OnPrimary}"
+                                  Fill="{DynamicResource MdOnPrimary}"
                                   Width="18" Height="18" Stretch="Uniform"
                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <TextBlock Text="回复" VerticalAlignment="Center"/>
@@ -423,7 +423,7 @@
                             Click="OkButton_Click">
                         <StackPanel Orientation="Horizontal">
                             <Path Data="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
-                                  Fill="{x:Static local:MdTheme.Primary}"
+                                  Fill="{DynamicResource MdPrimary}"
                                   Width="18" Height="18" Stretch="Uniform"
                                   VerticalAlignment="Center" Margin="0,0,8,0"/>
                             <TextBlock Text="关闭窗口" VerticalAlignment="Center"/>
@@ -431,7 +431,7 @@
                     </Button>
                     <TextBlock x:Name="HintText" Grid.Column="1" Text="Enter 直接回复"
                                FontSize="{x:Static local:MdTheme.FontBodyMedium}"
-                               Foreground="{x:Static local:MdTheme.OnVariant}"
+                               Foreground="{DynamicResource MdOnVariant}"
                                VerticalAlignment="Center" Margin="20,0,0,0"/>
                 </Grid>
             </StackPanel>
@@ -439,9 +439,9 @@
 
         <!-- ══════ 设置页（MD 对话框覆盖层）══════ -->
         <Grid x:Name="SettingsPage" Grid.RowSpan="2" Visibility="Collapsed"
-              Background="{x:Static local:MdTheme.Scrim}">
+              Background="{DynamicResource MdScrim}">
             <Border Width="780" MaxHeight="920" CornerRadius="28"
-                    Background="{x:Static local:MdTheme.SurfaceHigh}"
+                    Background="{DynamicResource MdSurfaceHigh}"
                     VerticalAlignment="Center" Padding="28">
                 <Grid>
                     <Grid.RowDefinitions>
@@ -454,16 +454,16 @@
                         <TextBlock Text="设置"
                                    FontSize="{x:Static local:MdTheme.FontTitleLarge}"
                                    FontWeight="Normal"
-                                   Foreground="{x:Static local:MdTheme.OnSurface}"
+                                   Foreground="{DynamicResource MdOnSurface}"
                                    VerticalAlignment="Center"/>
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"
                                     VerticalAlignment="Center">
                             <Ellipse x:Name="SettingsDot" Width="10" Height="10"
-                                     Fill="{x:Static local:MdTheme.Bad}" VerticalAlignment="Center"
+                                     Fill="{DynamicResource MdBad}" VerticalAlignment="Center"
                                      Margin="0,0,8,0"/>
                             <TextBlock x:Name="SettingsStatus" Text="未连接"
                                        FontSize="{x:Static local:MdTheme.FontLabelMedium}"
-                                       Foreground="{x:Static local:MdTheme.OnVariant}"/>
+                                       Foreground="{DynamicResource MdOnVariant}"/>
                         </StackPanel>
                     </Grid>
 
@@ -474,7 +474,7 @@
                                        Style="{StaticResource MdLabel}"/>
                             <UniformGrid x:Name="ModeGrid" Columns="3" Margin="0,4,0,0"/>
 
-                            <Border Height="1" Background="{x:Static local:MdTheme.OutlineVariant}"
+                            <Border Height="1" Background="{DynamicResource MdOutlineVariant}"
                                     Margin="0,20,0,20"/>
 
                             <!-- 配色方案 -->
@@ -482,7 +482,7 @@
                                        Style="{StaticResource MdLabel}"/>
                             <UniformGrid x:Name="ThemeGrid" Columns="4" Margin="0,4,0,0"/>
 
-                            <Border Height="1" Background="{x:Static local:MdTheme.OutlineVariant}"
+                            <Border Height="1" Background="{DynamicResource MdOutlineVariant}"
                                     Margin="0,20,0,20"/>
 
                             <!-- 连接配置 -->
@@ -528,7 +528,7 @@
                     <StackPanel Grid.Row="2" Margin="0,20,0,0">
                         <TextBlock x:Name="SettingsHint" Text=""
                                    FontSize="{x:Static local:MdTheme.FontBodySmall}"
-                                   Foreground="{x:Static local:MdTheme.OnVariant}"
+                                   Foreground="{DynamicResource MdOnVariant}"
                                    TextWrapping="Wrap" Margin="0,0,0,14"/>
                         <StackPanel Orientation="Horizontal">
                             <Button Content="保存并连接" Style="{StaticResource MdFilled}"
