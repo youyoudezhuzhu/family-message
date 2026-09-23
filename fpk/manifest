@@ -1,5 +1,5 @@
 appname               = family-message
-version               = 0.8.0
+version               = 0.8.1
 display_name          = "家庭消息"
 desc                  = "家庭消息与设备控制：浏览器网页给家里 PC 发消息并立即全屏弹窗；PC 端可像聊天软件一样左右对话、直接回复；支持设备在线状态、远程桌面截图、远程关机。接米家官方 OAuth2，配好开关绑定后网页端可一键远程开机。界面为 Material Design 3，内置 8 套配色；昵称与配色完全本地维护、服务端不记录。"
 source                = thirdparty

@@ -358,7 +358,11 @@ async def set_power(miot_device_id: str, on: bool, siid: int = 2, piid: int = 1)
 # 参考小米官方 ha_xiaomi_home，规格库公开在 miot-spec.org
 # ------------------------------------------------------------
 SPEC_API = "https://miot-spec.org/miot-spec-v2/instance"
+INSTANCES_API = "https://miot-spec.org/miot-spec-v2/instances"
 _SPEC_CACHE: dict[str, dict] = {}
+_MODEL_MAP: dict[str, str] = {}          # 产品型号 -> urn
+_MAP_FILE = db.DATA_DIR / "miot_models.json"
+_MAP_TTL = 7 * 86400                     # 型号表变动很少，7 天够了
 
 
 def _short(t: str) -> str:
@@ -367,25 +371,93 @@ def _short(t: str) -> str:
     return parts[3] if len(parts) > 3 else (t or "")
 
 
-async def fetch_spec(urn: str) -> dict:
-    """取设备的 MIoT 规格。规格是静态的，进程内缓存，不用反复拉。"""
-    urn = (urn or "").strip()
-    if not urn:
-        raise XiaomiError("这个设备没有型号（urn），查不到可控属性")
-    if urn in _SPEC_CACHE:
-        return _SPEC_CACHE[urn]
+def _looks_like_urn(s: str) -> bool:
+    return s.startswith("urn:miot-spec-v2:")
 
+
+async def _load_model_map() -> dict[str, str]:
+    """加载「产品型号 → urn」映射表。
+
+    米家云端下发的是产品型号（如 `giot.switch.v82ksm`），
+    而 miot-spec 的 instance 接口**只认 urn**（如
+    `urn:miot-spec-v2:device:switch:0000A003:giot-v82ksm:1:0000C809`），
+    拿型号直接查会 404 —— 必须先用这张表翻译一次。
+
+    表比较大（约 6.8MB），所以带磁盘缓存，只定期刷新。
+    """
+    global _MODEL_MAP
+    if _MODEL_MAP:
+        return _MODEL_MAP
+
+    # 先试磁盘缓存
+    try:
+        if _MAP_FILE.exists() and (time.time() - _MAP_FILE.stat().st_mtime) < _MAP_TTL:
+            cached = json.loads(_MAP_FILE.read_text(encoding="utf-8"))
+            if isinstance(cached, dict) and cached:
+                _MODEL_MAP = cached
+                return _MODEL_MAP
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # 缓存坏了就重新拉
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.get(INSTANCES_API, params={"status": "all"})
+            r.raise_for_status()
+            data = r.json()
+    except Exception as exc:                                   # noqa: BLE001
+        raise XiaomiError(f"拉取米家型号表失败：{exc}") from exc
+
+    mapping = {}
+    for item in data.get("instances", []):
+        model, urn = item.get("model"), item.get("type")
+        if model and urn:
+            mapping[model] = urn
+    if not mapping:
+        raise XiaomiError("米家型号表是空的，稍后再试")
+
+    _MODEL_MAP = mapping
+    try:
+        _MAP_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _MAP_FILE.write_text(json.dumps(mapping), encoding="utf-8")
+    except Exception:                                          # noqa: BLE001
+        pass                                                   # 写不了就只用内存缓存
+    return _MODEL_MAP
+
+
+async def resolve_urn(model_or_urn: str) -> str:
+    """把产品型号翻译成 miot-spec 的 urn；本身就是 urn 就直接返回。"""
+    s = (model_or_urn or "").strip()
+    if not s:
+        raise XiaomiError("这个设备没有型号信息，查不到可控属性")
+    if _looks_like_urn(s):
+        return s
+    mapping = await _load_model_map()
+    urn = mapping.get(s)
+    if not urn:
+        raise XiaomiError(f"米家规格库里没有型号「{s}」的设备定义")
+    return urn
+
+
+async def fetch_spec(model_or_urn: str) -> dict:
+    """取设备的 MIoT 规格。规格是静态的，进程内缓存，不用反复拉。"""
+    key = (model_or_urn or "").strip()
+    if not key:
+        raise XiaomiError("这个设备没有型号信息，查不到可控属性")
+    if key in _SPEC_CACHE:
+        return _SPEC_CACHE[key]
+
+    urn = await resolve_urn(key)
     try:
         async with httpx.AsyncClient(timeout=20) as c:
             r = await c.get(SPEC_API, params={"type": urn})
             r.raise_for_status()
             d = r.json()
-    except Exception as exc:                                  # noqa: BLE001
+    except Exception as exc:                                   # noqa: BLE001
         raise XiaomiError(f"拉取米家规格失败：{exc}") from exc
 
     if not d.get("services"):
-        raise XiaomiError(f"米家规格库里没有这个型号：{urn}")
-    _SPEC_CACHE[urn] = d
+        raise XiaomiError(f"米家规格库里没有这个设备定义：{urn}")
+    _SPEC_CACHE[key] = d
     return d
 
 
