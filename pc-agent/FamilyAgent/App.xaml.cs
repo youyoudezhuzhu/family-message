@@ -59,6 +59,22 @@ public partial class App : Application
 
         AgentLog.Rotate();
 
+        // ── 启用 WPF 内置 Fluent 主题 ─────────────────────────────
+        // 只设 ThemeMode 还不够：真正生效的前提是**不要再给控件手写 ControlTemplate**，
+        // 否则自定义模板会盖过 Fluent 的样式。所以 PopupWindow.xaml 里那些
+        // 手写的 Button/TextBox/ComboBox/CheckBox 模板已全部删除。
+        // ThemeMode.System 会跟随 Windows 的明暗设置（含主题色）。
+        try
+        {
+            Application.Current.ThemeMode = ToFluent(Config.ThemeMode);
+            AgentLog.Write($"Fluent 主题已启用：pref={Config.ThemeMode} "
+                           + $"ThemeMode={Application.Current.ThemeMode}");
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("启用 Fluent 主题失败（继续用默认主题）：" + ex.Message);
+        }
+
         Config = AgentConfig.Load();
         MdTheme.Apply(Config.ThemeId, Config.ThemeMode);
         AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} theme={MdTheme.CurrentId} agent={AgentClient.ReportedVersion} ===");
@@ -81,6 +97,20 @@ public partial class App : Application
         else if (!silent)
             ShowConversation();      // 打开就是消息界面，设置在右上角
     }
+
+    /// <summary>
+    /// 把本机的明暗偏好转成 WPF 的 ThemeMode。
+    ///
+    /// ⚠️ 必须和 MdTheme 用同一个偏好：应用自己的面板颜色由 MdTheme 决定，
+    /// 而按钮/输入框等标准控件由 Fluent 决定 —— 两边明暗不一致的话，
+    /// 会出现「浅色控件压在深色背景上」的错配。
+    /// </summary>
+    private static ThemeMode ToFluent(string? pref) => (pref ?? "system").Trim().ToLowerInvariant() switch
+    {
+        "light" => ThemeMode.Light,
+        "dark" => ThemeMode.Dark,
+        _ => ThemeMode.System,
+    };
 
     private static bool HasArg(string[] args, string name)
     {

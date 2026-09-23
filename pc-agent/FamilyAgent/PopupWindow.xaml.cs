@@ -475,7 +475,7 @@ public partial class PopupWindow : Window
             var btn = new Button
             {
                 Content = panel,
-                Style = (Style)FindResource("MdTile"),
+                // 样式交给 Fluent；选中态靠下面设置的 Background 表达
                 Margin = new Thickness(2),
                 Padding = new Thickness(6, 8, 6, 8),
                 Height = double.NaN,
@@ -523,7 +523,7 @@ public partial class PopupWindow : Window
             var btn = new Button
             {
                 Content = name,
-                Style = (Style)FindResource(current == id ? "MdFilled" : "MdOutlined"),
+                FontWeight = current == id ? FontWeights.SemiBold : FontWeights.Normal,
                 Margin = new Thickness(2),
                 Padding = new Thickness(18, 0, 18, 0),
                 Height = 40,
@@ -537,6 +537,16 @@ public partial class PopupWindow : Window
     private void PickMode(string id)
     {
         MdTheme.Apply(App.Config?.ThemeId, id);
+        // 同步 Fluent 主题：标准控件走 Fluent，应用面板走 MdTheme，
+        // 两者明暗必须一致，否则控件会和背景撞色。
+        try
+        {
+            Application.Current.ThemeMode = ToFluent(id);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("切换 Fluent 主题失败：" + ex.Message);
+        }
         if (App.Config is not null)
         {
             App.Config.ThemeMode = id;
@@ -598,7 +608,6 @@ public partial class PopupWindow : Window
             var del = new Button
             {
                 Content = "删除",
-                Style = (Style)FindResource("MdText"),
                 FontSize = 13,
                 Foreground = MdTheme.Bad,
                 Padding = new Thickness(12, 4, 12, 4),
