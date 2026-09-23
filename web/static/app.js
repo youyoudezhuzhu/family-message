@@ -175,7 +175,7 @@ async function boot() {
     $('quick').appendChild(b);
   });
 
-  await Promise.all([loadDevices(), loadMessages(), loadVersion()]);
+  await Promise.all([loadDevices(), loadMessages(), loadVersion(), loadXiaomi()]);
   connectWS();
   setInterval(refreshTimes, 1000);
 }
@@ -225,7 +225,9 @@ function renderDevices() {
       <div class="dev-acts">
         <button data-act="conv">对话</button>
         <button data-act="shot" ${d.online ? '' : 'disabled'}>查看桌面</button>
-        <button data-act="wake" ${d.online ? 'disabled' : ''}>远程开机</button>
+        ${d.xiaomi ? `<button data-act="wake" ${d.online ? 'disabled' : ''}
+            title="执行米家「${d.xiaomi.name}」的${(d.xiaomi.power_action === 'off') ? '关闭' : '开启'}动作">开机</button>` : ''}
+        <button data-act="shutdown" ${d.online ? '' : 'disabled'}>关机</button>
       </div>`;
     el.querySelector('.dev-name').textContent = d.name;
     el.querySelector('.dev-meta').textContent =
@@ -273,13 +275,24 @@ async function deviceAction(d, act) {
       $('modal-foot').textContent = '截图失败：' + e.message;
     }
   } else if (act === 'wake') {
-    if (!confirm(`确定要开启「${d.name}」的米家电源吗？`)) return;
-    toast(`正在开启米家电源……`);
+    const plug = d.xiaomi ? `「${d.xiaomi.name}」` : '绑定的米家设备';
+    const verb = (d.xiaomi && d.xiaomi.power_action === 'off') ? '关闭' : '开启';
+    if (!confirm(`确定要${verb}米家设备${plug}吗？`)) return;
+    toast(`正在${verb}米家设备……`);
     try {
       const r = await api(`/api/devices/${d.device_id}/wake`, { method: 'POST' });
-      toast(r.already_online ? '设备已经在线' : (r.message || '已发出开机指令'));
+      toast(r.already_online ? '设备已经在线' : (r.message || '已发出指令'));
     } catch (e) {
-      toast('开机失败：' + e.message);
+      toast((e.message || '').includes('未绑定') ? '这台 PC 还没绑定米家开关，去「设置 → 米家」里配一下' : ('操作失败：' + e.message));
+    }
+  } else if (act === 'shutdown') {
+    if (!confirm(`确定要让「${d.name}」关机吗？\n\nPC 端会立即执行关机（有几秒缓冲，可在电脑上运行 shutdown /a 取消）。`)) return;
+    toast(`正在下发关机指令……`);
+    try {
+      const r = await api(`/api/devices/${d.device_id}/shutdown`, { method: 'POST' });
+      toast(r.message || '关机指令已下发');
+    } catch (e) {
+      toast('关机失败：' + e.message);
     }
   }
 }
@@ -464,6 +477,11 @@ function connectWS() {
       }
     } else if (d.type === 'wake') {
       toast(`${d.result.plug || '米家设备'} 已开启，等待 PC 上线……`);
+    } else if (d.type === 'xiaomi') {
+      loadXmBound();
+    } else if (d.type === 'shutdown_sent') {
+      const dev = state.devices.find((x) => x.device_id === d.device_id);
+      toast(`「${dev ? dev.name : d.device_id}」关机指令已下发`);
     }
   };
 }
@@ -580,10 +598,253 @@ function addName() {
   renderNameSelectors();
 }
 
+/* ══════════════════════════════════════════════
+   米家开关绑定（官方 OAuth2 + MIoT 云端）
+   模型：米家设备 + 动作(开/关) → 某台 PC
+   这个绑定只用于「设备清单里那台 PC 上的『开机』按钮」。
+   ══════════════════════════════════════════════ */
+let xmStatus = null;
+let xmDevices = [];      // 从米家云端发现的设备
+let xmBoundList = [];    // 已建立的绑定规则
+
+const XM_ACTIONS = [
+  { value: 'on', label: '开（通电）' },
+  { value: 'off', label: '关（断电）' },
+];
+
+async function loadXiaomi() {
+  try {
+    xmStatus = await api('/api/xiaomi/status');
+  } catch (_) {
+    xmStatus = { logged_in: false };
+  }
+
+  const on = !!(xmStatus && xmStatus.logged_in);
+  $('xm-login').style.display = on ? 'none' : 'block';
+  $('xm-authed').style.display = on ? 'block' : 'none';
+  $('xm-state-line').textContent = on
+    ? '已授权米家。绑定规则：米家设备 + 动作 → 某台 PC（仅用于设备清单上的「开机」按钮）'
+    : '尚未授权米家。授权后可以绑定智能插座，让网页端能远程开机。';
+  $('xm-redirect').textContent = xmStatus.redirect_url || '';
+
+  if (on) {
+    const days = Math.round((xmStatus.expires_in_seconds || 0) / 86400);
+    $('xm-login-info').textContent = days > 0
+      ? `token 还剩约 ${days} 天（到期前自动续期）`
+      : 'token 即将到期，下次调用会自动续期';
+    await loadXmBound();
+    renderXmForm();
+    if (!xmDevices.length) xmDiscover();     // 首次打开自动拉一次设备列表
+  }
+}
+
+async function xmGetUrl() {
+  $('xm-url-hint').textContent = '正在获取……';
+  try {
+    const d = await api('/api/xiaomi/auth-url');
+    const a = $('xm-auth-link');
+    a.href = d.auth_url;
+    a.textContent = d.auth_url;
+    $('xm-url-box').style.display = 'block';
+    $('xm-url-hint').textContent = '在浏览器打开下面的链接';
+    $('xm-redirect').textContent = d.redirect_url;
+  } catch (e) {
+    $('xm-url-hint').textContent = '获取失败：' + e.message;
+  }
+}
+
+async function xmExchange() {
+  const code = $('xm-code').value.trim();
+  if (!code) return;
+  $('xm-exchange-hint').textContent = '正在换取 token……';
+  try {
+    await api('/api/xiaomi/exchange', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+    $('xm-code').value = '';
+    $('xm-url-box').style.display = 'none';
+    $('xm-exchange-hint').textContent = '';
+    await loadXiaomi();
+    toast('米家授权成功');
+  } catch (e) {
+    $('xm-exchange-hint').textContent = '授权失败：' + e.message;
+  }
+}
+
+async function xmLogout() {
+  if (!confirm('确定要退出米家授权吗？下次需要重新走一遍浏览器授权。')) return;
+  try {
+    await api('/api/xiaomi/logout', { method: 'POST' });
+    xmDevices = [];
+    xmBoundList = [];
+    await loadXiaomi();
+    toast('已退出米家');
+  } catch (e) {
+    toast('退出失败：' + e.message);
+  }
+}
+
+async function xmDiscover() {
+  const box = $('xm-bound');
+  $('xm-login-info').textContent = '正在向米家云端拉取设备列表……';
+  try {
+    xmDevices = await api('/api/xiaomi/discover', { method: 'POST' });
+  } catch (e) {
+    $('xm-login-info').textContent = '拉取设备失败：' + e.message;
+    return;
+  }
+  await loadXiaomi();
+  $('xm-login-info').textContent = xmDevices.length
+    ? `已获取 ${xmDevices.length} 个米家设备`
+    : '这个账号下没有找到设备';
+}
+
+/* 新增绑定表单：选择开关设备 + 动作 + 关联 PC */
+function renderXmForm() {
+  const devItems = xmDevices.length
+    ? xmDevices.map((d) => ({
+        value: d.miot_device_id,
+        label: (d.name || d.miot_device_id) + (d.is_online === false ? '（离线）' : ''),
+      }))
+    : [{ value: '', label: '（先点「刷新米家设备」）' }];
+  buildSelect($('xm-dev-pick'), devItems, devItems[0].value, null);
+
+  buildSelect($('xm-act-pick'), XM_ACTIONS, 'on', null);
+
+  const pcItems = [{ value: '', label: '不指定 PC' }].concat(
+    state.devices.map((d) => ({ value: d.device_id, label: d.name })));
+  buildSelect($('xm-pc-pick'), pcItems, pcItems.length > 1 ? pcItems[1].value : '', null);
+}
+
+async function xmAdd() {
+  const mid = $('xm-dev-pick')._value;
+  const action = $('xm-act-pick')._value || 'on';
+  const target = $('xm-pc-pick')._value || '';
+  if (!mid) {
+    toast('先选一个米家设备（点「刷新米家设备」）');
+    return;
+  }
+  const dev = xmDevices.find((d) => d.miot_device_id === mid) || {};
+  try {
+    await api('/api/xiaomi/devices', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: dev.name || mid,
+        miot_device_id: mid,
+        urn: dev.model || '',
+        device_type: 'plug',
+        power_siid: 2,
+        power_piid: 1,
+        power_action: action,
+        target_device_id: target,
+      }),
+    });
+    toast('已添加绑定');
+    await loadXmBound();
+    await loadDevices();          // 设备卡片上的「开机」按钮要跟着出现
+  } catch (e) {
+    toast('添加失败：' + e.message);
+  }
+}
+
+async function loadXmBound() {
+  try {
+    xmBoundList = await api('/api/xiaomi/devices');
+  } catch (_) {
+    xmBoundList = [];
+  }
+  renderXmBound();
+}
+
+function renderXmBound() {
+  const box = $('xm-bound');
+  box.innerHTML = '';
+  if (!xmBoundList.length) {
+    box.innerHTML = '<p class="hint">还没有绑定。上面选好设备、动作和目标 PC 后点「添加绑定」。</p>';
+    return;
+  }
+
+  const sec = document.createElement('span');
+  sec.className = 'xm-sec';
+  sec.textContent = '已建立的绑定（改完即时生效；「开机」按钮只出现在被关联的 PC 上）';
+  box.appendChild(sec);
+
+  xmBoundList.forEach((row) => {
+    const el = document.createElement('div');
+    el.className = 'xm-item';
+
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    const n = document.createElement('div');
+    n.className = 'n';
+    n.textContent = row.name;
+    const dd = document.createElement('div');
+    dd.className = 'd';
+    dd.textContent = `${row.urn || '未知型号'} · 电源 siid=${row.power_siid} piid=${row.power_piid}`;
+    meta.append(n, dd);
+
+    const acts = document.createElement('div');
+    acts.className = 'acts';
+
+    const actPick = document.createElement('div');
+    actPick.className = 'md-select';
+    actPick.style.minWidth = '118px';
+    buildSelect(actPick, XM_ACTIONS, row.power_action || 'on',
+      (v) => xmPatch(row, { power_action: v }));
+
+    const pcPick = document.createElement('div');
+    pcPick.className = 'md-select';
+    pcPick.style.minWidth = '140px';
+    const pcItems = [{ value: '', label: '不指定 PC' }].concat(
+      state.devices.map((d) => ({ value: d.device_id, label: d.name })));
+    buildSelect(pcPick, pcItems, row.target_device_id || '',
+      (v) => xmPatch(row, { target_device_id: v }));
+
+    const del = document.createElement('button');
+    del.className = 'btn btn-text small';
+    del.style.color = 'var(--bad)';
+    del.textContent = '删除';
+    del.onclick = () => xmUnbind(row);
+
+    acts.append(actPick, pcPick, del);
+    el.append(meta, acts);
+    box.appendChild(el);
+  });
+}
+
+async function xmPatch(row, fields) {
+  try {
+    await api(`/api/xiaomi/devices/${row.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(fields),
+    });
+    Object.assign(row, fields);
+    toast('已更新');
+    await loadDevices();
+  } catch (e) {
+    toast('更新失败：' + e.message);
+    await loadXmBound();
+  }
+}
+
+async function xmUnbind(row) {
+  if (!confirm(`确定删除绑定「${row.name}」吗？`)) return;
+  try {
+    await api(`/api/xiaomi/devices/${row.id}`, { method: 'DELETE' });
+    await loadXmBound();
+    await loadDevices();
+    toast('已删除');
+  } catch (e) {
+    toast('删除失败：' + e.message);
+  }
+}
+
 /* ── 设置面板 ─────────────────────────────────── */
 function openSettings() {
   renderThemeGrid();
   renderNamesList();
+  loadXiaomi();          // 米家那块也要刷新（设备列表可能变了）
   $('settings').classList.add('show');
 }
 
@@ -649,6 +910,15 @@ $('settings').onclick = (e) => { if (e.target.id === 'settings') $('settings').c
 $('name-add').onclick = addName;
 $('name-new').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addName(); }
+});
+
+/* 米家 */
+$('xm-get-url').onclick = xmGetUrl;
+$('xm-exchange').onclick = xmExchange;
+$('xm-logout').onclick = xmLogout;
+$('xm-discover').onclick = xmDiscover;
+$('xm-code').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); xmExchange(); }
 });
 
 boot().catch((e) => { console.error(e); toast('初始化失败：' + e.message); });

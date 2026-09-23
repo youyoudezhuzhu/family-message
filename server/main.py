@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import db
-from config import CONFIG
+from config import CONFIG, save_config
 from hub import HUB, DeviceOffline
 from services import devices as dev_svc
 from services import messages as msg_svc
@@ -153,6 +153,8 @@ async def api_devices():
     for r in rows:
         r.pop("token", None)
         r["online"] = HUB.is_online(r["device_id"])
+        # 绑定了米家开关规则 → 网页端这张卡片才显示「开机」按钮
+        r["xiaomi"] = xiaomi_svc.power_for_device(r["device_id"])
     return rows
 
 
@@ -358,16 +360,116 @@ class WakeBody(BaseModel):
 
 @app.post("/api/devices/{device_id}/wake", dependencies=[WebAuth])
 async def api_wake(device_id: str, body: WakeBody | None = None):
+    """网页端「开机」按钮：执行绑定的米家开关动作（默认是「开」）。"""
     if not dev_svc.get_device(device_id):
         raise HTTPException(404, "设备不存在")
     if HUB.is_online(device_id):
         return {"ok": True, "already_online": True, "message": "设备已经在线"}
     try:
-        outcome = await xiaomi_svc.power_on_for_device(device_id)
+        outcome = await xiaomi_svc.apply_for_device(device_id)
+    except xiaomi_svc.NeedLogin as e:
+        raise HTTPException(401, str(e))
     except xiaomi_svc.XiaomiError as e:
         raise HTTPException(502, str(e))
     await HUB.broadcast_web({"type": "wake", "device_id": device_id, "result": outcome})
     return outcome
+
+
+@app.post("/api/devices/{device_id}/shutdown", dependencies=[WebAuth])
+async def api_shutdown(device_id: str):
+    """网页端「关机」按钮：让 PC 端 Agent 执行关机。
+
+    这是「设备管理」能力：PC Agent 是受 Server 信任的家庭设备 Agent，
+    收到指令即执行，不需要在 PC 上再点一次确认（与本项目 §13 的权限模型一致）。
+    """
+    if not dev_svc.get_device(device_id):
+        raise HTTPException(404, "设备不存在")
+    if not HUB.is_online(device_id):
+        raise HTTPException(409, "设备离线，无法发送关机指令")
+
+    ok = await HUB.send_to_device(device_id, {"type": "shutdown", "delay_seconds": 5})
+    if not ok:
+        raise HTTPException(502, "指令下发失败（连接已断开）")
+
+    db.log_event(device_id, "shutdown", "web 下发关机指令")
+    await HUB.broadcast_web({"type": "shutdown_sent", "device_id": device_id})
+    return {"ok": True, "device_id": device_id, "message": "关机指令已下发，PC 将在数秒后关机"}
+
+
+# ============================================================
+# 米家（官方 OAuth2 方式，实现对照 XiaoMi/ha_xiaomi_home）
+# ============================================================
+class XiaomiCodeBody(BaseModel):
+    code: str = Field(default="", max_length=4000)
+
+
+class XiaomiBindBody(BaseModel):
+    name: str = Field(default="", max_length=64)
+    miot_device_id: str = Field(default="", max_length=128)
+    urn: str = Field(default="", max_length=128)
+    device_type: str = Field(default="plug", max_length=32)
+    power_siid: int = 2
+    power_piid: int = 1
+    power_action: str = Field(default="on", max_length=8)
+    target_device_id: str = Field(default="", max_length=64)
+
+
+class XiaomiPatchBody(BaseModel):
+    name: Optional[str] = None
+    device_type: Optional[str] = None
+    target_device_id: Optional[str] = None
+    power_siid: Optional[int] = None
+    power_piid: Optional[int] = None
+    power_action: Optional[str] = None
+    enabled: Optional[int] = None
+
+
+class XiaomiPowerBody(BaseModel):
+    on: bool = True
+
+
+@app.get("/api/xiaomi/status", dependencies=[WebAuth])
+async def api_xiaomi_status():
+    st = xiaomi_svc.auth_status()
+    st["enabled"] = bool(CONFIG["xiaomi"]["enabled"])
+    st["redirect_url"] = xiaomi_svc._redirect_url()
+    return st
+
+
+@app.get("/api/xiaomi/auth-url", dependencies=[WebAuth])
+async def api_xiaomi_auth_url():
+    """第一步：拿授权地址，让用户在浏览器里打开并同意。"""
+    return xiaomi_svc.build_auth_url()
+
+
+@app.post("/api/xiaomi/exchange", dependencies=[WebAuth])
+async def api_xiaomi_exchange(body: XiaomiCodeBody):
+    """第二步：用户把回调地址（或其中的 code）粘回来，换 token。"""
+    try:
+        st = await xiaomi_svc.exchange_code(body.code)
+    except xiaomi_svc.XiaomiError as e:
+        raise HTTPException(400, str(e))
+
+    if not CONFIG["xiaomi"]["enabled"]:
+        CONFIG["xiaomi"]["enabled"] = True
+        save_config()
+    return st
+
+
+@app.post("/api/xiaomi/logout", dependencies=[WebAuth])
+async def api_xiaomi_logout():
+    xiaomi_svc.clear_auth()
+    return {"ok": True}
+
+
+@app.post("/api/xiaomi/discover", dependencies=[WebAuth])
+async def api_xiaomi_discover():
+    try:
+        return await xiaomi_svc.discover_devices()
+    except xiaomi_svc.NeedLogin as e:
+        raise HTTPException(401, str(e))
+    except xiaomi_svc.XiaomiError as e:
+        raise HTTPException(502, str(e))
 
 
 @app.get("/api/xiaomi/devices", dependencies=[WebAuth])
@@ -375,9 +477,69 @@ async def api_xiaomi_devices():
     return xiaomi_svc.list_xiaomi_devices()
 
 
-@app.get("/api/xiaomi/status", dependencies=[WebAuth])
-async def api_xiaomi_status():
-    return xiaomi_svc.auth_status()
+@app.post("/api/xiaomi/devices", dependencies=[WebAuth])
+async def api_xiaomi_bind(body: XiaomiBindBody):
+    if not body.miot_device_id:
+        raise HTTPException(400, "缺少米家设备 ID")
+    row = xiaomi_svc.bind_xiaomi_device(
+        body.name or body.miot_device_id, body.miot_device_id, body.urn,
+        body.device_type, body.power_siid, body.power_piid, body.target_device_id,
+        body.power_action,
+    )
+    return row
+
+
+@app.patch("/api/xiaomi/devices/{row_id}", dependencies=[WebAuth])
+async def api_xiaomi_update(row_id: int, body: XiaomiPatchBody):
+    row = xiaomi_svc.update_xiaomi_device(
+        row_id, name=body.name, device_type=body.device_type,
+        target_device_id=body.target_device_id, power_siid=body.power_siid,
+        power_piid=body.power_piid, power_action=body.power_action,
+        enabled=body.enabled,
+    )
+    if not row:
+        raise HTTPException(404, "米家设备不存在")
+    return row
+
+
+@app.delete("/api/xiaomi/devices/{row_id}", dependencies=[WebAuth])
+async def api_xiaomi_unbind(row_id: int):
+    if not xiaomi_svc.unbind_xiaomi_device(row_id):
+        raise HTTPException(404, "米家设备不存在")
+    return {"ok": True}
+
+
+@app.get("/api/xiaomi/devices/{row_id}/state", dependencies=[WebAuth])
+async def api_xiaomi_state(row_id: int):
+    row = xiaomi_svc.get_xiaomi_device(row_id)
+    if not row:
+        raise HTTPException(404, "米家设备不存在")
+    try:
+        on = await xiaomi_svc.get_power(row["miot_device_id"],
+                                        row["power_siid"] or 2, row["power_piid"] or 1)
+    except xiaomi_svc.NeedLogin as e:
+        raise HTTPException(401, str(e))
+    except xiaomi_svc.XiaomiError as e:
+        raise HTTPException(502, str(e))
+    return {"id": row_id, "on": on}
+
+
+@app.post("/api/xiaomi/devices/{row_id}/power", dependencies=[WebAuth])
+async def api_xiaomi_power(row_id: int, body: XiaomiPowerBody):
+    row = xiaomi_svc.get_xiaomi_device(row_id)
+    if not row:
+        raise HTTPException(404, "米家设备不存在")
+    try:
+        await xiaomi_svc.set_power(row["miot_device_id"], body.on,
+                                   row["power_siid"] or 2, row["power_piid"] or 1)
+    except xiaomi_svc.NeedLogin as e:
+        raise HTTPException(401, str(e))
+    except xiaomi_svc.XiaomiError as e:
+        raise HTTPException(502, str(e))
+
+    db.log_event(None, "xiaomi_power", f"{row['name']} -> {'on' if body.on else 'off'}")
+    await HUB.broadcast_web({"type": "xiaomi", "id": row_id, "on": body.on})
+    return {"ok": True, "id": row_id, "on": body.on, "name": row["name"]}
 
 
 @app.get("/api/events", dependencies=[WebAuth])

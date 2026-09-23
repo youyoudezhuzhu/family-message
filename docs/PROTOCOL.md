@@ -59,6 +59,19 @@
 | `message` | 有条留言要弹。见下 |
 | `heartbeat_ack` | 心跳回执 |
 | `screenshot_request` | 要求截屏。含 `request_id` |
+| `shutdown` | 要求 PC 关机。含 `delay_seconds`（默认 5） |
+
+### `shutdown` 帧
+
+网页端设备卡片上的「关机」按钮发出来的。Agent 收到后应：
+
+1. 记录日志，并给用户一个可见提示（Windows 端是托盘气泡）
+2. 执行 `shutdown /s /t <delay_seconds>`
+3. 回报一条 `event` 帧（`kind=shutdown` 或 `kind=shutdown_failed`）
+
+**不要加 `/f`** —— 强制关会丢未保存的内容。
+**不要在本机再弹一次确认** —— PC Agent 是受 Server 信任的家庭设备 Agent（见设计原则），
+延迟几秒本身就是给用户留的反应时间（`shutdown /a` 可取消）。
 
 ### `message` 帧
 
@@ -191,9 +204,19 @@
 | GET | `/api/conversations/{device_id}` | 某设备的对话明细（**双向**）。每条是原始 message 行，靠 `sender_kind`（`web`/`device`）判断方向，并带 `targets` |
 | POST | `/api/messages/{id}/read` | 标记已读 |
 | POST | `/api/devices/{id}/screenshot` | 请求截图，返回图片（**带鉴权，不是公开 URL**） |
-| POST | `/api/devices/{id}/wake` | 通过米家插座开机 |
-| GET | `/api/xiaomi/devices` | 米家设备列表 |
-| GET | `/api/xiaomi/status` | 米家登录状态 |
+| POST | `/api/devices/{id}/wake` | 执行该 PC 绑定的米家开关动作（默认「开」，用于远程开机） |
+| POST | `/api/devices/{id}/shutdown` | 让 PC Agent 执行关机（设备离线时返回 409） |
+| GET | `/api/xiaomi/devices` | 已建立的开关绑定（米家设备 + 动作 → PC） |
+| POST | `/api/xiaomi/devices` | 新建绑定 |
+| PATCH | `/api/xiaomi/devices/{id}` | 改绑定（动作 / 关联 PC / siid / piid） |
+| DELETE | `/api/xiaomi/devices/{id}` | 删除绑定 |
+| GET | `/api/xiaomi/auth-url` | 米家 OAuth2 授权地址（第一步） |
+| POST | `/api/xiaomi/exchange` | 用回调里的 code 换 token（第二步） |
+| POST | `/api/xiaomi/logout` | 清除本地 token |
+| POST | `/api/xiaomi/discover` | 拉取账号下的米家设备列表 |
+| POST | `/api/xiaomi/devices/{id}/power` | 直接开关某个米家设备 |
+| GET | `/api/xiaomi/devices/{id}/state` | 读某个米家设备的当前开关状态 |
+| GET | `/api/xiaomi/status` | 米家授权状态 |
 | GET | `/api/events` | 事件留痕（排查用） |
 | GET | `/healthz` | 健康检查（无需鉴权） |
 

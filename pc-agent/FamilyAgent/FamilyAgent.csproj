@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
@@ -19,5 +19,13 @@
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
     <DebugType>none</DebugType>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WPF 桌面端不支持彩色 emoji（dotnet/wpf#91，官方长期未修）：WPF 用自己的
+         字形栅格化器，忽略 Segoe UI Emoji 的 COLR/CPAL 彩色图层，只渲染成黑白轮廓。
+         这个库把彩色图层解析成矢量 DrawingImage，是社区通行解法（WTFPL 许可）。
+         0.3.4 带 lib/netcoreapp3.1，与 net8.0-windows 兼容。 -->
+    <PackageReference Include="Emoji.Wpf" Version="0.3.4" />
+  </ItemGroup>
 
 </Project>
