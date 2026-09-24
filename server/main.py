@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 import os
 import uuid
 from pathlib import Path
@@ -21,10 +22,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 import db
+import permissions
 from config import CONFIG, save_config
 from hub import HUB, DeviceOffline
 from services import devices as dev_svc
 from services import messages as msg_svc
+from services import unlock as unlock_svc
 from services import xiaomi as xiaomi_svc
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -114,6 +117,24 @@ def require_web(request: Request) -> None:
 WebAuth = Depends(require_web)
 
 
+def require_perm(perm: str):
+    """要求某个权限。**后端强制** —— 前端隐藏按钮只是体验优化，不是安全边界。
+
+    现在还没有用户/角色（登录即全部权限），但接口先建好：
+    将来加"客人只能发消息、不能解锁/关机"这类角色时，只改 permissions.for_session()。
+    """
+
+    def dep(request: Request) -> None:
+        require_web(request)
+        if not permissions.has(permissions.for_session(), perm):
+            raise HTTPException(status_code=403, detail=f"无权限：{perm}")
+
+    return dep
+
+
+UnlockAuth = Depends(require_perm(permissions.DEVICE_UNLOCK))
+
+
 class LoginBody(BaseModel):
     password: str
 
@@ -141,6 +162,8 @@ async def api_config():
         "public_url": CONFIG["server"]["public_url"],
         "xiaomi_enabled": bool(CONFIG["xiaomi"]["enabled"]),
         "server_time": db.now_iso(),
+        # 前端据此决定设备操作按钮的可用性（后端仍会再查一遍）
+        "permissions": permissions.for_session(),
     }
 
 
@@ -150,12 +173,16 @@ async def api_config():
 @app.get("/api/devices", dependencies=[WebAuth])
 async def api_devices():
     rows = dev_svc.list_devices()
+    out = []
     for r in rows:
-        r.pop("token", None)
-        r["online"] = HUB.is_online(r["device_id"])
+        # ★ 统一走 _public：它负责去掉 token、补 online、
+        #   把 capabilities 的 JSON 字符串解析成数组、把 windows_state 规范化。
+        #   以前这里各写一遍，改字段就会漏（远程解锁那次就漏了 capabilities）。
+        d = _public(r)
         # 绑定了米家开关规则 → 网页端这张卡片才显示「开机」按钮
-        r["xiaomi"] = xiaomi_svc.power_for_device(r["device_id"])
-    return rows
+        d["xiaomi"] = xiaomi_svc.power_for_device(d["device_id"])
+        out.append(d)
+    return out
 
 
 @app.get("/api/devices/{device_id}", dependencies=[WebAuth])
@@ -163,10 +190,9 @@ async def api_device(device_id: str):
     row = dev_svc.get_device(device_id)
     if not row:
         raise HTTPException(404, "设备不存在")
-    row.pop("token", None)
-    row["online"] = HUB.is_online(device_id)
-    row["xiaomi"] = xiaomi_svc.power_for_device(device_id)
-    return row
+    d = _public(row)
+    d["xiaomi"] = xiaomi_svc.power_for_device(device_id)
+    return d
 
 
 @app.get("/api/devices/{device_id}/status", dependencies=[WebAuth])
@@ -179,6 +205,8 @@ async def api_device_status(device_id: str):
         "name": row["name"],
         "online": HUB.is_online(device_id),
         "status": "online" if HUB.is_online(device_id) else "offline",
+        # 网页端靠它判断「能不能解锁」/「为什么不能」
+        "windows_state": (row.get("windows_state") or "unknown"),
         "last_seen": row["last_seen"],
     }
 
@@ -210,7 +238,48 @@ def _public(row: Optional[dict]) -> dict:
     row = dict(row)
     row.pop("token", None)
     row["online"] = HUB.is_online(row.get("device_id", ""))
+
+    # capabilities 在库里是 JSON 字符串，对前端给数组（前端直接 includes 判断）
+    caps = row.get("capabilities") or ""
+    try:
+        row["capabilities"] = json.loads(caps) if caps else []
+    except Exception:
+        row["capabilities"] = []
+    if not isinstance(row["capabilities"], list):
+        row["capabilities"] = []
+
+    # 老版本 Agent 从没上报过会话状态 → unknown（网页端据此显示"状态未知"）
+    row["windows_state"] = (row.get("windows_state") or "unknown").strip() or "unknown"
     return row
+
+
+def _apply_reported_state(device_id: str, data: dict) -> bool:
+    """把 PC 上报的 Windows 会话状态 / 能力清单写库。
+
+    接受两种来源：
+      · WS 连接串上的查询参数（PC 一连上就报，网页端不用等第一次心跳）
+      · heartbeat / device_info 帧里的字段
+
+    返回是否发生变化 —— 只有变化时才广播给网页端，否则每 15 秒一次的心跳
+    会把网页端刷屏。
+    """
+    state = (data.get("windows_state") or "").strip().lower()
+    caps = data.get("capabilities")
+
+    # 查询串上是逗号分隔的字符串
+    if isinstance(caps, str):
+        caps = [c for c in (x.strip() for x in caps.split(",")) if c]
+    if not isinstance(caps, list):
+        caps = None
+
+    if not state and caps is None:
+        return False
+
+    return dev_svc.set_session_state(
+        device_id,
+        windows_state=state or None,
+        capabilities=caps,
+    )
 
 
 def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dict:
@@ -431,6 +500,53 @@ class XiaomiPowerBody(BaseModel):
     on: bool = True
 
 
+@app.post("/api/devices/{device_id}/unlock", dependencies=[UnlockAuth])
+async def api_device_unlock(device_id: str):
+    """远程解锁：签发一次性令牌并下发给 PC。
+
+    **这里不接受也不传递任何 Windows 密码** —— 令牌里只有 request_id / nonce /
+    过期时间。真正的凭据只存在于目标 PC 本地，由 PC 自己使用。
+
+    结果不经 HTTP 返回：PC 的应答走 WebSocket 回来，再广播给所有浏览器
+    （前端监听 unlock_result）。
+    """
+    dev = dev_svc.get_device(device_id)
+    online = HUB.is_online(device_id)
+
+    # 限流优先判断：被锁了就别说别的了，免得给探测者反馈设备状态
+    until = unlock_svc.guard_state(device_id)
+    if until:
+        raise HTTPException(status_code=429,
+                            detail=f"解锁尝试过于频繁，请于 {until} 之后再试")
+
+    ok, reason = unlock_svc.can_unlock(dev, online)
+    if not ok:
+        raise HTTPException(status_code=404 if not dev else 409, detail=reason)
+
+    req = unlock_svc.create(device_id)
+    sent = await HUB.send_to_device(device_id, {
+        "type": "unlock_request",
+        "request_id": req["request_id"],
+        "device_id": device_id,
+        "action": req["action"],
+        "nonce": req["nonce"],
+        "expires_at": req["expires_at"],
+    })
+    if not sent:
+        # 在线状态是缓存的，真正下发时对方可能刚好断了
+        unlock_svc.mark(req["request_id"], "error", "下发失败：设备连接不可用", device_id=device_id)
+        unlock_svc.note_result(device_id, ok=False)
+        raise HTTPException(status_code=409, detail="设备连接不可用，解锁请求未送达")
+
+    await HUB.broadcast_web({
+        "type": "unlock_pending",
+        "device_id": device_id,
+        "request_id": req["request_id"],
+        "expires_at": req["expires_at"],
+    })
+    return {"ok": True, "request_id": req["request_id"], "expires_at": req["expires_at"]}
+
+
 @app.get("/api/xiaomi/status", dependencies=[WebAuth])
 async def api_xiaomi_status():
     st = xiaomi_svc.auth_status()
@@ -575,6 +691,10 @@ async def ws_device(websocket: WebSocket, device_id: str):
     platform = q.get("platform", "")
     agent_version = q.get("agent_version", "")
     enroll_token = q.get("enroll_token", "")
+    # Phase 1：PC 一连上就把 Windows 会话状态带上来，
+    # 网页端不用干等第一次心跳才知道"停在登录界面"
+    reported_state = q.get("windows_state", "")
+    reported_caps = q.get("capabilities", "")
     ip = websocket.client.host if websocket.client else ""
 
     known = dev_svc.get_device(device_id)
@@ -600,6 +720,9 @@ async def ws_device(websocket: WebSocket, device_id: str):
     await websocket.accept()
     await HUB.bind_device(device_id, websocket)
     row = dev_svc.set_online(device_id, ip=ip, agent_version=agent_version)
+    if _apply_reported_state(device_id, {"windows_state": reported_state,
+                                         "capabilities": reported_caps}):
+        row = dev_svc.get_device(device_id) or row
     await websocket.send_json({
         "type": "hello",
         "device_id": device_id,
@@ -655,6 +778,12 @@ async def handle_device_message(device_id: str, data: dict) -> None:
 
     if mtype == "heartbeat":
         dev_svc.touch(device_id)
+        # 会话状态有变化才广播 —— 否则每 15 秒一次的心跳会把网页端刷屏
+        if _apply_reported_state(device_id, data):
+            await HUB.broadcast_web({
+                "type": "device_status", "device_id": device_id, "status": "online",
+                "device": _public(dev_svc.get_device(device_id)),
+            })
         await HUB.send_to_device(device_id, {"type": "heartbeat_ack", "server_time": db.now_iso()})
 
     elif mtype == "ack":
@@ -711,6 +840,45 @@ async def handle_device_message(device_id: str, data: dict) -> None:
             "messages": msg_svc.history_for_device(device_id, limit=min(limit, 200)),
         })
 
+    elif mtype == "unlock_result":
+        # ★ 一次性语义的最后一道闸：used_at 已经写过就直接丢，并且审计留痕。
+        #   PC 侧也有本地重放缓存，两边都记 —— 任何一边漏了另一边兜底。
+        rid = (data.get("request_id") or "").strip()
+        status = (data.get("status") or "").strip().lower()
+        reason = (data.get("reason") or "").strip()
+        row = unlock_svc.get(rid)
+        if not row:
+            db.log_event(device_id, "unlock_unknown", f"未知 request_id: {rid[:64]}")
+            return
+        if row.get("device_id") != device_id:
+            # 把 A 设备的令牌拿去 B 设备用（需求 §28 场景 7）
+            db.log_event(device_id, "unlock_wrong_device",
+                         f"{rid} 属于 {row.get('device_id')}")
+            await HUB.send_to_device(device_id, {
+                "type": "unlock_result_ack", "request_id": rid,
+                "status": "rejected", "reason": "not_mine",
+            })
+            return
+        if row.get("used_at"):
+            db.log_event(device_id, "unlock_replay", f"{rid} 已经结过单，忽略重复应答")
+            return
+
+        # armed 只是中间态（PC 已收到并校验通过，等真正解锁），不结单
+        if status == "armed":
+            await HUB.broadcast_web({
+                "type": "unlock_result", "device_id": device_id,
+                "request_id": rid, "status": "armed", "reason": reason,
+            })
+            return
+
+        ok = status == "success"
+        unlock_svc.mark(rid, status or "unknown", reason, device_id=device_id)
+        unlock_svc.note_result(device_id, ok=ok)
+        await HUB.broadcast_web({
+            "type": "unlock_result", "device_id": device_id,
+            "request_id": rid, "status": status or "unknown", "reason": reason,
+        })
+
     elif mtype == "event":
         db.log_event(device_id, str(data.get("kind", "event")), str(data.get("detail", ""))[:500])
 
@@ -720,6 +888,11 @@ async def handle_device_message(device_id: str, data: dict) -> None:
             "name=COALESCE(NULLIF(?,''), name) WHERE device_id=?",
             (data.get("platform", ""), data.get("name", ""), device_id),
         )
+        if _apply_reported_state(device_id, data):
+            await HUB.broadcast_web({
+                "type": "device_status", "device_id": device_id, "status": "online",
+                "device": _public(dev_svc.get_device(device_id)),
+            })
 
 
 # ============================================================

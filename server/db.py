@@ -97,6 +97,30 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT NOT NULL
 );
 
+-- ── 远程解锁：一次性请求 ──────────────────────────────────────────
+-- 令牌里**不含任何 Windows 密码**，NAS 全程不接触密码。
+-- 一次性语义：used_at 一旦写下，同一个 request_id 再来就直接拒（防重放）。
+CREATE TABLE IF NOT EXISTS unlock_requests (
+    request_id TEXT PRIMARY KEY,
+    device_id  TEXT NOT NULL,
+    nonce      TEXT NOT NULL,
+    action     TEXT NOT NULL DEFAULT 'device.unlock',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at    TEXT,
+    result     TEXT,           -- success | expired | replay | denied | timeout | error | no_credential
+    reason     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_unlock_dev ON unlock_requests(device_id, created_at);
+
+-- ── 远程解锁：失败限流 ────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS unlock_guard (
+    device_id    TEXT PRIMARY KEY,
+    fail_count   INTEGER NOT NULL DEFAULT 0,
+    locked_until TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_targets_msg ON message_targets(message_id);
 CREATE INDEX IF NOT EXISTS idx_targets_dev ON message_targets(device_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
@@ -117,6 +141,13 @@ MIGRATIONS = [
     # 新版绑定存具体值（JSON），不再局限开/关两种
     ("xiaomi_devices", "power_value",
      "ALTER TABLE xiaomi_devices ADD COLUMN power_value TEXT"),
+    # ── 远程解锁（Phase 1）──
+    # Windows 会话状态：unknown | logon_screen | locked | unlocked
+    ("devices", "windows_state",
+     "ALTER TABLE devices ADD COLUMN windows_state TEXT NOT NULL DEFAULT 'unknown'"),
+    # 能力清单（JSON 数组字符串），网页端据此决定按钮可用性
+    ("devices", "capabilities",
+     "ALTER TABLE devices ADD COLUMN capabilities TEXT NOT NULL DEFAULT ''"),
 ]
 
 # 依赖迁移后才能建的索引（老库在 CREATE TABLE IF NOT EXISTS 时不会补列）
