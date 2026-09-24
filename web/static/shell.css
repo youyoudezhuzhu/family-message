@@ -1,0 +1,227 @@
+/* ═══════════════════════════════════════════════════════════════
+   家庭消息 · 控制台 —— WebView2 壳模式（额外分支）
+   ───────────────────────────────────────────────────────────────
+   PC 端不再手绘界面，改成 **WebView2 壳 + 加载网页端页面**：
+   同一个 index.html，既能在浏览器里当控制台用，也能被壳加载成原生应用界面。
+
+   本文件只在壳模式生效（html[data-shell="1"] 或 .shell-popup 出现时），
+   **浏览器模式下的现有界面完全不受影响** —— 这里没有任何规则会命中浏览器路径。
+
+   取值一律走 tokens.css 的 Fluent 2 令牌（--fluent-* / --radius-* /
+   --spacing-* / --shadow-* / --font-*），不写死颜色、圆角、字号。
+
+   分工：
+     · 启动加载态（第一帧的中性画面）的关键样式 **内联在 index.html 的 <head>**
+       —— 它必须在任何外链样式到达前就把底色和布局定死，否则会闪白/闪错布局；
+       这里不再重复第二份。
+     · 本文件负责：壳模式下的控制台微调 + 全屏消息弹窗（popup）视图。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ══════════════════════════════════════════════════════════════
+   15.1 壳模式开关
+   ══════════════════════════════════════════════════════════════ */
+
+/* 只给壳用的控件（如「退出程序」）：浏览器里永远不出现 */
+.shell-only,
+.shell-local { display: none; }
+
+/* 壳模式：html 上的 data-shell="1" 由 index.html 的内联脚本第一帧就写好
+   （window.chrome.webview 存在，或命令行带了 ?shell=1） */
+html[data-shell="1"] .shell-only { display: inline-flex; }
+html[data-shell="1"] .shell-local { display: inline-flex; }
+/* 还没有 host.session 时是个空徽标，别留一块空底色 */
+html[data-shell="1"] .shell-local:empty { display: none; }
+
+/* ══════════════════════════════════════════════════════════════
+   15.2 全屏消息弹窗（mode=popup）
+   结构：顶部信息条 / 消息舞台 / 底部动作区
+   ══════════════════════════════════════════════════════════════ */
+.shell-popup {
+  position: fixed; inset: 0;
+  /* 高于 Toast(100) / Dialog(80) —— 弹窗是壳里最高的一层；
+     但要低于启动加载态没意义（那时弹窗还没出来） */
+  z-index: 200;
+  display: flex; flex-direction: column;
+  background: var(--fluent-color-background);
+  color: var(--fluent-color-text);
+}
+.shell-popup[hidden] { display: none; }
+
+/* ── 顶部信息条 ─────────────────────────────────────────────── */
+.popup-bar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  height: var(--titlebar-height);
+  padding: 0 var(--spacing-xl);
+  background: var(--fluent-color-mica);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: 1px solid var(--fluent-color-border-subtle);
+}
+.popup-bar__title { font: var(--font-body-strong); white-space: nowrap; }
+.popup-bar__spacer { flex: 1; min-width: 0; }
+.popup-bar__conn {
+  display: inline-flex; align-items: center; gap: var(--spacing-sm);
+  font: var(--font-caption); color: var(--fluent-color-text-secondary);
+  white-space: nowrap;
+}
+.popup-bar__clock {
+  font: var(--font-caption); color: var(--fluent-color-text-tertiary);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+/* ── 消息舞台 ───────────────────────────────────────────────── */
+.popup-stage {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  padding: var(--spacing-xl) var(--spacing-2xl);
+}
+/* margin:auto 而不是 justify-content:center —— 内容比容器高时
+   auto margin 会退化成 0，顶部不会被裁掉（flex 居中溢出的经典坑） */
+.popup-stack {
+  margin: auto;
+  width: 100%; max-width: var(--content-max);
+  display: flex; flex-direction: column; gap: var(--spacing-lg);
+}
+/* 一条消息都没有时，舞台里只留空态，别让 0 高度的栈也分走一半居中余量 */
+.popup-stack:empty { display: none; }
+
+/* ── 底部动作区 ─────────────────────────────────────────────── */
+.popup-actions {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl);
+  background: var(--fluent-color-surface-secondary);
+  border-top: 1px solid var(--fluent-color-border-subtle);
+}
+.popup-reply { display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap; }
+.popup-reply .combo { flex: 0 0 150px; }
+.popup-reply .field { flex: 1 1 240px; min-width: 0; }
+.popup-actions__row { display: flex; align-items: center; gap: var(--spacing-lg); }
+.popup-actions__hint {
+  flex: 1; min-width: 0;
+  font: var(--font-caption); color: var(--fluent-color-text-secondary);
+  display: inline-flex; align-items: center; gap: var(--spacing-xs);
+  min-height: 16px;
+}
+.popup-actions__hint.is-ok { color: var(--fluent-color-success); }
+.popup-actions__hint.is-error { color: var(--fluent-color-error); }
+/* 「知道了」是这一屏唯一的主按钮，给足体量（Fluent 大号按钮 40-44px） */
+.btn--lg { height: 44px; padding: 0 var(--spacing-2xl); }
+
+/* ══════════════════════════════════════════════════════════════
+   15.3 弹窗里的消息
+   最新一条 = 视觉焦点；更早的弱化成字幕式，只做上下文
+   ══════════════════════════════════════════════════════════════ */
+.popup-msg {
+  display: flex; flex-direction: column;
+  border-radius: var(--radius-xlarge);
+  transition: color var(--duration-gentle) var(--curve-standard),
+              background-color var(--duration-gentle) var(--curve-standard),
+              border-color var(--duration-gentle) var(--curve-standard);
+}
+
+/* ── 最新一条：大字号、居中、留白充足 ─────────────────────── */
+.popup-msg--lead {
+  gap: var(--spacing-md);
+  padding: var(--spacing-2xl) var(--spacing-xl);
+  text-align: center;
+}
+.popup-msg--lead .popup-msg__head {
+  display: flex; align-items: baseline; justify-content: center;
+  gap: var(--spacing-md); flex-wrap: wrap;
+}
+.popup-msg--lead .popup-msg__sender {
+  display: inline-flex; align-items: center; gap: var(--spacing-sm);
+  font: 600 18px/24px var(--fluent-font-family);
+  color: var(--fluent-color-text);
+}
+.popup-msg--lead .popup-msg__time {
+  font: var(--font-caption); color: var(--fluent-color-text-tertiary);
+}
+.popup-msg--lead .popup-msg__body {
+  /* 正文是这一屏的主角：随屏宽放大，但不超过 46px */
+  font: 600 clamp(26px, 3.4vw, 46px)/1.32 var(--fluent-font-family);
+  color: var(--fluent-color-text);
+  white-space: pre-wrap; word-break: break-word;
+  margin: 0 auto;
+  /* 中文一行别太长：约 20 字换行，读起来是「一句话」而不是一堵墙 */
+  max-width: 21em;
+}
+
+/* ── 更早的消息：字幕式 —— 单行、压暗、没有卡片感，只做上下文 ─────
+     不做成消息卡：卡片一多整屏就变成「聊天记录页」，会跟主条抢注意力。 */
+.popup-msg--prev {
+  flex-direction: row; align-items: baseline; gap: var(--spacing-sm);
+  width: 100%; max-width: 620px; margin: 0 auto;
+  padding: 0;
+  background: none; border: none;
+  color: var(--fluent-color-text-tertiary);
+}
+/* 让 昵称 / 正文 / 时间 直接参与这一行的排布：
+   昵称在前、正文占满中间并可省略、时间贴右 */
+.popup-msg--prev .popup-msg__head { display: contents; }
+.popup-msg--prev .popup-msg__sender { order: 1; font: var(--font-caption); font-weight: 600; }
+.popup-msg--prev .popup-msg__body {
+  order: 2; flex: 1 1 auto; min-width: 0;
+  font: var(--font-caption);
+  color: var(--fluent-color-text-secondary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.popup-msg--prev .popup-msg__time { order: 3; margin-left: 0; }
+
+/* 昵称色沿用网页端同一个圆点语言（跨端「谁是谁」颜色一致） */
+.popup-msg__sender::before {
+  content: ""; width: 10px; height: 10px; flex: 0 0 10px;
+  border-radius: var(--radius-circle);
+  background: var(--msg-nick, var(--fluent-color-primary));
+}
+.popup-msg--prev .popup-msg__sender::before { width: 8px; height: 8px; flex: 0 0 8px; }
+
+/* 新消息：轻量追加动画，不重建整页 */
+.popup-msg--lead.is-new { animation: popup-msg-in var(--duration-slow) var(--curve-decelerate); }
+@keyframes popup-msg-in {
+  from { opacity: 0; transform: translateY(14px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── 弹窗里没有消息时的中性空态 ─────────────────────────────── */
+.popup-empty {
+  margin: auto;
+  display: flex; flex-direction: column; align-items: center; gap: var(--spacing-sm);
+  text-align: center; color: var(--fluent-color-text-secondary);
+}
+.popup-empty__title { font: var(--font-subtitle); color: var(--fluent-color-text); }
+.popup-empty__hint { font: var(--font-caption); max-width: 32ch; line-height: 1.7; }
+
+/* ══════════════════════════════════════════════════════════════
+   15.4 窄屏 / 矮屏
+   ══════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  .popup-bar { padding: 0 var(--spacing-lg); }
+  .popup-stage { padding: var(--spacing-lg) var(--spacing-lg); }
+  .popup-msg--lead { padding: var(--spacing-xl) var(--spacing-md); }
+  .popup-actions { padding: var(--spacing-md) var(--spacing-lg) var(--spacing-lg); }
+  .popup-reply .combo { flex: 1 1 100%; }
+}
+@media (max-width: 620px) {
+  .popup-bar__conn { display: none; }
+  .popup-actions__row { flex-direction: column-reverse; align-items: stretch; }
+  .popup-actions__row .btn--lg { width: 100%; }
+}
+@media (max-height: 620px) {
+  .popup-msg--lead { padding: var(--spacing-lg) var(--spacing-md); }
+  .popup-msg--lead .popup-msg__body { font-size: clamp(22px, 2.6vw, 32px); }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   15.5 壳模式下的控制台
+   其余保持网页端原样（同一套 Fluent 组件），只有下面几处差异
+   ══════════════════════════════════════════════════════════════ */
+
+/* 「退出程序」按钮跟随标题栏图标按钮的观感，仅在壳里出现 */
+html[data-shell="1"] #btn-quit { display: inline-flex; }
+
+/* 本机 Windows 会话徽标复用设备卡片上的 .winstate 组件，加个前缀不抢层级 */
+.shell-local { max-width: 220px; }

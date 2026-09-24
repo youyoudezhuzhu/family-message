@@ -1,8 +1,9 @@
 # 设计令牌（Design Tokens）
 
 > 本项目的视觉系统遵循 **Material Design 3（Material You）**。
-> 网页端与 Windows 端**共用同一份令牌生成器**，改配色只需改生成器再重新生成，
-> 两端永远不会走偏。
+> 只有**一份**令牌产物：`web/static/tokens.css`，由生成器产出。
+> PC 端的界面也是加载网页端页面渲染的（WebView2 壳，见 docs/PC-WEBVIEW2-REWRITE.md），
+> 所以不再存在第二份 C# 常量需要同步 —— 改配色只改生成器。
 
 ---
 
@@ -11,40 +12,19 @@
 ```
 tools/gen_tokens.py          ← 唯一的人工维护点
         │
-        ├── web/static/tokens.css          （网页端 CSS 变量）
-        └── pc-agent/FamilyAgent/MdPalette.g.cs （Windows 端 C# 常量）
+        └── web/static/tokens.css          （网页端 CSS 变量；PC 端壳同样用它）
 ```
 
 重新生成：
 
 ```bash
-python3 tools/gen_tokens.py --cs pc-agent/FamilyAgent/MdPalette.g.cs \
-        > web/static/tokens.css
+python3 tools/gen_tokens.py > web/static/tokens.css
 ```
 
-`MdPalette.g.cs` 与 `tokens.css` 都是**生成产物，不要手改**。
+`tokens.css` 是**生成产物，不要手改**。
 
-### 一致性校验
-
-生成后应验证两端数值相同（共 8 配色 × 2 模式 × 31 角色 = 496 项）：
-
-```bash
-python3 - <<'EOF'
-import re
-css = open('web/static/tokens.css').read()
-cs  = open('pc-agent/FamilyAgent/MdPalette.g.cs').read()
-bad = 0
-for sch in ['indigo','violet','teal','green','amber','coral','pink','cyan']:
-    for mode, sel in [('light', f'[data-scheme="{sch}"]'),
-                      ('dark',  f'[data-scheme="{sch}"][data-mode="dark"]')]:
-        m = re.search(re.escape(sel) + r'\{(.*?)\n\}', css, re.S)
-        cssmap = dict(re.findall(r'--md-([\w-]+):\s*(#[0-9A-F]{6});', m.group(1)))
-        blk = re.search(r'\["'+sch+r'"\].*?\["'+mode+r'"\] = new\(\)\s*\{(.*?)\n\s*\},', cs, re.S)
-        csmap = dict(re.findall(r'\["([\w-]+)"\] = "(#[0-9A-F]{6})"', blk.group(1)))
-        bad += sum(1 for k, v in cssmap.items() if csmap.get(k) != v)
-print('OK' if not bad else f'{bad} 项不一致')
-EOF
-```
+> 历史：2026-09 之前还有一份 `pc-agent/FamilyAgent/MdPalette.g.cs`（`--cs` 导出）供
+> WPF 手绘界面使用。PC 端改成 WebView2 壳后该文件已删除，`--cs` 选项一并去掉。
 
 ---
 

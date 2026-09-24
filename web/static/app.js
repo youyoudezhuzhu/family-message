@@ -13,6 +13,16 @@
  *   设备卡片上多一行 Windows 会话状态徽标（已登录 / 已锁屏 / 登录界面），
  *   以及一个「远程解锁」按钮；解锁请求用现有 Web 会话下发（不弹第二个密码框），
  *   结果由 /ws/web 的 unlock_result 帧推回。见 B5b / B6b。
+ *
+ * 追加（WebView2 壳模式，纯分支，不动上面任何东西）：
+ *   PC 端改成「WebView2 壳加载这个页面」，同一个网页既能当浏览器控制台，
+ *   也能当原生应用界面（含全屏消息弹窗）。壳的判定、桥协议、弹窗视图全在
+ *   static/shell.js；本文件只加了三处极小的钩子（都在壳模式下才生效）：
+ *     · boot()        壳里先走 FM_SHELL.start()：加载态 → web.ready → 等 host.hello
+ *     · connectWS()   壳里不再连 /ws/web（宿主持有 WebSocket），实时帧由桥喂给
+ *                     handleServerFrame()（原 onmessage 的处理逻辑，帧格式完全一致）
+ *     · renderNameSelectors()  壳里顺带同步弹窗里的「以谁的名义回复」
+ *   浏览器模式下这三处都不触发，行为与改动前逐字节等价。
  */
 
 const STATE_ORDER = ['created', 'server_received', 'device_received', 'popup_displayed', 'read'];
@@ -424,9 +434,9 @@ document.addEventListener('click', () => {
 });
 
 /* ── B4. 初始化 ──────────────────────────────────────────────── */
-async function boot() {
-  applyMode(loadMode(), false);
-
+/** 控制台本体：浏览器模式与壳模式（壳里的 console 形态）走的是同一段代码，
+    唯一差别是实时事件源 —— 由 connectWS() 自己判断，见下面的守卫。 */
+async function bootConsole() {
   state.config = await api('/api/config');
   renderNameSelectors();
   renderGreeting();
@@ -447,6 +457,19 @@ async function boot() {
   refreshTimes();
 
   go(loadPage());
+}
+
+async function boot() {
+  applyMode(loadMode(), false);
+
+  // 壳模式（PC 端 WebView2 壳加载这个页面）：先给中性的加载态、发 web.ready，
+  // 等宿主 host.hello 说清是「全屏弹窗」还是「控制台」再决定渲染哪套界面。
+  // 浏览器模式完全不走这条分支 —— 见 static/shell.js。
+  if (window.FM_SHELL && window.FM_SHELL.enabled) {
+    return window.FM_SHELL.start(bootConsole);
+  }
+
+  await bootConsole();
 }
 
 /* 显示当前运行的服务端版本 —— 升级后如果这个号没变，说明旧进程还在跑 */
@@ -1173,6 +1196,11 @@ function setConn(on) {
 }
 
 function connectWS() {
+  // 壳模式：宿主持有 WebSocket（断线重连/离线队列都在它那边），页面**不再**连
+  // /ws/web —— 否则同一条消息会进来两份。实时事件改走桥，由 shell.js 分流到
+  // 下面这个 handleServerFrame()，帧格式与之完全一致。
+  if (window.FM_SHELL && window.FM_SHELL.enabled) return;
+
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}${BASE}/ws/web`);
   ws.onopen = () => setConn(true);
@@ -1180,35 +1208,41 @@ function connectWS() {
   ws.onerror = () => ws.close();
   ws.onmessage = (ev) => {
     let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
-    if (d.type === 'device_status' || d.type === 'device_updated' || d.type === 'device_deleted') {
-      loadDevices();
-    } else if (d.type === 'unlock_result') {
-      // 解锁结果只从 WebSocket 回来（不走 HTTP），设备名与请求配对都在 onUnlockResult 里
-      onUnlockResult(d);
-    } else if (d.type === 'message') {
-      upsertMessage(d.message);
-      if (convDevice) {
-        const m = d.message;
-        const mine = m.sender_device_id === convDevice.device_id ||
-          (m.targets || []).some((t) => t.device_id === convDevice.device_id);
-        if (mine) refreshConversation();
-      }
-    } else if (d.type === 'message_status') {
-      const m = state.messages.find((x) => x.id === d.message_id);
-      if (m) {
-        const t = (m.targets || []).find((x) => x.device_id === d.device_id);
-        if (t && d.target) Object.assign(t, d.target);
-        renderMessages();
-      }
-    } else if (d.type === 'wake') {
-      snack(`${d.result.plug || '米家设备'} 已开启，等待 PC 上线……`);
-    } else if (d.type === 'xiaomi') {
-      loadXmBound();
-    } else if (d.type === 'shutdown_sent') {
-      const dev = state.devices.find((x) => x.device_id === d.device_id);
-      snack(`「${dev ? dev.name : d.device_id}」关机指令已下发`);
-    }
+    handleServerFrame(d);
   };
+}
+
+/** 服务端实时帧的唯一处理入口（浏览器模式来自 /ws/web；壳模式由桥喂进来） */
+function handleServerFrame(d) {
+  if (!d || typeof d !== 'object') return;
+  if (d.type === 'device_status' || d.type === 'device_updated' || d.type === 'device_deleted') {
+    loadDevices();
+  } else if (d.type === 'unlock_result') {
+    // 解锁结果只从 WebSocket 回来（不走 HTTP），设备名与请求配对都在 onUnlockResult 里
+    onUnlockResult(d);
+  } else if (d.type === 'message') {
+    upsertMessage(d.message);
+    if (convDevice) {
+      const m = d.message;
+      const mine = m.sender_device_id === convDevice.device_id ||
+        (m.targets || []).some((t) => t.device_id === convDevice.device_id);
+      if (mine) refreshConversation();
+    }
+  } else if (d.type === 'message_status') {
+    const m = state.messages.find((x) => x.id === d.message_id);
+    if (m) {
+      const t = (m.targets || []).find((x) => x.device_id === d.device_id);
+      if (t && d.target) Object.assign(t, d.target);
+      renderMessages();
+    }
+  } else if (d.type === 'wake') {
+    snack(`${d.result.plug || '米家设备'} 已开启，等待 PC 上线……`);
+  } else if (d.type === 'xiaomi') {
+    loadXmBound();
+  } else if (d.type === 'shutdown_sent') {
+    const dev = state.devices.find((x) => x.device_id === d.device_id);
+    snack(`「${dev ? dev.name : d.device_id}」关机指令已下发`);
+  }
 }
 
 /* ── B11. 发送昵称（纯本地；服务端不参与）────────────────────── */
@@ -1258,6 +1292,9 @@ function renderNameSelectors() {
   buildSelect($('conv-sender-sel'), items, convVal, null);
 
   renderNamesList();
+
+  // 壳模式：全屏弹窗里那个「以谁的名义回复」的下拉也要跟着改
+  if (window.FM_SHELL && window.FM_SHELL.enabled) window.FM_SHELL.syncNames();
 }
 
 function renderNamesList() {

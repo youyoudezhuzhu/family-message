@@ -7,8 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.11.1">
-<link rel="stylesheet" href="static/style.css?v=0.11.1">
+<link rel="stylesheet" href="static/tokens.css?v=0.12.0">
+<link rel="stylesheet" href="static/style.css?v=0.12.0">
+<link rel="stylesheet" href="static/shell.css?v=0.12.0">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -22,6 +23,47 @@
   } catch (e) {}
 })();
 </script>
+<!-- 是不是跑在 WebView2 壳里（真壳会注入 window.chrome.webview；
+     命令行调试用 ?shell=1）。必须在这一步就定下来，见下面的 <style>。 -->
+<script>
+(function () {
+  try {
+    var q = new URLSearchParams(location.search);
+    if ((window.chrome && window.chrome.webview) || q.get('shell') === '1') {
+      document.documentElement.setAttribute('data-shell', '1');
+    }
+  } catch (e) {}
+})();
+</script>
+<!-- ══ 壳模式的关键首屏样式（内联，不走外链）═══════════════════════════
+     壳启动时先给一个**中性的加载态**：底色与正文字色跟主题一致，居中的
+     品牌标记 + 「正在启动…」。它必须是内联的 —— 万一 shell.css 还没到
+     （或服务端静态资源出问题），这一屏也得是对的，不能闪白/闪错布局。
+     层级 70：低于 Dialog(80)，这样「需要访问口令」之类的对话框能盖在它上面。
+     剩下的壳样式（全屏弹窗等）在 static/shell.css 里。 -->
+<style>
+html[data-shell="1"] { background: var(--fluent-color-background, #F3F3F3); }
+.shell-boot { display: none; }
+html[data-shell="1"] .shell-boot {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: var(--spacing-md, 12px);
+  background: var(--fluent-color-background, #F3F3F3);
+  color: var(--fluent-color-text, #1A1A1A);
+  font: var(--font-body, 400 14px/20px system-ui, sans-serif);
+  text-align: center; padding: var(--spacing-xl, 24px);
+}
+html[data-shell="1"] .shell-boot .brand-mark {
+  width: 36px; height: 36px; border-radius: var(--radius-medium, 6px);
+  display: flex; align-items: center; justify-content: center;
+  background: var(--fluent-color-primary-tint, #EFF6FC);
+  color: var(--fluent-color-primary, #0F6CBD);
+}
+html[data-shell="1"] .shell-boot .brand-mark .icon { width: 20px; height: 20px; }
+html[data-shell="1"] .shell-boot__title { font: 600 20px/28px var(--fluent-font-family, system-ui); }
+html[data-shell="1"] .shell-boot__hint { color: var(--fluent-color-text-secondary, #5C5C5C); }
+html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 4px); }
+</style>
 </head>
 <body>
 
@@ -69,6 +111,16 @@
   </defs>
 </svg>
 
+<!-- ══ 壳模式：启动加载态（WebView2 壳的第一屏）═══════════════════════
+     中性、居中、不闪白：等 host.hello 告诉页面该显示「全屏弹窗」还是「控制台」。
+     只在壳模式下可见（样式内联在 <head>，见上面的说明）；浏览器模式永远不显示。 -->
+<div class="shell-boot" id="shell-boot" role="status" aria-live="polite">
+  <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg></span>
+  <span class="shell-boot__title">家庭消息</span>
+  <span class="shell-boot__hint" id="shell-boot-hint">正在启动…</span>
+  <span class="progress-ring" aria-hidden="true"></span>
+</div>
+
 <div class="app-shell" id="app-shell">
 
   <!-- ══ 标题栏（Mica）══════════════════════════════════════════ -->
@@ -88,6 +140,7 @@
     </div>
 
     <div class="titlebar__meta">
+      <span class="winstate shell-local" id="shell-local"></span>
       <span id="server-ver" title="当前运行的服务端版本（升级后没变说明旧进程还在跑）"></span>
       <span id="server-time"></span>
     </div>
@@ -97,6 +150,10 @@
     </button>
     <button class="icon-btn" id="btn-settings" aria-label="打开设置">
       <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
+    </button>
+    <!-- 壳模式专用：关掉整个 PC 端程序（页面只发请求，退不退由宿主决定） -->
+    <button class="icon-btn shell-only" id="btn-quit" aria-label="退出程序" title="退出程序">
+      <svg class="icon" aria-hidden="true"><use href="#i-power"/></svg>
     </button>
   </header>
 
@@ -458,6 +515,55 @@
 <!-- ══ Toast 容器（Fluent MessageBar 风格）══════════════════════ -->
 <div class="toast-host" id="snackbar-host" role="status" aria-live="polite"></div>
 
-<script src="static/app.js?v=0.11.1"></script>
+<!-- ══ 壳模式 · 全屏消息弹窗（mode=popup）══════════════════════════════
+     浏览器模式永远不显示（默认 hidden）；壳模式下由 shell.js 揭开。
+     三条规矩：正文是视觉焦点、没有第二个密码框、不引入 Material。 -->
+<div class="shell-popup" id="shell-popup" hidden>
+  <header class="popup-bar">
+    <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg></span>
+    <span class="popup-bar__title">家庭消息</span>
+    <span class="popup-bar__spacer"></span>
+    <span class="popup-bar__conn">
+      <span class="presence" id="popup-dot"></span>
+      <span id="popup-conn-text">连接中…</span>
+    </span>
+    <button class="btn btn--secondary" id="popup-console" title="切换到控制台界面">
+      <svg class="btn__icon" aria-hidden="true"><use href="#i-navigation"/></svg>
+      <span>打开控制台</span>
+    </button>
+  </header>
+
+  <div class="popup-stage" id="popup-stage">
+    <div class="popup-stack" id="popup-stack"></div>
+    <div class="popup-empty" id="popup-empty">
+      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
+      <span class="popup-empty__title">没有新消息</span>
+      <span class="popup-empty__hint">家里人发来留言时，会立刻弹到这一屏上。</span>
+    </div>
+  </div>
+
+  <footer class="popup-actions">
+    <div class="popup-reply">
+      <div class="combo" id="popup-sender" aria-label="以谁的名义回复"></div>
+      <div class="field">
+        <input class="text-input" id="popup-reply-text" maxlength="2000" placeholder="回复一句，回车发送">
+      </div>
+      <button class="icon-btn icon-btn--primary" id="popup-reply-send" aria-label="发送回复" title="发送回复">
+        <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
+      </button>
+    </div>
+    <div class="popup-actions__row">
+      <span class="popup-actions__hint" id="popup-reply-hint" role="status" aria-live="polite"></span>
+      <button class="btn btn--primary btn--lg" id="popup-ok">
+        <svg class="btn__icon" aria-hidden="true"><use href="#i-check"/></svg>
+        <span>知道了</span>
+      </button>
+    </div>
+  </footer>
+</div>
+
+<!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
+<script src="static/shell.js?v=0.12.0"></script>
+<script src="static/app.js?v=0.12.0"></script>
 </body>
 </html>

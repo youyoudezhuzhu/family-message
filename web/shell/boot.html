@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>家庭消息</title>
+<!-- ═══════════════════════════════════════════════════════════════════
+     壳的本地启动页（随 exe 打包，不经服务端）
+
+     壳启动 → 先显示这一页（窗口不闪白、不闪错布局）→ 探测服务端 /healthz
+       · 通了   → 换到服务端的正式页面（index.html?shell=1）
+       · 不通   → 换到外壳兜底页 offline.html
+
+     规矩：**不能依赖服务端资源**（连不上才轮到它出场），所以样式与图标全内联；
+     颜色是 tokens.css 里 Fluent 2 令牌的副本（那份 CSS 在服务端，这里拿不到）。
+     明暗跟随系统（prefers-color-scheme）。
+
+     这一页不说话（不发 web.ready）—— 它只是个画面，桥由正式页面来接。
+     可选查询参数：?hint=正在连接服务端…（自定义下面那行提示文案）
+     ═══════════════════════════════════════════════════════════════════ -->
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #F3F3F3; --card: #FFFFFF; --text: #1A1A1A; --text2: #5C5C5C;
+    --border: #E5E5E5; --primary: #0F6CBD; --tint: #EFF6FC;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #202020; --card: #2B2B2B; --text: #FFFFFF; --text2: #C5C5C5;
+      --border: #3D3D3D; --primary: #479EF5; --tint: #12314A;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 400 14px/20px "Segoe UI Variable", "Segoe UI", system-ui,
+          "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 12px; padding: 24px; text-align: center;
+    user-select: none;
+  }
+  .mark {
+    width: 40px; height: 40px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--tint); color: var(--primary);
+  }
+  .mark svg { width: 22px; height: 22px; fill: currentColor; }
+  h1 { margin: 0; font: 600 20px/28px inherit; }
+  .hint { color: var(--text2); font-size: 12px; line-height: 16px; }
+  .ring {
+    width: 24px; height: 24px; margin-top: 4px;
+    border: 2.5px solid var(--border); border-top-color: var(--primary);
+    border-radius: 50%; animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .ring { animation-duration: 2.5s; } }
+</style>
+</head>
+<body>
+  <span class="mark" aria-hidden="true">
+    <!-- Fluent System Icons · Chat 24 Filled（与网页端同一枚图标，内联副本） -->
+    <svg viewBox="0 0 24 24"><path d="M12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22C10.3596 22 8.77516 21.6039 7.35578 20.8583L3.06538 21.9753C2.6111 22.0937 2.1469 21.8213 2.02858 21.367C1.99199 21.2266 1.99198 21.0791 2.02855 20.9386L3.1449 16.6502C2.3972 15.2294 2 13.6428 2 12C2 6.47715 6.47715 2 12 2ZM13.2517 13H8.75L8.64823 13.0068C8.28215 13.0565 8 13.3703 8 13.75C8 14.1297 8.28215 14.4435 8.64823 14.4932L8.75 14.5H13.2517L13.3535 14.4932C13.7196 14.4435 14.0017 14.1297 14.0017 13.75C14.0017 13.3703 13.7196 13.0565 13.3535 13.0068L13.2517 13ZM15.25 9.5H8.75L8.64823 9.50685C8.28215 9.55651 8 9.8703 8 10.25C8 10.6297 8.28215 10.9435 8.64823 10.9932L8.75 11H15.25L15.3518 10.9932C15.7178 10.9435 16 10.6297 16 10.25C16 9.8703 15.7178 9.55651 15.3518 9.50685L15.25 9.5Z"/></svg>
+  </span>
+  <h1>家庭消息</h1>
+  <span class="ring" role="progressbar" aria-label="正在启动"></span>
+  <span class="hint" id="hint">正在启动…</span>
+
+<script>
+  // 只做一件事：把可选的自定义提示显示出来
+  (function () {
+    try {
+      var hint = new URLSearchParams(location.search).get('hint');
+      if (hint) document.getElementById('hint').textContent = hint;
+    } catch (e) {}
+  })();
+</script>
+</body>
+</html>

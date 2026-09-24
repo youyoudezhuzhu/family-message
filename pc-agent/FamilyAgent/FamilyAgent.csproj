@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.11.1</Version>
+    <Version>0.12.0</Version>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
@@ -19,6 +19,8 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- ThemeMode 是 WPF 的 experimental API，用代码访问会报 WPF0001，这里抑制掉 -->
     <NoWarn>$(NoWarn);WPF0001</NoWarn>
+    <!-- 单文件发布时把 native 库解压出来自取：WebView2 的 native loader
+         （WebView2Loader.dll）就靠它，关掉的话壳起不来。 -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
@@ -26,11 +28,21 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- WPF 桌面端不支持彩色 emoji（dotnet/wpf#91，官方长期未修）：WPF 用自己的
-         字形栅格化器，忽略 Segoe UI Emoji 的 COLR/CPAL 彩色图层，只渲染成黑白轮廓。
-         这个库把彩色图层解析成矢量 DrawingImage，是社区通行解法（WTFPL 许可）。
-         0.3.4 带 lib/netcoreapp3.1，与 net8.0-windows 兼容。 -->
-    <PackageReference Include="Emoji.Wpf" Version="0.3.4" />
+    <!-- 界面不再是 WPF 手绘：整个窗口就是这一块 WebView2，加载服务端的网页端页面
+         （壳模式，见 docs/PC-WEBVIEW2-REWRITE.md）。
+         ★ 版本固定，不用 `*` 浮动版本：云编译的产物要可复现。
+         Windows 11 自带 WebView2 Runtime；Windows 10 缺运行时由壳自检并给出官方下载链接。 -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 本地兜底页（boot.html 首屏 / offline.html 连不上服务端 / 缺运行时的提示）随 exe 发布：
+         源文件由网页端那边维护（web/shell/），这里只负责复制到输出的 shell/ 下。
+         壳从 <exe 目录>/shell/ 通过虚拟域名 https://familyagent.local/shell/ 读它们。
+         文件暂时不存在时通配符展开为空，不算错误 —— 壳会退化成「只加载正式页面」。 -->
+    <Content Include="..\..\web\shell\**\*.html" Link="shell\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
 </Project>
