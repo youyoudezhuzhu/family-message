@@ -105,7 +105,9 @@ public partial class App : Application
         Client.HistoryReceived += OnHistoryReceived;
         Client.ShutdownRequested += OnShutdownRequested;
 
-        AutoStart.Apply(Config.AutoStart);
+        // 启动时不提权：SYSTEM 计划任务若已注册过就直接跳过，
+        // 否则每次开机都会弹一次 UAC（用户最烦这个）。
+        AutoStart.Apply(Config.AutoStart, allowElevation: false);
         Client.Start();
 
         if (IsHeadless)
@@ -273,7 +275,9 @@ public partial class App : Application
     private void OnSettingsSaved()
     {
         Config.Save();
-        AutoStart.Apply(Config.AutoStart);
+        // 用户在设置里主动开关 → 允许弹一次 UAC 来注册 SYSTEM 计划任务
+        // （「开机后未登录也能连上」靠的就是它）
+        AutoStart.Apply(Config.AutoStart, allowElevation: true);
         Client.Restart();
     }
 

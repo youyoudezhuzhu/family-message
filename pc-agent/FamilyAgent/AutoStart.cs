@@ -36,6 +36,12 @@ public static class AutoStart
     private const string LogonTask = "FamilyAgent-Logon";
     private const string BootTask = "FamilyAgent-Boot";
 
+    // 记录「已经用哪个 exe 路径注册过」。
+    // 用途：避免每次开机都重建计划任务 —— Boot 任务是 SYSTEM 身份，重建要提权，
+    // 每次都重建就等于每次开机弹一次 UAC。路径变了（升级换目录）才重建。
+    private const string LogonMarker = "FamilyAgent.LogonTask.Exe";
+    private const string BootMarker = "FamilyAgent.BootTask.Exe";
+
     /// <summary>
     /// 自启的落地情况。UI 用它告诉用户「登录前」那一半到底有没有生效 ——
     /// 不能只回一个 bool，否则用户没法知道开机自启是不是"只成功了一半"。
@@ -105,12 +111,20 @@ public static class AutoStart
 
     // ────────────────────────────── 应用 ──────────────────────────────
 
-    /// <summary>启用/停用自启，返回**实际**落地的情况（而不是我们"打算"做什么）。</summary>
-    public static Status Apply(bool enabled)
+    /// <summary>
+    /// 启用/停用自启，返回**实际**落地的情况（而不是我们"打算"做什么）。
+    ///
+    /// <paramref name="allowElevation"/> 控制可否弹 UAC 提权：
+    /// 只有用户在设置里**主动**打开自启时才允许（<c>true</c>）；
+    /// 程序启动时调用一律 <c>false</c> —— 否则每次开机都弹一次 UAC。
+    /// </summary>
+    public static Status Apply(bool enabled, bool allowElevation = false)
     {
         if (!enabled)
         {
             RemoveRunKey();
+            DeleteMarker(LogonMarker);
+            DeleteMarker(BootMarker);
             DeleteTask(LogonTask);
             DeleteTask(BootTask);       // SYSTEM 任务需要管理员，失败就再提权试一次
             return Query();
@@ -124,9 +138,49 @@ public static class AutoStart
         }
 
         WriteRunKey(exe);
-        RegisterLogonTask(exe);
-        RegisterBootTask(exe);
+
+        // 已注册且 exe 路径没变 → 跳过，不重复建任务
+        if (!TaskExists(LogonTask) || Marker(LogonMarker) != exe)
+        {
+            if (RegisterLogonTask(exe))
+                SetMarker(LogonMarker, exe);
+        }
+
+        if (!TaskExists(BootTask) || Marker(BootMarker) != exe)
+        {
+            if (RegisterBootTask(exe, allowElevation))
+                SetMarker(BootMarker, exe);
+        }
+
         return Query();
+    }
+
+    // ── 已注册路径标记 ──
+
+    private static string Marker(string name)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, false);
+            return key?.GetValue(name) as string ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static void SetMarker(string name, string exe)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, true);
+            key?.SetValue(name, exe);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write($"写标记 {name} 失败：" + ex.Message);
+        }
     }
 
     // ── Run 项 ──
@@ -141,6 +195,19 @@ public static class AutoStart
         catch (Exception ex)
         {
             AgentLog.Write("写 Run 项失败：" + ex.Message);
+        }
+    }
+
+    private static void DeleteMarker(string name)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKey, true);
+            key?.DeleteValue(name, false);
+        }
+        catch
+        {
+            // 标记删不掉不影响功能，下次 Apply 会因路径比对而重建
         }
     }
 
@@ -159,7 +226,7 @@ public static class AutoStart
 
     // ── 登录时：计划任务（比 Run 项可靠，且能拿最高权限）──
 
-    private static void RegisterLogonTask(string exe)
+    private static bool RegisterLogonTask(string exe)
     {
         string sid;
         try
@@ -173,7 +240,7 @@ public static class AutoStart
         if (string.IsNullOrEmpty(sid))
         {
             AgentLog.Write("建登录计划任务失败：拿不到当前用户 SID");
-            return;
+            return false;
         }
 
         var xml = $"""
@@ -213,13 +280,16 @@ public static class AutoStart
             </Task>
             """;
 
-        if (!RegisterFromXml(LogonTask, xml, elevated: false))
-            AgentLog.Write("建登录计划任务失败（Run 项仍然生效，不影响常规开机自启）");
+        if (RegisterFromXml(LogonTask, xml, elevated: false))
+            return true;
+
+        AgentLog.Write("建登录计划任务失败（Run 项仍然生效，不影响常规开机自启）");
+        return false;
     }
 
     // ── 开机时（登录前）：SYSTEM 身份跑 headless ──
 
-    private static void RegisterBootTask(string exe)
+    private static bool RegisterBootTask(string exe, bool allowElevation)
     {
         // headless 实例必须读**用户**那份配置，否则 SYSTEM 会用自己的
         // %APPDATA%，注册成另一个设备。所以显式把路径传过去。
@@ -266,15 +336,27 @@ public static class AutoStart
         if (RegisterFromXml(BootTask, xml, elevated: false))
         {
             AgentLog.Write("开机自启（登录前）已启用");
-            return;
+            return true;
         }
 
-        AgentLog.Write("建开机计划任务需要管理员权限，尝试提权…");
+        if (!allowElevation)
+        {
+            // 程序启动时走到这里：不弹 UAC（会被用户当成骚扰）。留给设置页主动触发。
+            AgentLog.Write("开机自启（登录前）未启用：建 SYSTEM 计划任务需要管理员权限。"
+                         + "在设置里关掉再打开「开机自启」即可提权注册（会弹一次 UAC）。");
+            return false;
+        }
+
+        AgentLog.Write("建开机计划任务需要管理员权限，提权重试（会弹一次 UAC）…");
         if (RegisterFromXml(BootTask, xml, elevated: true))
+        {
             AgentLog.Write("开机自启（登录前）已启用（经提权）");
-        else
-            AgentLog.Write("开机自启（登录前）未启用：提权也没成功。"
-                         + "登录时仍会自动启动，但「只开机未登录」的场景需要管理员权限才能覆盖。");
+            return true;
+        }
+
+        AgentLog.Write("开机自启（登录前）未启用：提权也没成功。"
+                     + "登录时仍会自动启动，但「只开机未登录」的场景需要管理员权限才能覆盖。");
+        return false;
     }
 
     // ── schtasks 封装 ──
