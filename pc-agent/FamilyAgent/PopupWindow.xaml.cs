@@ -495,7 +495,7 @@ public partial class PopupWindow : Window
     /// 换主题后，已经建好的消息卡片不会自动跟着变（它们的颜色是 C# 里直接赋的，
     /// 不走 DynamicResource），所以这里逐个刷新一次。
     /// </summary>
-    private void RefreshCardThemes()
+    internal void RefreshCardThemes()
     {
         foreach (var card in _cards) card.ApplyTheme();
     }
