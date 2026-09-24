@@ -104,6 +104,14 @@ public partial class App : Application
         Client.ReplyAcked += OnReplyAcked;
         Client.HistoryReceived += OnHistoryReceived;
         Client.ShutdownRequested += OnShutdownRequested;
+        Client.UnlockRequested += OnUnlockRequested;
+
+        // ── Windows 会话状态上报（远程解锁 Phase 1）──────────────────────
+        // 在这里（Client 已建好、连接还没开始）启动最合适：第一次心跳就能带
+        // 上正确的状态。先 Start() 再订阅 —— Start() 里的首次检测会在默认值
+        // 变化时抛通知，让它落在没有订阅者的空窗里，省一次无意义的上报。
+        SessionState.Start();
+        SessionState.Changed += OnSessionStateChanged;
 
         // 启动时不提权：SYSTEM 计划任务若已注册过就直接跳过，
         // 否则每次开机都会弹一次 UAC（用户最烦这个）。
@@ -295,6 +303,15 @@ public partial class App : Application
     private void OnConnectionChanged(bool connected, string message)
     {
         AgentLog.Write(connected ? "== 已连接 ==" : $"== 断开：{message} ==");
+
+        // 刚连上就上报一次会话状态：服务端要靠它判断远程解锁是否可用，
+        // 等第一个 15 秒周期心跳太慢（等效于「hello 阶段就带上状态」）。
+        if (connected)
+        {
+            try { Client.ReportSessionState(); }
+            catch (Exception ex) { AgentLog.Write("上线时上报会话状态失败：" + ex.Message); }
+        }
+
         Dispatcher.Invoke(() =>
         {
             _popup?.SetConnectionStatus(connected, connected ? "已连接" : "未连接");
@@ -438,6 +455,47 @@ public partial class App : Application
         });
     }
 
+    /// <summary>
+    /// 网页端发起的「远程解锁」请求（远程解锁 Phase 1）。
+    ///
+    /// 本阶段**不做真正的解锁**：凭据存储还没有，这里只把校验链走完并把应答
+    /// 回给服务端 —— 用来验证「归属校验 + 动作校验 + 时效 + 一次性令牌」整条链路。
+    /// 校验顺序与各应答码见 <see cref="UnlockGuard"/>。
+    ///
+    /// 没有界面操作，所以不需要切 Dispatcher；headless 实例同样能应答。
+    /// </summary>
+    private void OnUnlockRequested(JsonElement el)
+    {
+        var reply = UnlockGuard.Evaluate(el, Config.DeviceId);
+        if (reply is null)
+        {
+            // 连 request_id 都没有的帧：没法应答，也没有 id 可以记进重放缓存
+            AgentLog.Write("✗ unlock_request 缺少 request_id，无法应答");
+            return;
+        }
+
+        Client.UnlockResult(reply.RequestId, reply.Status, reply.Reason);
+    }
+
+    /// <summary>
+    /// 会话状态变化（锁屏 / 解锁 / 登录 / 注销）→ 立刻上报一次，
+    /// 不等下一个 15 秒心跳周期：网页端的「远程解锁」按钮可用性靠它及时更新。
+    /// 回调已在 UI 线程上（SessionState 内部切过 Dispatcher），这里不碰界面。
+    /// </summary>
+    private void OnSessionStateChanged(string state)
+    {
+        try
+        {
+            Client.ReportSessionState();
+            AgentLog.Write($"会话状态已上报：{state}");
+        }
+        catch (Exception ex)
+        {
+            // 上报失败不致命：下一个周期心跳（≤15 秒）会带上最新状态
+            AgentLog.Write("上报会话状态失败（下个心跳周期会补上）：" + ex.Message);
+        }
+    }
+
     /// <summary>用系统默认程序打开一个路径（文件或目录）。</summary>
     private void OpenPath(string path, string what)
     {
@@ -574,6 +632,9 @@ public partial class App : Application
 
     private void Cleanup()
     {
+        // 取消会话事件订阅：进程都在收尾了，再回调进来没有意义
+        try { SessionState.Stop(); } catch { }
+
         // 清掉心跳：注销/退出后 headless 实例能马上重新接管，
         // 不用干等 45 秒过期
         if (!IsHeadless)
