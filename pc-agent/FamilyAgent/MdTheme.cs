@@ -81,6 +81,75 @@ public static class MdTheme
     };
 
     // 不随配色变的固定色
+    /// <summary>
+    /// Md* 语义键 → **Fluent 主题资源键**。
+    ///
+    /// 为什么要有这层映射：应用自己的面板颜色原先是我们另算的一套 Material
+    /// 配色（8 套可选），所以整个界面看起来"半 Fluent 半 Material"。改成从
+    /// Fluent 主题取色之后，面板颜色跟随 Windows 的明暗与主题色，控件样式
+    /// 由 Fluent 模板决定 —— 这才叫 Fluent 彻底。
+    ///
+    /// 保留 Md* 这层键名是为了不动 40 多处引用；取不到时回落到自己算的颜色。
+    /// </summary>
+    private static readonly Dictionary<string, string> FluentMap = new(StringComparer.Ordinal)
+    {
+        ["MdSurface"]             = "SolidBackgroundFillColorBaseBrush",
+        ["MdSurfaceDim"]          = "SolidBackgroundFillColorBaseBrush",
+        ["MdSurfaceLowest"]       = "SolidBackgroundFillColorBaseBrush",
+        ["MdSurfaceLow"]          = "SolidBackgroundFillColorSecondaryBrush",
+        ["MdSurfaceC"]            = "SolidBackgroundFillColorSecondaryBrush",
+        ["MdSurfaceHigh"]         = "CardBackgroundFillColorDefaultBrush",
+        ["MdSurfaceHighest"]      = "CardBackgroundFillColorSecondaryBrush",
+
+        ["MdOnSurface"]           = "TextFillColorPrimaryBrush",
+        ["MdOnVariant"]           = "TextFillColorSecondaryBrush",
+        ["MdTimeText"]            = "TextFillColorTertiaryBrush",
+        ["MdInverseOnSurface"]    = "TextFillColorPrimaryBrush",
+
+        ["MdOutline"]             = "ControlStrokeColorDefaultBrush",
+        ["MdOutlineVariant"]      = "DividerStrokeColorDefaultBrush",
+
+        ["MdPrimary"]             = "AccentFillColorDefaultBrush",
+        ["MdOnPrimary"]           = "TextOnAccentFillColorPrimaryBrush",
+        ["MdPrimaryContainer"]    = "AccentFillColorSecondaryBrush",
+        ["MdOnPrimaryContainer"]  = "TextOnAccentFillColorPrimaryBrush",
+        ["MdInversePrimary"]      = "AccentTextFillColorPrimaryBrush",
+        ["MdSecondary"]           = "AccentFillColorSecondaryBrush",
+        ["MdSecondaryContainer"]  = "SubtleFillColorSecondaryBrush",
+        ["MdOnSecondaryContainer"]= "TextFillColorPrimaryBrush",
+        ["MdTertiary"]            = "AccentFillColorTertiaryBrush",
+
+        ["MdError"]               = "SystemFillColorCriticalBrush",
+        ["MdOnError"]             = "TextOnAccentFillColorPrimaryBrush",
+        ["MdErrorContainer"]      = "SystemFillColorCriticalBrush",
+        ["MdOnErrorContainer"]    = "TextOnAccentFillColorPrimaryBrush",
+        ["MdOk"]                  = "SystemFillColorSuccessBrush",
+        ["MdBad"]                 = "SystemFillColorCriticalBrush",
+
+        ["MdInverseSurface"]      = "SolidBackgroundFillColorTertiaryBrush",
+        ["MdScrim"]               = "SmokeFillColorDefaultBrush",
+        ["MdStateHover"]          = "SubtleFillColorSecondaryBrush",
+        ["MdStateFocus"]          = "SubtleFillColorTertiaryBrush",
+        ["MdStatePress"]          = "SubtleFillColorTertiaryBrush",
+        ["MdScrollThumb"]         = "ControlFillColorSecondaryBrush",
+        ["MdScrollThumbHover"]    = "ControlFillColorTertiaryBrush",
+    };
+
+    /// <summary>把 Fluent 主题的画刷覆盖进调色板；取不到的键保留自己算的兜底色。</summary>
+    private static void OverrideWithFluent(Dictionary<string, SolidColorBrush> map)
+    {
+        var app = Application.Current;
+        if (app is null)
+            return;   // 静态构造期还没建 Application，下次 Apply 会补上
+
+        foreach (var (mdKey, fluentKey) in FluentMap)
+        {
+            // 只接管纯色画刷：渐变等复杂画刷的语义和这里的 SolidColorBrush 不兼容
+            if (app.TryFindResource(fluentKey) is SolidColorBrush sb)
+                map[mdKey] = sb;
+        }
+    }
+
     private static readonly Dictionary<string, string> Fixed = new(StringComparer.Ordinal)
     {
         ["MdScrim"] = "#B3000000",         // 对话框遮罩
@@ -159,13 +228,15 @@ public static class MdTheme
     // ── Shape（按组件分级，不是全都大圆角）──────────────────────
     public static class Shape
     {
+        // Fluent 的圆角是**柔和的小圆角**：控件 4、浮层/卡片 8。
+        // 不像 Material 那样动辄 16~28（更不该到处都是 pill）。
         public const double None = 0;
-        public const double ExtraSmall = 4;   // 输入框 / 菜单 / Snackbar
-        public const double Small = 8;        // Chip / 小卡片
-        public const double Medium = 12;      // 卡片
-        public const double Large = 16;       // 大卡片 / 面板
-        public const double ExtraLarge = 28;  // 对话框 / 全屏提醒容器
-        public const double Full = 999;       // 按钮 / 开关 / 徽标
+        public const double ExtraSmall = 4;   // 控件（对应 Fluent ControlCornerRadius）
+        public const double Small = 4;        // 输入框 / 小面
+        public const double Medium = 8;       // 卡片 / 浮层（Fluent OverlayCornerRadius）
+        public const double Large = 8;        // 面板
+        public const double ExtraLarge = 8;   // 对话框 / 全屏提醒容器
+        public const double Full = 999;       // 只留给头像 / 状态点这类真正要圆的东西
     }
 
     // ── 给 XAML 用的扁平常量 ────────────────────────────────────
@@ -354,6 +425,7 @@ public static class MdTheme
         CurrentModePref = (modePref ?? "system").Trim().ToLowerInvariant();
 
         var map = Build(scheme.Id, mode);
+        OverrideWithFluent(map);      // ← 面板颜色改用 Fluent 主题画刷
         _brushes = map;
         Publish(map);
     }
@@ -365,6 +437,7 @@ public static class MdTheme
     static MdTheme()
     {
         _brushes = Build("indigo", "dark");
+        OverrideWithFluent(_brushes);
         // 也发布一次：XAML 有可能早于 Apply 被解析，DynamicResource 需要键已存在。
         // Application.Current 还没建好时会被内部判空挡掉，下次 Apply 再补。
         Publish(_brushes);

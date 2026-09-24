@@ -9,7 +9,7 @@
         Topmost="True"
         AllowsTransparency="False"
         WindowStartupLocation="Manual"
-        Background="{DynamicResource MdSurface}">
+        Background="{DynamicResource MdSurface}" FontFamily="Segoe UI Variable Text, Segoe UI">
 
     <Window.Resources>
         <!-- 这里**故意留空**。
@@ -190,13 +190,9 @@
                             <Border Height="1" Background="{DynamicResource MdOutlineVariant}"
                                     Margin="0,20,0,20"/>
 
-                            <!-- 配色方案 -->
-                            <TextBlock Text="配色方案（只存本机，服务端不记录）"
-                                      />
-                            <UniformGrid x:Name="ThemeGrid" Columns="4" Margin="0,4,0,0"/>
-
-                            <Border Height="1" Background="{DynamicResource MdOutlineVariant}"
-                                    Margin="0,20,0,20"/>
+                            <!-- 配色方案选择器已移除：面板颜色现在直接跟随
+                                 Windows 的 Fluent 主题（含系统主题色），
+                                 不再由我们自己算一套配色 —— 那正是"Fluent 不够彻底"的根源。 -->
 
                             <!-- 连接配置 -->
                             <TextBlock Text="服务端地址（NAS 的 IP + 端口）"

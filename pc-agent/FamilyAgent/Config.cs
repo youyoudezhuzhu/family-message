@@ -58,7 +58,19 @@ public sealed class AgentConfig
     private static string Dir => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FamilyAgent");
 
-    public static string FilePath => Path.Combine(Dir, "config.json");
+    /// <summary>
+    /// 覆盖配置文件路径。<c>--config</c> 传进来的值。
+    ///
+    /// 为什么需要：SYSTEM 身份的「开机」计划任务跑在会话 0，它的 %APPDATA%
+    /// 不是用户那个，直接用默认路径会**注册成另一个设备**。所以任务参数里
+    /// 显式带上用户那份配置的路径，保证登录前/后两个实例共享同一个 device_id。
+    /// </summary>
+    private static string? _overridePath;
+
+    public static void UseConfigPath(string? path) =>
+        _overridePath = string.IsNullOrWhiteSpace(path) ? null : path.Trim().Trim('"');
+
+    public static string FilePath => _overridePath ?? Path.Combine(Dir, "config.json");
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -121,7 +133,11 @@ public sealed class AgentConfig
 
     public void Save()
     {
-        Directory.CreateDirectory(Dir);
-        File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Options));
+        // 写到 FilePath 所在目录 —— 用了 --config 时不能再去建 %APPDATA%
+        var path = FilePath;
+        var dir = Path.GetDirectoryName(path);
+        if (!string.IsNullOrEmpty(dir))
+            Directory.CreateDirectory(dir);
+        File.WriteAllText(path, JsonSerializer.Serialize(this, Options));
     }
 }

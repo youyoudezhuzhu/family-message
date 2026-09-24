@@ -15,6 +15,12 @@ public partial class App : Application
     public static AgentClient Client { get; private set; } = null!;
     public static bool IsSystemShuttingDown { get; private set; }
 
+    /// <summary>
+    /// 是否以「登录前」模式运行（<c>--headless</c>）。此时没有交互式桌面，
+    /// 不能建窗口；截图/弹窗这类需要桌面的功能要给出明确原因而不是静默失败。
+    /// </summary>
+    public static bool IsHeadless { get; private set; }
+
     private Mutex? _singleInstance;
     private WinForms.NotifyIcon? _tray;
     private PopupWindow? _popup;
@@ -59,11 +65,25 @@ public partial class App : Application
 
         AgentLog.Rotate();
 
+        // --config：SYSTEM 身份的「开机」计划任务跑在会话 0，%APPDATA% 不是
+        // 用户那个，必须由任务参数显式指定配置路径，否则会注册成另一个设备。
+        var cfgPath = ArgValue(e.Args, "--config");
+        if (!string.IsNullOrWhiteSpace(cfgPath))
+            AgentConfig.UseConfigPath(cfgPath);
+
+        // --headless：开机后、还没人登录时由计划任务拉起。会话 0 没有桌面，
+        // 不能建窗口也不能建托盘图标，所以只维持连接。
+        IsHeadless = HasArg(e.Args, "--headless");
+
+        Config = AgentConfig.Load();
+
         // ── 启用 WPF 内置 Fluent 主题 ─────────────────────────────
         // 只设 ThemeMode 还不够：真正生效的前提是**不要再给控件手写 ControlTemplate**，
         // 否则自定义模板会盖过 Fluent 的样式。所以 PopupWindow.xaml 里那些
         // 手写的 Button/TextBox/ComboBox/CheckBox 模板已全部删除。
-        // ThemeMode.System 会跟随 Windows 的明暗设置（含主题色）。
+        //
+        // ⚠️ 这段必须在 AgentConfig.Load() **之后**：之前写在前面，
+        //    读到的是还没加载的默认 Config，用户的明暗偏好根本没生效。
         try
         {
             Application.Current.ThemeMode = ToFluent(Config.ThemeMode);
@@ -75,7 +95,6 @@ public partial class App : Application
             AgentLog.Write("启用 Fluent 主题失败（继续用默认主题）：" + ex.Message);
         }
 
-        Config = AgentConfig.Load();
         MdTheme.Apply(Config.ThemeId, Config.ThemeMode);
         AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} theme={MdTheme.CurrentId} agent={AgentClient.ReportedVersion} ===");
         Client = new AgentClient(Config);
@@ -88,6 +107,39 @@ public partial class App : Application
 
         AutoStart.Apply(Config.AutoStart);
         Client.Start();
+
+        if (IsHeadless)
+        {
+            // 登录前模式：当前没有交互式桌面，任何窗口都显示不出来。
+            // 这里只做「让设备在线」，等有人登录后由交互式实例接手。
+            AgentLog.Write("以 headless 模式运行（登录前）：不显示界面，只维持设备在线；"
+                         + "有人登录后自动让位给交互式实例");
+            Presence.StartSupervisor(Client);
+            return;
+        }
+
+        // 交互式实例：持续写心跳，让 headless 实例知道有人在用桌面、该让位了
+        Presence.StartHeartbeat();
+
+        // 系统主题/强调色变化时重新取一次色。
+        // MdTheme 的颜色来自 Fluent 主题字典，是**当时**取到的画刷对象；
+        // Windows 切换明暗或主题色后，不去重取就会一直用旧颜色。
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, e) =>
+        {
+            try
+            {
+                Dispatcher.Invoke(() =>
+                {
+                    MdTheme.Apply(Config.ThemeId, Config.ThemeMode);
+                    _popup?.RefreshCardThemes();
+                });
+            }
+            catch (Exception ex)
+            {
+                AgentLog.Write("跟随系统主题变化失败：" + ex.Message);
+            }
+        };
+
         SetupTray();
 
         // --tray：开机自启时静默进托盘；手动启动则直接打开消息界面
@@ -111,6 +163,17 @@ public partial class App : Application
         "dark" => ThemeMode.Dark,
         _ => ThemeMode.System,
     };
+
+    /// <summary>取 <c>--key value</c> 形式的参数值；没有就返回 null。</summary>
+    private static string? ArgValue(string[] args, string name)
+    {
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase))
+                return args[i + 1];
+        }
+        return null;
+    }
 
     private static bool HasArg(string[] args, string name)
     {
@@ -259,6 +322,15 @@ public partial class App : Application
                     history.Add(HistoryItem.FromJson(h, messageId));
             }
 
+            if (IsHeadless)
+            {
+                // 登录前没有交互式桌面，弹窗显示不出来。如实回报「已送达」——
+                // 谎报 popup_displayed 会让网页端显示一个根本不存在过的状态。
+                AgentLog.Write($"headless：收到消息 {messageId}，无人登录无法显示弹窗，回报 delivered");
+                Client.Ack(messageId, "delivered");
+                return;
+            }
+
             var win = EnsurePopup();
             if (win is null) return;
             win.AppendMessage(messageId, sender, content, created, autoClose, history);
@@ -300,6 +372,16 @@ public partial class App : Application
 
     private void OnScreenshotRequested(string requestId)
     {
+        if (IsHeadless)
+        {
+            // 会话 0 没有桌面，截出来只会是黑屏。直接说明原因，
+            // 比回一张黑图让用户以为电脑坏了要好。
+            AgentLog.Write("headless：尚无人登录，无法截图");
+            _ = Client.SendScreenshotAsync(requestId, null, 0, 0,
+                "电脑已开机但尚无人登录，当前没有可截取的桌面");
+            return;
+        }
+
         _ = Task.Run(async () =>
         {
             var (base64, width, height) = ScreenCapture.CaptureJpeg();
@@ -488,6 +570,14 @@ public partial class App : Application
 
     private void Cleanup()
     {
+        // 清掉心跳：注销/退出后 headless 实例能马上重新接管，
+        // 不用干等 45 秒过期
+        if (!IsHeadless)
+        {
+            Presence.Stop();
+            Presence.ClearHeartbeat();
+        }
+
         try { Client?.Stop(); } catch { }
         try { _popup?.ForceClose(); } catch { }
         if (_tray is not null)

@@ -193,7 +193,6 @@ public partial class PopupWindow : Window
         AutoStartBox.IsChecked = config.AutoStart;
         _replyNames = new List<string>(config.ReplyNames);
         RenderReplyNames();
-        RenderThemeGrid();
     }
 
     /// <summary>强制关闭（程序退出时）。</summary>
@@ -428,7 +427,6 @@ public partial class PopupWindow : Window
         SettingsHint.Text = "";
         RenderReplyNames();
         RenderModeGrid();
-        RenderThemeGrid();
         SettingsPage.Visibility = Visibility.Visible;
     }
 
@@ -438,71 +436,6 @@ public partial class PopupWindow : Window
     {
         SettingsPage.Visibility = Visibility.Collapsed;
         ReplyBox.Focus();
-    }
-
-    /// <summary>配色网格：点一下即时生效并落盘（纯本地）。</summary>
-    private void RenderThemeGrid()
-    {
-        ThemeGrid.Children.Clear();
-
-        foreach (var s in MdTheme.Schemes)
-        {
-            var selected = s.Id == MdTheme.CurrentId;
-
-            var panel = new StackPanel { Margin = new Thickness(0, 4, 0, 4) };
-
-            var dot = new Border
-            {
-                Width = 30,
-                Height = 30,
-                CornerRadius = new CornerRadius(15),
-                Background = new SolidColorBrush(MdTheme.SchemePrimary(s.Id)),
-                BorderBrush = selected ? MdTheme.OnSurface : Brushes.Transparent,
-                BorderThickness = new Thickness(2),
-                HorizontalAlignment = HorizontalAlignment.Center,
-            };
-            panel.Children.Add(dot);
-
-            panel.Children.Add(new TextBlock
-            {
-                Text = s.Name,
-                FontSize = 11,
-                Foreground = selected ? MdTheme.Primary : MdTheme.OnVariant,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, 6, 0, 0),
-            });
-
-            var btn = new Button
-            {
-                Content = panel,
-                // 样式交给 Fluent；选中态靠下面设置的 Background 表达
-                Margin = new Thickness(2),
-                Padding = new Thickness(6, 8, 6, 8),
-                Height = double.NaN,
-                Background = selected
-                    ? new SolidColorBrush(MdTheme.Blend(MdTheme.SurfaceHigh.Color,
-                                                        MdTheme.SchemePrimary(s.Id), 0.14))
-                    : Brushes.Transparent,
-                ToolTip = s.Name,
-            };
-
-            var scheme = s;
-            btn.Click += (_, _) => PickTheme(scheme.Id);
-            ThemeGrid.Children.Add(btn);
-        }
-    }
-
-    private void PickTheme(string id)
-    {
-        MdTheme.Apply(id, App.Config?.ThemeMode);
-        if (App.Config is not null)
-        {
-            App.Config.ThemeId = id;
-            App.Config.Save();
-        }
-        RenderThemeGrid();
-        RefreshCardThemes();
-        SettingsHint.Text = $"配色已切换为「{MdTheme.Current.Name}」";
     }
 
     /// <summary>明暗模式三选一（跟随系统 / 浅色 / 深色）。</summary>
