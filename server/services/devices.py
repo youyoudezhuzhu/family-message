@@ -4,6 +4,8 @@ from __future__ import annotations
 import secrets
 from typing import Optional
 
+import json
+
 import db
 from config import CONFIG
 
@@ -49,6 +51,45 @@ def enroll(
     )
     db.log_event(device_id, "enrolled", f"{name} ({platform})")
     return get_device(device_id), token
+
+
+def set_session_state(
+    device_id: str,
+    windows_state: Optional[str] = None,
+    capabilities: Optional[list] = None,
+) -> bool:
+    """写入 PC 上报的 Windows 会话状态与能力清单。
+
+    返回**是否发生变化** —— 调用方据此决定要不要给网页端广播，
+    免得每 15 秒一次心跳都推一遍（网页端会被无意义的刷新刷屏）。
+
+    状态取值：unknown | logon_screen | locked | unlocked
+    """
+    cur = get_device(device_id)
+    if not cur:
+        return False
+
+    new_state = (windows_state or cur.get("windows_state") or "unknown").strip().lower()
+    if new_state not in ("unknown", "logon_screen", "locked", "unlocked"):
+        new_state = "unknown"
+
+    if capabilities is not None:
+        new_caps = json.dumps([str(c)[:32] for c in capabilities][:16], ensure_ascii=False)
+    else:
+        new_caps = cur.get("capabilities") or ""
+
+    if new_state == (cur.get("windows_state") or "") and new_caps == (cur.get("capabilities") or ""):
+        return False
+
+    db.execute(
+        "UPDATE devices SET windows_state=?, capabilities=? WHERE device_id=?",
+        (new_state, new_caps, device_id),
+    )
+
+    # 会话状态变化值得记一笔：排查"为什么解不了锁"时这是第一现场
+    if new_state != (cur.get("windows_state") or ""):
+        db.log_event(device_id, "session_state", f"{cur.get('windows_state')} → {new_state}")
+    return True
 
 
 def verify_token(device_id: str, token: str) -> bool:
