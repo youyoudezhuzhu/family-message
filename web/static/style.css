@@ -773,6 +773,12 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   .nav-pane {
     position: fixed; left: 0; top: var(--titlebar-height); bottom: 0;
     width: 264px; height: auto;
+    /* ⚠️ 必须覆盖基础规则的 align-self: start。
+       .nav-pane 是网格子项（grid-area: nav），即使 position: fixed 也仍是
+       绝对定位的网格子项 —— 此时 align-self: start 会让它按**内容高度收缩**
+       而不是被 top/bottom 撑开，抽屉就会变成一张只包住 5 个导航项的矮卡片
+       （实测 height 只有 232px，应该是 796px）。 */
+    align-self: auto;
     z-index: var(--z-nav);
     padding: var(--spacing-sm) var(--spacing-sm) var(--spacing-lg);
     align-items: stretch;
