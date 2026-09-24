@@ -8,6 +8,11 @@
  * B 部分的 API 路径、请求/响应结构、WebSocket 消息格式、
  * 路由与交互流程全部与原实现一致，未做任何修改。
  * 设计令牌见 tokens.css（Fluent 2 令牌）。
+ *
+ * 追加（远程解锁 Phase 1，同样是纯表现层）：
+ *   设备卡片上多一行 Windows 会话状态徽标（已登录 / 已锁屏 / 登录界面），
+ *   以及一个「远程解锁」按钮；解锁请求用现有 Web 会话下发（不弹第二个密码框），
+ *   结果由 /ws/web 的 unlock_result 帧推回。见 B5b / B6b。
  */
 
 const STATE_ORDER = ['created', 'server_received', 'device_received', 'popup_displayed', 'read'];
@@ -524,6 +529,104 @@ function renderHomeDevices() {
   });
 }
 
+/* ── B5b. Windows 会话状态徽标 + 远程解锁（Phase 1）─────────────
+   后端契约（已冻结，前端照此对接；不改任何路径、请求体与帧格式）：
+     · 设备对象多 windows_state：logon_screen | locked | unlocked | unknown
+       （另有 capabilities 数组；本轮不拿它做判断，免得老 Agent 没上报就点不动）
+     · GET /api/config 多返回 permissions: [..., "device.unlock"]
+     · POST /api/devices/{id}/unlock → {ok, request_id, expires_at}
+       403 无权限 / 404 设备不存在 / 409 离线或状态不允许 / 429 限流（detail 是中文原因）
+     · 结果不走 HTTP：/ws/web 推 unlock_result{device_id, request_id, status, reason}
+       请求 30 秒过期，前端 35 秒兜底清掉 loading。
+
+   权限：没有 device.unlock 就整个不显示解锁入口 —— 不做「永远点不动的按钮」。
+   旧服务端（/api/config 里连 permissions 字段都没有）自动落在同一条分支上，界面不回归。
+*/
+const UNLOCK_EXPIRE_MS = 35000;      // 30s 过期 + 5s 冗余 → 兜底清 loading
+
+/** Windows 会话状态 → 徽标。图标 + 文字双通道，颜色只是辅助 */
+const WIN_STATE = {
+  unlocked:     { label: '已登录',          icon: 'lock-open',   cls: 'winstate--unlocked' },
+  locked:       { label: '已锁屏',          icon: 'lock-closed', cls: 'winstate--attention' },
+  logon_screen: { label: 'Windows 登录界面', icon: 'person',     cls: 'winstate--attention' },
+  unknown:      { label: '状态未知',        icon: 'info',        cls: 'winstate--unknown' },
+};
+
+/** unlock_result.reason 是机器码，界面必须说人话 */
+const UNLOCK_REASON = {
+  no_credential: 'PC 尚未配置 Windows 解锁凭据',
+  expired:       '解锁请求已过期，请重试',
+  replay:        '该请求已被使用过',
+  not_mine:      '设备不匹配',
+  bad_action:    '请求类型不合法',
+  cp_error:      'PC 端解锁组件出错',
+  timeout:       'PC 响应超时',
+  ok:            'PC 已完成解锁',
+};
+
+/* 进行中的解锁请求：device_id → { phase, note, kind, requestId, timer }
+   状态放这里而不是留在 DOM 上 —— WebSocket 每次设备变动都会重渲染整张卡片。 */
+const unlockState = new Map();
+
+/** 后端是否给了 device.unlock 权限（字段缺失 = 老服务端，不显示入口） */
+function unlockUIAvailable() {
+  const perms = state.config && state.config.permissions;
+  return Array.isArray(perms) && perms.includes('device.unlock');
+}
+
+function unlockPending(id) {
+  const st = unlockState.get(id);
+  return !!st && (st.phase === 'sending' || st.phase === 'waiting');
+}
+
+/** 不能解锁的原因（空串 = 可以解锁） */
+function unlockBlockReason(d) {
+  if (!d.online) return '设备离线，无法远程解锁';
+  const s = d.windows_state || 'unknown';
+  if (s === 'unlocked') return '已登录，无需解锁';
+  if (s === 'unknown') return 'Windows 会话状态未知，暂时不能解锁';
+  return '';                                     // locked / logon_screen 才允许解锁
+}
+
+function buildWinStateBadge(raw) {
+  const key = WIN_STATE[raw] ? raw : 'unknown';
+  const meta = WIN_STATE[key];
+  const el = document.createElement('span');
+  el.className = 'winstate ' + meta.cls;
+  el.dataset.winState = key;
+  el.append(
+    icon(meta.icon, 'icon icon--xs'),
+    Object.assign(document.createElement('span'), { textContent: meta.label }),
+  );
+  el.title = 'Windows 会话状态：' + meta.label;
+  return el;
+}
+
+/** 卡片上的说明行：进行中的文案优先，其次是「为什么点不了」 */
+function unlockNoteFor(d) {
+  const st = unlockState.get(d.device_id);
+  if (st && st.note) return { kind: st.kind, text: st.note };
+  if (!d.online) return null;                    // 「离线」状态行已经说了，不重复
+  const s = d.windows_state || 'unknown';
+  if (s === 'unknown') return { kind: 'info', text: 'Windows 会话状态未知，无法远程解锁' };
+  return null;                                   // 已登录 / 可解锁：会话徽标已经说清楚
+}
+
+function fillDevNote(node, info) {
+  node.innerHTML = '';
+  if (!info || !info.text) { node.hidden = true; return; }
+  node.hidden = false;
+  node.classList.toggle('dev__note--busy', info.kind === 'pending');
+  if (info.kind === 'pending') {
+    node.appendChild(Object.assign(document.createElement('span'),
+      { className: 'progress-ring progress-ring--sm' }));
+  } else {
+    node.appendChild(icon('info', 'icon icon--xs'));
+  }
+  node.appendChild(Object.assign(document.createElement('span'),
+    { className: 'dev__note-text', textContent: info.text }));
+}
+
 function renderDevices() {
   const box = $('devices');
   box.innerHTML = '';
@@ -560,12 +663,24 @@ function renderDevices() {
 
     top.append(ic, nm, st);
 
+    // Windows 会话状态：和「在线」是两件事（在线也可能锁着屏），所以单独一行。
+    // 设备离线时不猜会话状态 —— 卡片上只有「离线」。
+    const session = document.createElement('div');
+    session.className = 'dev__session';
+    if (d.online) session.appendChild(buildWinStateBadge(d.windows_state));
+    session.hidden = !d.online;
+
     const meta = document.createElement('div');
     meta.className = 'dev__meta';
     meta.textContent =
       (d.type === 'pc' ? 'Windows PC' : d.type) +
       (d.platform ? ` · ${d.platform.split(/\s+/)[0]}` : '') +
       (d.last_seen ? ` · 最后在线 ${d.last_seen}` : ' · 从未上线');
+
+    // 解锁的进度/原因文案：紧挨着按钮上方一行（Fluent Caption，不抢层级）
+    const note = document.createElement('div');
+    note.className = 'dev__note';
+    note.dataset.unlockNote = d.device_id;
 
     const acts = document.createElement('div');
     acts.className = 'dev__acts';
@@ -575,6 +690,27 @@ function renderDevices() {
     const shotBtn = mkBtn('桌面', 'camera', 'btn--secondary', () => deviceAction(d, 'shot'));
     if (!d.online) shotBtn.disabled = true;
     acts.appendChild(shotBtn);
+
+    // 远程解锁：高风险操作（会真的把电脑解锁到桌面），一律次要/描边样式，
+    // 不用和「发送」一样的实心主按钮。没有 device.unlock 权限时整个入口不出现。
+    if (unlockUIAvailable()) {
+      const why = unlockBlockReason(d);
+      const pending = unlockPending(d.device_id);
+      const ub = mkBtn('远程解锁', 'lock-open', 'btn--secondary', () => doUnlock(d));
+      ub.dataset.unlockBtn = d.device_id;
+      ub.disabled = !!why || pending;
+      ub.title = why || `向「${d.name}」下发一次性解锁请求（PC 用本机 Windows 凭据解锁）`;
+      if (pending) {
+        // 请求进行中：图标换成小进度环，按钮锁住防连点
+        ub.querySelector('.btn__icon').replaceWith(
+          Object.assign(document.createElement('span'),
+            { className: 'progress-ring progress-ring--sm' }));
+      }
+      acts.appendChild(ub);
+
+      // 禁用原因 / 进行中的文案：能一眼看出「为什么点不了」和「走到哪一步了」
+      fillDevNote(note, unlockNoteFor(d));
+    }
 
     // 开机：只在有米家绑定时出现；已在线则禁用（不去动插座）
     if (d.xiaomi) {
@@ -591,7 +727,7 @@ function renderDevices() {
     if (!d.online) off.disabled = true;
     acts.appendChild(off);
 
-    el.append(top, meta, acts);
+    el.append(top, session, meta, note, acts);
     box.appendChild(el);
   });
 }
@@ -681,6 +817,86 @@ async function deviceAction(d, act) {
       snack('关机失败：' + e.message, { error: true });
     }
   }
+}
+
+/* ── B6b. 远程解锁流程 ────────────────────────────────────────
+   点按钮 → POST 一次 → 结果完全由 WebSocket 推回。全程不弹第二个密码框。 */
+function setUnlockPhase(id, phase, note, opts = {}) {
+  const prev = unlockState.get(id);
+  if (prev && prev.timer) clearTimeout(prev.timer);
+  if (phase === 'idle') { unlockState.delete(id); renderDevices(); return; }
+
+  const st = {
+    phase,
+    note: note || '',
+    kind: opts.kind || 'info',
+    requestId: opts.requestId || (prev && prev.requestId) || '',
+    timer: null,
+  };
+  if (opts.timeout) st.timer = setTimeout(() => onUnlockTimeout(id, st.requestId), opts.timeout);
+  unlockState.set(id, st);
+  renderDevices();
+}
+
+/** 35 秒还没等到结果 → 撤掉 loading，别让界面永远停在中间态 */
+function onUnlockTimeout(id, requestId) {
+  const st = unlockState.get(id);
+  if (!st || st.requestId !== requestId || !unlockPending(id)) return;
+  setUnlockPhase(id, 'timeout', '解锁请求已超时，可以重试');
+  snack('解锁请求超时：PC 一直没回应（请求 30 秒过期）', { error: true, action: '知道了' });
+  // 超时文案留一会儿就撤掉，不长期挂在卡片上
+  setTimeout(() => {
+    const cur = unlockState.get(id);
+    if (cur && cur.phase === 'timeout') { unlockState.delete(id); renderDevices(); }
+  }, 12000);
+}
+
+/** 点击「远程解锁」：沿用当前 Web 会话下发，不需要再输一次口令 */
+async function doUnlock(d) {
+  if (unlockPending(d.device_id)) return;
+  const why = unlockBlockReason(d);
+  if (why) { snack(why, { error: true }); return; }
+
+  setUnlockPhase(d.device_id, 'sending', '正在发送解锁请求…', { kind: 'pending' });
+  try {
+    const r = await api(`/api/devices/${d.device_id}/unlock`, { method: 'POST' });
+    setUnlockPhase(d.device_id, 'waiting', '已下发解锁请求，等待 PC 执行…',
+      { kind: 'pending', requestId: (r && r.request_id) || '', timeout: UNLOCK_EXPIRE_MS });
+  } catch (e) {
+    // 403 / 404 / 409 / 429 的 detail 就是中文原因，原样提示
+    setUnlockPhase(d.device_id, 'idle');
+    snack('解锁失败：' + (e.message || '未知错误'), { error: true, action: '知道了' });
+  }
+}
+
+/** /ws/web 推来的 unlock_result */
+function onUnlockResult(msg) {
+  const id = msg.device_id || '';
+  const dev = state.devices.find((x) => x.device_id === id);
+  const who = dev ? dev.name : id;
+  const rid = msg.request_id || '';
+  const cur = unlockState.get(id);
+  // 别人（另一个浏览器）发起的请求，不该动本地的 loading 状态
+  const mine = !rid || !cur || !cur.requestId || cur.requestId === rid;
+
+  if (msg.status === 'armed') {
+    setUnlockPhase(id, 'waiting', 'PC 已接收，正在解锁…',
+      { kind: 'pending', requestId: rid, timeout: UNLOCK_EXPIRE_MS });
+    return;
+  }
+
+  if (mine) setUnlockPhase(id, 'idle');          // 无论成败，按钮恢复可用
+
+  if (msg.status === 'success') {
+    snack(`「${who}」解锁成功`);
+    loadDevices();                               // 会话状态会变，重新拉一次设备
+    return;
+  }
+
+  const reason = UNLOCK_REASON[msg.reason] || 'PC 端没能完成解锁';
+  snack(`「${who}」解锁失败：${reason}`, { error: true, action: '知道了' });
+  loadDevices();
+  renderDevices();
 }
 
 /* ── B7. 消息 ────────────────────────────────────────────────── */
@@ -966,6 +1182,9 @@ function connectWS() {
     let d; try { d = JSON.parse(ev.data); } catch (_) { return; }
     if (d.type === 'device_status' || d.type === 'device_updated' || d.type === 'device_deleted') {
       loadDevices();
+    } else if (d.type === 'unlock_result') {
+      // 解锁结果只从 WebSocket 回来（不走 HTTP），设备名与请求配对都在 onUnlockResult 里
+      onUnlockResult(d);
     } else if (d.type === 'message') {
       upsertMessage(d.message);
       if (convDevice) {

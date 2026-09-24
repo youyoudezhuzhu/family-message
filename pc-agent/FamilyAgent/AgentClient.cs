@@ -16,7 +16,7 @@ namespace FamilyAgent;
 /// </summary>
 public sealed class AgentClient
 {
-    private const string AgentVersion = "cs-0.10.1";
+    private const string AgentVersion = "cs-0.11.0";
 
     /// <summary>对外暴露的版本号，启动日志和排查时用。</summary>
     public static string ReportedVersion => AgentVersion;
@@ -41,6 +41,11 @@ public sealed class AgentClient
     public event Action<JsonElement>? ReplyAcked;
     public event Action<JsonElement>? HistoryReceived;
     public event Action<int>? ShutdownRequested;
+
+    /// <summary>收到远程解锁请求（<c>unlock_request</c>，远程解锁 Phase 1）。
+    /// 校验与应答都不需要桌面，headless（登录界面）下同样能走通。</summary>
+    public event Action<JsonElement>? UnlockRequested;
+
     public event Action<string>? Log;
 
     public AgentClient(AgentConfig config) => _config = config;
@@ -196,11 +201,12 @@ public sealed class AgentClient
                     return;
                 }
 
-                // ③ 正常心跳（每 15 秒一次）
+                // ③ 正常心跳（每 15 秒一次）。帧里除了 type 还带 Windows 会话状态和
+                //    本机能力（远程解锁 Phase 1）；状态一变会另发一次即时上报。
                 if (now - _lastBeatUtc >= TimeSpan.FromSeconds(15))
                 {
                     _lastBeatUtc = now;
-                    await SendRawAsync(ws, "{\"type\":\"heartbeat\"}", ct).ConfigureAwait(false);
+                    await SendRawAsync(ws, BuildHeartbeatJson(), ct).ConfigureAwait(false);
                 }
 
                 if (OutboxCount > 0)
@@ -218,6 +224,83 @@ public sealed class AgentClient
             TryAbort(ws);
         }
     }
+
+    // ── Windows 会话状态 / 能力上报（远程解锁 Phase 1）────────────────
+    //
+    // 两个新字段都挂在原有心跳帧上，不新增帧类型，也不改心跳周期。
+
+    /// <summary>
+    /// 是否上报 <c>unlock</c> 能力。
+    ///
+    /// ⚠ 本阶段**故意不上报**：能力声明等于「这台机器真能解锁」，而凭据存储和
+    ///   Credential Provider 都还没做，报了就是谎报 —— 网页端会给出一个点了
+    ///   必然失败的按钮。Phase 2 落地后把这里改成 true 即可，其余不用动。
+    /// </summary>
+    private static readonly bool ReportUnlockCapability = false;
+
+    /// <summary>
+    /// 本机当前具备的能力清单（集中定义，方便后续打开 unlock）。
+    /// 每次现算：headless 与交互式实例的结果不同。
+    /// </summary>
+    private static string[] BuildCapabilities()
+    {
+        var caps = new List<string> { "message", "screenshot" };
+
+        // 会话 0（开机后无人登录）关机没有意义，也没有桌面可以弹窗提示
+        if (!App.IsHeadless)
+            caps.Add("shutdown");
+
+        if (ReportUnlockCapability)
+            caps.Add("unlock");
+
+        return caps.ToArray();
+    }
+
+    /// <summary>
+    /// 心跳帧（PC → NAS）。<c>windows_state</c> / <c>capabilities</c> 是远程解锁
+    /// Phase 1 新增的字段。
+    ///
+    /// 状态每次现检测（见 <see cref="SessionState.Current"/>），不吃缓存 ——
+    /// 会话状态可能刚在这 15 秒里变过，报旧值会让网页端显示错的状态。
+    /// </summary>
+    private static string BuildHeartbeatJson() =>
+        JsonSerializer.Serialize(new
+        {
+            type = "heartbeat",
+            windows_state = SessionState.Current,
+            capabilities = BuildCapabilities(),
+        });
+
+    /// <summary>
+    /// 会话状态变化（锁屏 / 解锁 / 登录 / 注销）时立即补发一次心跳，
+    /// 不必等下一个 15 秒周期 —— 网页端的「远程解锁」可用性就靠这个及时性。
+    ///
+    /// 只在有连接时发：状态是有时效的，没连接就不发了（不像 ack/reply 那样入队），
+    /// 免得重连后补发一条早已过期的旧状态。
+    /// </summary>
+    public void ReportSessionState()
+    {
+        var ws = _ws;
+        if (ws is null)
+            return;
+
+        _ = SendNowAsync(ws, BuildHeartbeatJson(), "heartbeat:state");
+    }
+
+    /// <summary>
+    /// 回一条 <c>unlock_result</c>（远程解锁 Phase 1）。
+    ///
+    /// 走和 ack / reply 同一条发送路径：发不出去会入队，重连后补发 ——
+    /// 服务端等的是这条应答，丢了它就等于这次解锁请求石沉大海。
+    /// </summary>
+    public void UnlockResult(string requestId, string status, string reason) =>
+        SendOrQueue(new
+        {
+            type = "unlock_result",
+            request_id = requestId,
+            status,
+            reason,
+        }, $"unlock_result:{status}/{reason}");
 
     private async Task ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
     {
@@ -314,6 +397,12 @@ public sealed class AgentClient
                     delay = dEl.GetInt32();
                 }
                 ShutdownRequested?.Invoke(delay);
+                break;
+
+            case "unlock_request":
+                // 远程解锁 Phase 1：交给 App 用 UnlockGuard 校验后回 unlock_result。
+                // 校验和应答都不需要桌面，所以 headless（登录界面）下也能走通。
+                UnlockRequested?.Invoke(root.Clone());
                 break;
 
             case "heartbeat_ack":

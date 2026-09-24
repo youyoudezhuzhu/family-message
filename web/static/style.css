@@ -615,6 +615,37 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 .dev__acts .btn { flex: 1 1 auto; min-width: 0; }
 .dev__acts .btn span { overflow: hidden; text-overflow: ellipsis; }
 
+/* 远程解锁：Windows 会话状态徽标。
+   和「在线」是两件事（在线也可能锁着屏），所以单独一行、单独一个徽标。
+   图标 + 文字双通道，颜色只是辅助 —— 色觉差异下也能读。 */
+.dev__session { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); }
+.winstate {
+  display: inline-flex; align-items: center; gap: var(--spacing-xs);
+  max-width: 100%;
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-small);
+  font: var(--font-caption); font-weight: 600;
+  background: var(--fluent-color-surface-tertiary);
+  color: var(--fluent-color-text-secondary);
+}
+.winstate .icon { width: 14px; height: 14px; }
+.winstate span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.winstate--unlocked { background: var(--fluent-color-success-tint); color: var(--fluent-color-success); }
+/* 已锁屏 / Windows 登录界面：都是「等人来解锁」，同一语义色，靠图标与文字区分 */
+.winstate--attention { background: var(--fluent-color-warning-tint); color: var(--fluent-color-warning); }
+.winstate--unknown { background: var(--fluent-color-surface-tertiary); color: var(--fluent-color-text-tertiary); }
+
+/* 解锁的进度 / 原因说明：Fluent Caption，紧贴按钮上方，不抢层级 */
+.dev__note {
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  min-height: 16px;
+  font: var(--font-caption); color: var(--fluent-color-text-tertiary);
+}
+.dev__note--busy { color: var(--fluent-color-text-secondary); }
+.dev__note-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 小号进度环：按钮内与说明行都用它（默认 28px 太大） */
+.progress-ring--sm { width: 14px; height: 14px; border-width: 2px; }
+
 /* ── 8. 首页 · 发送区 ────────────────────────────────────────── */
 .compose__quick { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); }
 .compose__bar {
