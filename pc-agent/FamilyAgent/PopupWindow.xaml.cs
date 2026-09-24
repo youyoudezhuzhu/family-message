@@ -24,6 +24,21 @@ namespace FamilyAgent;
 /// </summary>
 public partial class PopupWindow : Window
 {
+    /// <summary>
+    /// 窗口的两种形态。**这是之前「设置对话框孤零零浮在整屏中央」的根因** ——
+    /// 以前窗口永远是全屏无边框，设置只是叠在上面的一个 780px 弹层，
+    /// 于是在 2560 宽的屏幕上就变成一个悬在正中的小方块，比例完全不对。
+    /// </summary>
+    public enum WindowMode
+    {
+        /// <summary>强提醒：全屏、无边框、置顶。只有「有消息要展示」时用。</summary>
+        Popup,
+        /// <summary>普通窗口：设置 / 对话。标准标题栏、居中、可缩放、不置顶。</summary>
+        Window,
+    }
+
+    private WindowMode _mode = WindowMode.Popup;
+
     /// <summary>主对话区最多保留多少条，超出丢弃最早的。</summary>
     private const int MaxCards = 60;
 
@@ -53,18 +68,18 @@ public partial class PopupWindow : Window
 
         MdTheme.Apply(App.Config?.ThemeId, App.Config?.ThemeMode);
 
-        // 用「工作区」而不是整屏：任务栏留给用户，窗口不至于糊满整屏。
-        // SystemParameters.WorkArea 给的是 DIP，配合 app.manifest 里的
-        // PerMonitorV2 声明，在高缩放屏上尺寸才正确。
-        var work = SystemParameters.WorkArea;
-        Left = work.Left;
-        Top = work.Top;
-        Width = work.Width;
-        Height = work.Height;
+        // 初始形态由调用方用 ApplyWindowMode 决定；这里先给一个安全默认值
+        // （弹窗形态：工作区大小，任务栏留给用户）
+        ApplyWindowMode(WindowMode.Popup);
 
         _topmostTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _topmostTimer.Tick += (_, _) =>
         {
+            // ★ 只有全屏强提醒才需要反复重申置顶。
+            //   窗口模式下这样做会让设置/对话窗口永远压在别的程序前面，很烦人；
+            //   Activate() 还会每 3 秒抢一次焦点 —— 那是更严重的问题。
+            if (_mode != WindowMode.Popup || !IsVisible)
+                return;
             Topmost = false;
             Topmost = true;
             Activate();
@@ -274,6 +289,66 @@ public partial class PopupWindow : Window
         CountBadge.Visibility = count >= 2 ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>
+    /// 切换窗口形态。弹窗模式全屏置顶（强提醒），窗口模式是标准的 Windows 窗口。
+    ///
+    /// WPF 运行期改 WindowStyle 需要先隐藏 —— 直接改多半不生效或留残影，
+    /// 所以这里统一「记状态 → Hide → 改 → 按需 Show」。
+    /// </summary>
+    internal void ApplyWindowMode(WindowMode mode)
+    {
+        var wasVisible = IsVisible;
+        _mode = mode;
+
+        try
+        {
+            if (wasVisible) Hide();
+
+            if (mode == WindowMode.Popup)
+            {
+                WindowStyle = WindowStyle.None;
+                ResizeMode = ResizeMode.NoResize;
+                ShowInTaskbar = false;
+                Topmost = true;
+
+                var work = SystemParameters.WorkArea;
+                WindowStartupLocation = WindowStartupLocation.Manual;
+                Left = work.Left;
+                Top = work.Top;
+                Width = work.Width;
+                Height = work.Height;
+            }
+            else
+            {
+                // 标准 Windows 窗口：有标题栏、能拖动缩放、出现在任务栏
+                WindowStyle = WindowStyle.SingleBorderWindow;
+                ResizeMode = ResizeMode.CanResize;
+                ShowInTaskbar = true;
+                Topmost = false;
+
+                // 尺寸不要写死：小屏笔记本上也放得下
+                var work = SystemParameters.WorkArea;
+                Width = Math.Min(1000, Math.Max(720, work.Width * 0.78));
+                Height = Math.Min(760, Math.Max(520, work.Height * 0.82));
+                // 交给 CenterScreen 居中，不再手算 Left/Top ——
+                // 同时设 CenterScreen 和 Left/Top 会互相打架（显示时以 CenterScreen 为准，
+                // 但我们的日志又会读出自己算的值，排查时全是误导）
+                WindowStartupLocation = WindowStartupLocation.CenterScreen;
+            }
+
+            AgentLog.Write($"窗口模式 → {mode}  {Width:0}x{Height:0} at ({Left:0},{Top:0})");
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("切换窗口模式失败：" + ex.Message);
+        }
+
+        if (wasVisible) Show();
+    }
+
+    /// <summary>当前是不是全屏弹窗形态（设置页据此决定要不要铺遮罩）。</summary>
+    internal bool IsPopupMode => _mode == WindowMode.Popup;
+
     private void EnsureShown()
     {
         if (!IsVisible)
@@ -299,10 +374,10 @@ public partial class PopupWindow : Window
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        Left = 0;
-        Top = 0;
-        Width = SystemParameters.PrimaryScreenWidth;
-        Height = SystemParameters.PrimaryScreenHeight;
+        // ★ 不要再无条件全屏 —— 按当前模式决定尺寸。
+        //   以前这里写死全屏，所以从托盘打开设置时也会先撑满整屏，
+        //   再把小对话框居中放进去，比例自然不对。
+        ApplyWindowMode(_mode);
         _topmostTimer.Start();
         if (!IsSettingsOpen)
             ReplyBox.Focus();
@@ -412,6 +487,9 @@ public partial class PopupWindow : Window
     /// <summary>外部（启动时 / 托盘菜单）打开设置页，窗口会一并显示出来。</summary>
     public void ShowSettingsPage()
     {
+        // 设置一律用普通窗口 —— 全屏弹窗形态下放一个设置面板，
+        // 在宽屏上就是「一个小方块悬在正中」，比例完全不对。
+        ApplyWindowMode(WindowMode.Window);
         SetConfig(App.Config);
         PresentIdle();
         _autoCloseTimer?.Stop();

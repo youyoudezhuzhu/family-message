@@ -208,21 +208,28 @@ public static class MdTheme
     // ── Typography（MD3 Type Scale，单位 DIP）────────────────────
     public static class Type
     {
-        public const double DisplayLarge = 57, DisplayLargeLh = 64;
-        public const double DisplayMedium = 45, DisplayMediumLh = 52;
-        public const double DisplaySmall = 36, DisplaySmallLh = 44;
-        public const double HeadlineLarge = 32, HeadlineLargeLh = 40;
-        public const double HeadlineMedium = 28, HeadlineMediumLh = 36;
-        public const double HeadlineSmall = 24, HeadlineSmallLh = 32;
-        public const double TitleLarge = 22, TitleLargeLh = 28;
-        public const double TitleMedium = 16, TitleMediumLh = 24;
+        // ── Fluent 2 类型刻度 ────────────────────────────────────
+        // 之前是 Material Design 3 那套（Display 57/45/36、Headline 32/28/24…），
+        // 字号整体偏大偏松，是「看着还是 MD 味」的重要原因之一。
+        // 现在换成 Windows 11 的刻度：Caption 12 / Body 14 / Subtitle 20 /
+        // Title 28 / TitleLarge 40 / Display 68。
+        //
+        // 成员名保持不变（DisplayLarge…LabelSmall），这样 40 多处引用一行不用动。
+        public const double DisplayLarge = 68, DisplayLargeLh = 92;
+        public const double DisplayMedium = 40, DisplayMediumLh = 52;
+        public const double DisplaySmall = 28, DisplaySmallLh = 36;
+        public const double HeadlineLarge = 28, HeadlineLargeLh = 36;
+        public const double HeadlineMedium = 20, HeadlineMediumLh = 28;
+        public const double HeadlineSmall = 20, HeadlineSmallLh = 28;
+        public const double TitleLarge = 20, TitleLargeLh = 28;
+        public const double TitleMedium = 14, TitleMediumLh = 20;
         public const double TitleSmall = 14, TitleSmallLh = 20;
-        public const double BodyLarge = 16, BodyLargeLh = 24;
+        public const double BodyLarge = 14, BodyLargeLh = 20;
         public const double BodyMedium = 14, BodyMediumLh = 20;
         public const double BodySmall = 12, BodySmallLh = 16;
         public const double LabelLarge = 14, LabelLargeLh = 20;
         public const double LabelMedium = 12, LabelMediumLh = 16;
-        public const double LabelSmall = 11, LabelSmallLh = 16;
+        public const double LabelSmall = 12, LabelSmallLh = 16;
     }
 
     // ── Shape（按组件分级，不是全都大圆角）──────────────────────

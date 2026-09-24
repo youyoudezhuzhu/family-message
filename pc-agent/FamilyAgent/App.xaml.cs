@@ -343,6 +343,10 @@ public partial class App : Application
                     history.Add(HistoryItem.FromJson(h, messageId));
             }
 
+            // 有消息来了 → 回到全屏强提醒形态
+            var popupWin = EnsurePopup();
+            popupWin?.ApplyWindowMode(PopupWindow.WindowMode.Popup);
+
             if (IsHeadless)
             {
                 // 登录前没有交互式桌面，弹窗显示不出来。如实回报「已送达」——
@@ -568,6 +572,8 @@ public partial class App : Application
         if (win is null) return;
         try
         {
+            // 从托盘打开 → 普通窗口（有标题栏、可缩放、居中）
+            win.ApplyWindowMode(PopupWindow.WindowMode.Window);
             win.PresentIdle();
             AgentLog.Write($"托盘打开会话：窗口已显示 visible={win.IsVisible} "
                            + $"state={win.WindowState} size={win.Width}x{win.Height} "

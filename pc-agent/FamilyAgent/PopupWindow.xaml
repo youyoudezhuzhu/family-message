@@ -153,9 +153,15 @@
         <!-- ══════ 设置页（MD 对话框覆盖层）══════ -->
         <Grid x:Name="SettingsPage" Grid.RowSpan="2" Visibility="Collapsed"
               Background="{DynamicResource MdScrim}">
-            <Border Width="780" MaxHeight="920" CornerRadius="28"
+            <!-- 圆角用 Fluent 的浮层圆角（8），不是 Material 的 28。
+                 MaxWidth 而不是写死 Width：窗口模式下要能跟着窗口走。
+                 VerticalAlignment=Stretch + Margin：占满可用高度，
+                 内部 ScrollViewer 才有界可滚（以前 MaxHeight 写死 920，
+                 在 720 高的窗口里会撑破）。 -->
+            <Border MaxWidth="820" CornerRadius="{x:Static local:MdTheme.RadiusLarge}"
+                    Margin="28" Padding="28"
                     Background="{DynamicResource MdSurfaceHigh}"
-                    VerticalAlignment="Center" Padding="28">
+                    VerticalAlignment="Stretch" HorizontalAlignment="Center">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
