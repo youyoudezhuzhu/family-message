@@ -1,11 +1,13 @@
 /* 家庭消息控制台 —— 原生 JS，零构建
  *
  * 本文件分两部分：
- *   A. 表现层（配色 / 明暗模式 / Snackbar / Dialog / 图标 / 渲染）
+ *   A. 表现层（主题 / 导航 / Toast / Dialog / 图标 / 渲染）
  *   B. 业务逻辑（API / WebSocket / 设备 / 消息 / 截图 / 米家 / 昵称）
  *
- * 本次 UI 重构只动 A 部分；B 部分与原实现保持一致，协议与数据结构未做任何修改。
- * 设计令牌见 tokens.css（由 tools/gen_tokens.py 生成）。
+ * 本次是 Fluent 2（Windows 11）UI 重构：只动 A 部分的表现形式；
+ * B 部分的 API 路径、请求/响应结构、WebSocket 消息格式、
+ * 路由与交互流程全部与原实现一致，未做任何修改。
+ * 设计令牌见 tokens.css（Fluent 2 令牌）。
  */
 
 const STATE_ORDER = ['created', 'server_received', 'device_received', 'popup_displayed', 'read'];
@@ -47,26 +49,13 @@ let state = { config: null, devices: [], messages: [], selected: new Set(), limi
    A. 表现层
    ══════════════════════════════════════════════════════════════ */
 
-/* ── A1. 配色方案（8 套，只存本地）───────────────────────────── */
-const SCHEMES = [
-  { id: 'indigo', name: '靛蓝' },
-  { id: 'violet', name: '紫罗' },
-  { id: 'teal',   name: '青碧' },
-  { id: 'green',  name: '松绿' },
-  { id: 'amber',  name: '琥珀' },
-  { id: 'coral',  name: '珊瑚' },
-  { id: 'pink',   name: '品红' },
-  { id: 'cyan',   name: '天青' },
-];
-const SCHEME_KEY = 'fm.scheme';
-const LEGACY_THEME_KEY = 'fm.theme';   // 旧版本的键名，做一次迁移
-
-/* ── A2. 明暗模式：light / dark / system（规范 §5，默认跟随系统） */
+/* ── A1. 明暗模式：light / dark / system（默认跟随系统）─────────
+       只有一套 Fluent 蓝品牌色，配色方案选择器已移除。 */
 const MODE_KEY = 'fm.mode';
 const MODES = [
-  { id: 'system', name: '跟随系统', icon: 'i-auto' },
-  { id: 'light',  name: '浅色',     icon: 'i-light' },
-  { id: 'dark',   name: '深色',     icon: 'i-dark' },
+  { id: 'system', name: '跟随系统', icon: 'system' },
+  { id: 'light',  name: '浅色',     icon: 'sun' },
+  { id: 'dark',   name: '深色',     icon: 'moon' },
 ];
 const mqDark = window.matchMedia('(prefers-color-scheme: dark)');
 
@@ -103,36 +92,67 @@ mqDark.addEventListener('change', () => {
   if (loadMode() === 'system') { applyMode('system', false); renderModeRow(); }
 });
 
-/* ── A3. 配色应用 ────────────────────────────────────────────── */
-function loadScheme() {
+/* ── A2. NavigationView 路由（纯前端切页，不涉及任何后端路由）── */
+const PAGES = ['home', 'messages', 'devices', 'shot', 'settings'];
+const PAGE_KEY = 'fm.page';
+let currentPage = 'home';
+
+function go(page) {
+  if (!PAGES.includes(page)) page = 'home';
+  currentPage = page;
+
+  PAGES.forEach((p) => {
+    const el = $('page-' + p);
+    if (el) el.hidden = (p !== page);
+  });
+
+  document.querySelectorAll('[data-page]').forEach((b) => {
+    const on = b.dataset.page === page;
+    b.classList.toggle('is-selected', on);
+    if (b.classList.contains('nav-item')) {
+      b.setAttribute('aria-current', on ? 'page' : 'false');
+    }
+  });
+
+  closeNavDrawer();
+  try { localStorage.setItem(PAGE_KEY, page); } catch (_) {}
+
+  // 进入页面时刷新该页自己的内容
+  if (page === 'settings') enterSettings();
+  else if (page === 'shot') renderShotPicks();
+
+  window.scrollTo({ top: 0 });
+}
+
+function loadPage() {
   try {
-    const v = localStorage.getItem(SCHEME_KEY) || localStorage.getItem(LEGACY_THEME_KEY);
-    if (v && SCHEMES.some((s) => s.id === v)) return v;
+    const v = localStorage.getItem(PAGE_KEY);
+    if (PAGES.includes(v)) return v;
   } catch (_) {}
-  return 'indigo';
+  return 'home';
 }
 
-function applyScheme(id, persist) {
-  document.documentElement.setAttribute('data-scheme', id);
-  if (persist) { try { localStorage.setItem(SCHEME_KEY, id); } catch (_) {} }
+function openNavDrawer() { $('app-shell').classList.add('nav-open'); }
+function closeNavDrawer() { $('app-shell').classList.remove('nav-open'); }
+
+/* ── A3. 首页问候语（按时间给一句话，家庭应用不用 KPI）─────── */
+function greetingText() {
+  const h = new Date().getHours();
+  if (h < 5) return '夜深了';
+  if (h < 9) return '早上好';
+  if (h < 12) return '上午好';
+  if (h < 14) return '中午好';
+  if (h < 18) return '下午好';
+  if (h < 23) return '晚上好';
+  return '夜深了';
 }
 
-/** 取某套配色的预览色（临时挂一个探针读 CSS 变量，保证与 tokens.css 永远一致） */
-function schemeColor(id, role = 'primary') {
-  const probe = document.createElement('div');
-  probe.setAttribute('data-scheme', id);
-  // 带上当前模式，色块才会跟着明暗变化
-  const mode = document.documentElement.getAttribute('data-mode');
-  if (mode) probe.setAttribute('data-mode', mode);
-  probe.style.display = 'none';
-  document.body.appendChild(probe);
-  const c = getComputedStyle(probe).getPropertyValue('--md-' + role).trim();
-  probe.remove();
-  return c || 'var(--md-outline)';
+function renderGreeting() {
+  $('home-greeting').textContent = greetingText();
 }
 
-/* ── A4. 图标 ────────────────────────────────────────────────── */
-function icon(name, cls = 'md-icon') {
+/* ── A4. 图标（Fluent System Icons 内联 SVG 精灵）────────────── */
+function icon(name, cls = 'icon') {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('class', cls);
   svg.setAttribute('aria-hidden', 'true');
@@ -142,22 +162,24 @@ function icon(name, cls = 'md-icon') {
   return svg;
 }
 
-/* ── A5. Snackbar（规范 §20：不再用 alert / 小灰字）──────────── */
+/* ── A5. Toast（Fluent MessageBar 风格，替代 alert / 小灰字）─── */
 let snackSeq = 0;
 function snack(text, opts = {}) {
   const host = $('snackbar-host');
   const el = document.createElement('div');
-  el.className = 'md-snackbar' + (opts.error ? ' md-snackbar--error' : '');
+  el.className = 'toast' + (opts.error ? ' toast--error' : '');
   el.dataset.seq = String(++snackSeq);
 
+  el.appendChild(icon(opts.error ? 'error' : 'info', 'icon icon--sm toast__icon'));
+
   const t = document.createElement('span');
-  t.className = 'md-snackbar__text';
+  t.className = 'toast__text';
   t.textContent = text;
   el.appendChild(t);
 
   if (opts.action) {
     const a = document.createElement('button');
-    a.className = 'md-snackbar__action';
+    a.className = 'toast__action';
     a.textContent = opts.action;
     a.onclick = () => { opts.onAction && opts.onAction(); dismiss(); };
     el.appendChild(a);
@@ -175,26 +197,26 @@ function snack(text, opts = {}) {
   function dismiss() {
     clearTimeout(timer);
     if (!el.isConnected) return;
-    el.classList.add('out');
+    el.classList.add('is-out');
     setTimeout(() => el.remove(), 200);
   }
   return dismiss;
 }
 
-/* ── A6. 对话框（替代 confirm / alert / prompt，规范 §20）────── */
+/* ── A6. Dialog（Fluent ContentDialog，替代 confirm / alert / prompt） */
 let dialogStack = [];
 
 function openDialog(el, focusEl) {
-  el.classList.add('show');
-  requestAnimationFrame(() => el.classList.add('visible'));
+  el.classList.add('is-open');
+  requestAnimationFrame(() => el.classList.add('is-visible'));
   dialogStack.push(el);
   if (focusEl) setTimeout(() => focusEl.focus(), 120);
 }
 
 function closeDialog(el) {
-  el.classList.remove('visible');
+  el.classList.remove('is-visible');
   dialogStack = dialogStack.filter((d) => d !== el);
-  setTimeout(() => el.classList.remove('show'), 200);
+  setTimeout(() => el.classList.remove('is-open'), 200);
 }
 
 // Esc 关掉最上层的对话框
@@ -204,11 +226,11 @@ document.addEventListener('keydown', (e) => {
   // 有输入焦点时不抢 Esc（避免打断输入法）
   const t = document.activeElement;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && t.id !== 'conv-text') return;
-  const btn = top.querySelector('.md-dialog__head .md-icon-btn');
+  const btn = top.querySelector('.dialog__head .icon-btn');
   if (btn) btn.click();
 });
 
-/** MD3 确认框。返回 Promise<boolean>。danger=true 时确认键用 error 色 */
+/** Fluent 确认框。返回 Promise<boolean>。danger=true 时确认键用 error 色 */
 function confirmDialog({ title = '确认', body = '', okText = '确定', cancelText = '取消', danger = false, iconName = 'i-warning' }) {
   return new Promise((resolve) => {
     const dlg = $('dlg-confirm');
@@ -222,7 +244,7 @@ function confirmDialog({ title = '确认', body = '', okText = '确定', cancelT
     const cancel = $('confirm-cancel');
     ok.textContent = okText;
     cancel.textContent = cancelText;
-    ok.className = 'md-btn ' + (danger ? 'md-btn--danger' : 'md-btn--filled');
+    ok.className = 'btn ' + (danger ? 'btn--danger' : 'btn--primary');
 
     const done = (v) => { cleanup(); closeDialog(dlg); resolve(v); };
     const onOk = () => done(true);
@@ -239,7 +261,7 @@ function confirmDialog({ title = '确认', body = '', okText = '确定', cancelT
   });
 }
 
-/** MD3 输入框对话框。返回 Promise<string|null> */
+/** Fluent 输入框对话框。返回 Promise<string|null> */
 function promptDialog({ title = '请输入', label = '', body = '', okText = '确定', value = '', type = 'text' }) {
   return new Promise((resolve) => {
     const dlg = $('dlg-confirm');
@@ -258,7 +280,7 @@ function promptDialog({ title = '请输入', label = '', body = '', okText = '�
     const cancel = $('confirm-cancel');
     ok.textContent = okText;
     cancel.textContent = '取消';
-    ok.className = 'md-btn md-btn--filled';
+    ok.className = 'btn btn--primary';
 
     const onOk = () => done(input.value);
     const onCancel = () => done(null);
@@ -324,7 +346,7 @@ async function askPassword() {
   }
 }
 
-/* ── B3. MD 暴露式下拉（原生 select 浮层无法定制，只能自绘）──── */
+/* ── B3. Fluent 下拉 / 组合框（原生 select 浮层无法定制，只能自绘） */
 function buildSelect(host, items, value, onChange) {
   host.innerHTML = '';
   const chosen = items.find((i) => i.value === value) || items[0];
@@ -332,7 +354,7 @@ function buildSelect(host, items, value, onChange) {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'md-select__btn';
+  btn.className = 'combo__btn';
   btn.setAttribute('aria-haspopup', 'listbox');
   btn.setAttribute('aria-expanded', 'false');
 
@@ -340,22 +362,22 @@ function buildSelect(host, items, value, onChange) {
   label.textContent = chosen ? chosen.label : '（没有可选项）';
   if (chosen && chosen.color) label.style.color = chosen.color;
 
-  btn.append(label, icon('expand'));
+  btn.append(label, icon('chevron-down'));
   const chev = btn.querySelector('svg');
-  chev.setAttribute('class', 'md-icon');
+  chev.setAttribute('class', 'icon');
 
   const menu = document.createElement('div');
-  menu.className = 'md-select__menu';
+  menu.className = 'combo__menu';
   menu.setAttribute('role', 'listbox');
   items.forEach((it) => {
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = 'md-select__item';
+    el.className = 'combo__item';
     el.setAttribute('role', 'option');
     el.setAttribute('aria-selected', it.value === host._value ? 'true' : 'false');
     if (it.color) {
       const sw = document.createElement('span');
-      sw.className = 'md-select__swatch';
+      sw.className = 'combo__swatch';
       sw.style.background = it.color;
       el.appendChild(sw);
     }
@@ -364,7 +386,7 @@ function buildSelect(host, items, value, onChange) {
     el.appendChild(t);
     el.onclick = (ev) => {
       ev.stopPropagation();
-      host.classList.remove('open');
+      host.classList.remove('is-open');
       btn.setAttribute('aria-expanded', 'false');
       buildSelect(host, items, it.value, onChange);
       if (onChange) onChange(it.value);
@@ -374,14 +396,14 @@ function buildSelect(host, items, value, onChange) {
 
   btn.onclick = (ev) => {
     ev.stopPropagation();
-    document.querySelectorAll('.md-select.open').forEach((o) => {
+    document.querySelectorAll('.combo.is-open').forEach((o) => {
       if (o !== host) {
-        o.classList.remove('open');
-        const b = o.querySelector('.md-select__btn');
+        o.classList.remove('is-open');
+        const b = o.querySelector('.combo__btn');
         if (b) b.setAttribute('aria-expanded', 'false');
       }
     });
-    const open = host.classList.toggle('open');
+    const open = host.classList.toggle('is-open');
     btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   };
 
@@ -389,25 +411,25 @@ function buildSelect(host, items, value, onChange) {
 }
 
 document.addEventListener('click', () => {
-  document.querySelectorAll('.md-select.open').forEach((o) => {
-    o.classList.remove('open');
-    const b = o.querySelector('.md-select__btn');
+  document.querySelectorAll('.combo.is-open').forEach((o) => {
+    o.classList.remove('is-open');
+    const b = o.querySelector('.combo__btn');
     if (b) b.setAttribute('aria-expanded', 'false');
   });
 });
 
 /* ── B4. 初始化 ──────────────────────────────────────────────── */
 async function boot() {
-  applyScheme(loadScheme(), false);
   applyMode(loadMode(), false);
 
   state.config = await api('/api/config');
   renderNameSelectors();
+  renderGreeting();
 
   $('quick').innerHTML = '';
   QUICK.forEach((q) => {
     const b = document.createElement('button');
-    b.className = 'md-chip md-chip--action';
+    b.className = 'chip chip--suggestion';
     b.type = 'button';
     b.textContent = q;
     b.onclick = () => { $('content').value = q; $('content').focus(); };
@@ -418,6 +440,8 @@ async function boot() {
   connectWS();
   setInterval(refreshTimes, 1000);
   refreshTimes();
+
+  go(loadPage());
 }
 
 /* 显示当前运行的服务端版本 —— 升级后如果这个号没变，说明旧进程还在跑 */
@@ -439,11 +463,65 @@ async function loadDevices() {
     [...state.selected].forEach((id) => { if (!ids.has(id)) state.selected.delete(id); });
   }
   renderDevices();
+  renderHomeDevices();
   renderTargets();
   renderXmPcPick();
+  renderShotPicks();
   // 消息里的投递标签要显示设备「名字」，设备列表晚于消息到达时
   // 之前渲染出来的会一直是 fallback 的 device_id，这里补一次。
   renderMessages();
+}
+
+/** 首页顶部的一排在线设备（只读展示；点一下去设备页） */
+function renderHomeDevices() {
+  const box = $('home-devices');
+  box.innerHTML = '';
+
+  const online = state.devices.filter((d) => d.online);
+  const list = online.length ? online : state.devices;
+
+  $('home-dev-empty').hidden = state.devices.length > 0;
+  $('home-dev-count').textContent = state.devices.length
+    ? `${online.length} 台在线 · 共 ${state.devices.length} 台` : '';
+
+  $('home-sub').textContent = state.devices.length === 0
+    ? '还没有设备接入。在 Windows PC 上跑起 Family Agent 就会出现在这里。'
+    : (online.length
+        ? `${online.length} 台电脑在线，留言会直接弹到它们的屏幕上。`
+        : '电脑都不在线，留言会在它们上线后补投。');
+
+  list.forEach((d) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'tile';
+    el.onclick = () => go('devices');
+
+    const ic = document.createElement('span');
+    ic.className = 'dev__icon';
+    ic.appendChild(icon('desktop'));
+
+    const mid = document.createElement('span');
+    mid.className = 'grow';
+    const nm = document.createElement('span');
+    nm.className = 'tile__name';
+    nm.textContent = d.name;
+    const mt = document.createElement('span');
+    mt.className = 'tile__meta';
+    mt.style.display = 'block';
+    mt.textContent = d.last_seen ? `最后在线 ${d.last_seen}` : '从未上线';
+    mid.append(nm, mt);
+
+    const st = document.createElement('span');
+    st.className = 'tile__state';
+    const dot = document.createElement('span');
+    dot.className = 'presence ' + (d.online ? 'presence--online' : 'presence--offline');
+    const stx = document.createElement('span');
+    stx.textContent = d.online ? '在线' : '离线';
+    st.append(dot, stx);
+
+    el.append(ic, mid, st);
+    box.appendChild(el);
+  });
 }
 
 function renderDevices() {
@@ -453,19 +531,19 @@ function renderDevices() {
 
   const online = state.devices.filter((d) => d.online).length;
   $('dev-count').textContent = state.devices.length
-    ? `${online} 台在线 · 共 ${state.devices.length} 台` : '';
+    ? `${online} 台在线 · 共 ${state.devices.length} 台` : '还没有设备注册';
 
   state.devices.forEach((d) => {
     const el = document.createElement('article');
     el.className = 'dev' + (d.online ? ' online' : '');
 
-    // 头部：图标 + 名称 + 状态（小圆点 + 文字，不用 emoji）
+    // 头部：图标 + 名称 + 状态（小型 presence + 文字，不用 emoji）
     const top = document.createElement('div');
     top.className = 'dev__top';
 
     const ic = document.createElement('span');
     ic.className = 'dev__icon';
-    ic.appendChild(icon('computer'));
+    ic.appendChild(icon('desktop'));
 
     const nm = document.createElement('span');
     nm.className = 'dev__name';
@@ -475,7 +553,7 @@ function renderDevices() {
     const st = document.createElement('span');
     st.className = 'dev__state';
     const dot = document.createElement('span');
-    dot.className = 'md-dot ' + (d.online ? 'md-dot--online' : 'md-dot--offline');
+    dot.className = 'presence ' + (d.online ? 'presence--online' : 'presence--offline');
     const stx = document.createElement('span');
     stx.textContent = d.online ? '在线' : '离线';
     st.append(dot, stx);
@@ -492,16 +570,16 @@ function renderDevices() {
     const acts = document.createElement('div');
     acts.className = 'dev__acts';
 
-    // 对话 / 查看桌面：次要操作 → Outlined
-    acts.appendChild(mkBtn('对话', 'chat', 'md-btn--outlined', () => deviceAction(d, 'conv')));
-    const shotBtn = mkBtn('桌面', 'screenshot', 'md-btn--outlined', () => deviceAction(d, 'shot'));
+    // 对话 / 查看桌面：次要操作 → Secondary
+    acts.appendChild(mkBtn('对话', 'chat', 'btn--secondary', () => deviceAction(d, 'conv')));
+    const shotBtn = mkBtn('桌面', 'camera', 'btn--secondary', () => deviceAction(d, 'shot'));
     if (!d.online) shotBtn.disabled = true;
     acts.appendChild(shotBtn);
 
     // 开机：只在有米家绑定时出现；已在线则禁用（不去动插座）
     if (d.xiaomi) {
       const verb = d.xiaomi.power_action === 'off' ? '关闭' : '开启';
-      const wake = mkBtn('开机', 'power', 'md-btn--tonal', () => deviceAction(d, 'wake'));
+      const wake = mkBtn('开机', 'power', 'btn--primary', () => deviceAction(d, 'wake'));
       wake.disabled = !!d.online;
       wake.title = `执行米家「${d.xiaomi.name}」的${verb}动作`
         + (d.online ? '（设备已在线，无需开机）' : '');
@@ -509,7 +587,7 @@ function renderDevices() {
     }
 
     // 关机：危险操作 → error 色
-    const off = mkBtn('关机', 'power-off', 'md-btn--danger-text', () => deviceAction(d, 'shutdown'));
+    const off = mkBtn('关机', 'power', 'btn--danger', () => deviceAction(d, 'shutdown'));
     if (!d.online) off.disabled = true;
     acts.appendChild(off);
 
@@ -521,8 +599,8 @@ function renderDevices() {
 function mkBtn(text, iconName, variant, onclick) {
   const b = document.createElement('button');
   b.type = 'button';
-  b.className = 'md-btn ' + variant;
-  b.append(icon(iconName, 'md-btn__icon'), Object.assign(document.createElement('span'), { textContent: text }));
+  b.className = 'btn ' + variant;
+  b.append(icon(iconName, 'btn__icon'), Object.assign(document.createElement('span'), { textContent: text }));
   b.onclick = onclick;
   return b;
 }
@@ -530,16 +608,24 @@ function mkBtn(text, iconName, variant, onclick) {
 function renderTargets() {
   const box = $('targets');
   box.innerHTML = '';
+
+  if (state.devices.length === 0) {
+    const hint = document.createElement('span');
+    hint.className = 'text-caption text-tertiary';
+    hint.textContent = '还没有设备';
+    box.appendChild(hint);
+  }
+
   state.devices.forEach((d) => {
     const on = state.selected.has(d.device_id);
     const el = document.createElement('button');
     el.type = 'button';
-    el.className = 'md-chip';
+    el.className = 'chip';
     el.setAttribute('aria-pressed', on ? 'true' : 'false');
     if (!d.online) el.setAttribute('aria-disabled', 'true');
 
     const dot = document.createElement('span');
-    dot.className = 'md-dot ' + (d.online ? 'md-dot--online' : 'md-dot--offline');
+    dot.className = 'presence ' + (d.online ? 'presence--online' : 'presence--offline');
     const t = document.createElement('span');
     t.textContent = d.name;
     el.append(dot, t);
@@ -582,7 +668,7 @@ async function deviceAction(d, act) {
       body: 'PC 端会立刻执行关机（有几秒缓冲，可在电脑上运行 shutdown /a 取消）。',
       okText: '关机',
       danger: true,
-      iconName: 'i-power-off',
+      iconName: 'i-power',
     });
     if (!ok) return;
     const dismiss = snack('正在下发关机指令……');
@@ -641,74 +727,131 @@ function upsertMessage(msg) {
   renderMessages();
 }
 
+/* 投递状态 → Fluent Badge：颜色 + 图标 + 文字三重表达（不只靠颜色） */
+const STATUS_STYLE = {
+  created:          { cls: 'status--sent',      icon: 'refresh' },
+  server_received:  { cls: 'status--sent',      icon: 'sync' },
+  device_received:  { cls: 'status--delivered', icon: 'check' },
+  popup_displayed:  { cls: 'status--displayed', icon: 'check' },
+  read:             { cls: 'status--read',      icon: 'check-circle' },
+};
+const STATUS_FALLBACK = { cls: 'status--failed', icon: 'warning' };
+
+/** 一条消息的 DOM（列表页与首页「最近消息」共用） */
+function buildMsgEl(m) {
+  const el = document.createElement('article');
+  el.className = 'msg';
+  // 颜色只看昵称，不看这条是从网页还是从设备来的
+  el.style.setProperty('--msg-nick', nickColor(m.sender_name));
+
+  const head = document.createElement('div');
+  head.className = 'msg__head';
+
+  const who = document.createElement('span');
+  who.className = 'msg__sender';
+  who.textContent = m.sender_name;
+  head.appendChild(who);
+
+  if (m.sender_kind === 'device') {
+    const badge = document.createElement('span');
+    badge.className = 'msg__badge';
+    badge.textContent = 'PC 回复';
+    head.appendChild(badge);
+  }
+
+  const time = document.createElement('span');
+  time.className = 'msg__time';
+  time.textContent = m.created_at;
+  head.appendChild(time);
+
+  const body = document.createElement('div');
+  body.className = 'msg__body';
+  body.textContent = m.content;
+
+  el.append(head, body);
+
+  // 设备回复的接收方是「Web Sender」统一入口，没有逐设备投递状态
+  if (m.sender_kind !== 'device' && (m.targets || []).length) {
+    const tags = document.createElement('div');
+    tags.className = 'msg__tags';
+    m.targets.forEach((t) => {
+      const dev = state.devices.find((d) => d.device_id === t.device_id);
+      const st = STATUS_STYLE[t.status] || STATUS_FALLBACK;
+      const tag = document.createElement('span');
+      tag.className = 'status ' + st.cls;
+      tag.append(icon(st.icon, 'icon icon--xs'),
+                 Object.assign(document.createElement('span'), {
+                   textContent: `${dev ? dev.name : t.device_id} · ${STATE_LABEL[t.status] || t.status}`,
+                 }));
+      tags.appendChild(tag);
+    });
+    el.appendChild(tags);
+  }
+  return el;
+}
+
 function renderMessages() {
   const box = $('log');
   box.innerHTML = '';
   $('log-empty').hidden = state.messages.length > 0;
-
-  state.messages.forEach((m) => {
-    const el = document.createElement('article');
-    el.className = 'msg';
-    // 颜色只看昵称，不看这条是从网页还是从设备来的
-    el.style.setProperty('--msg-nick', nickColor(m.sender_name));
-
-    const head = document.createElement('div');
-    head.className = 'msg__head';
-
-    const who = document.createElement('span');
-    who.className = 'msg__sender';
-    who.textContent = m.sender_name;
-    head.appendChild(who);
-
-    if (m.sender_kind === 'device') {
-      const badge = document.createElement('span');
-      badge.className = 'msg__badge';
-      badge.textContent = 'PC 回复';
-      head.appendChild(badge);
-    }
-
-    const time = document.createElement('span');
-    time.className = 'msg__time';
-    time.textContent = m.created_at;
-    head.appendChild(time);
-
-    const body = document.createElement('div');
-    body.className = 'msg__body';
-    body.textContent = m.content;
-
-    el.append(head, body);
-
-    // 设备回复的接收方是「Web Sender」统一入口，没有逐设备投递状态
-    if (m.sender_kind !== 'device' && (m.targets || []).length) {
-      const tags = document.createElement('div');
-      tags.className = 'msg__tags';
-      m.targets.forEach((t) => {
-        const dev = state.devices.find((d) => d.device_id === t.device_id);
-        const tag = document.createElement('span');
-        const rank = STATE_ORDER.indexOf(t.status);
-        const label = STATE_LABEL[t.status] || t.status;
-        tag.className = 'msg__tag' + (rank >= 3 ? ' msg__tag--done' : (rank < 2 ? ' msg__tag--fail' : ''));
-        tag.append(icon(rank >= 3 ? 'check' : 'expand', 'md-chip__icon'),
-                   Object.assign(document.createElement('span'), {
-                     textContent: `${dev ? dev.name : t.device_id} · ${label}`,
-                   }));
-        tags.appendChild(tag);
-      });
-      el.appendChild(tags);
-    }
-
-    box.appendChild(el);
-  });
+  state.messages.forEach((m) => box.appendChild(buildMsgEl(m)));
+  renderHomeRecent();
 }
 
-/* ── B8. 截图对话框 ──────────────────────────────────────────── */
+/** 首页只放最近 3 条，完整列表在「消息」页 */
+function renderHomeRecent() {
+  const box = $('home-recent');
+  box.innerHTML = '';
+  const list = state.messages.slice(0, 3);
+  $('home-recent-empty').hidden = list.length > 0;
+  list.forEach((m) => box.appendChild(buildMsgEl(m)));
+}
+
+/* ── B8. 截图页 ──────────────────────────────────────────────── */
 let shotDevice = null;
+
+/** 截图页顶部的设备选择（复用设备数据，不额外请求） */
+function renderShotPicks() {
+  const box = $('shot-picks');
+  box.innerHTML = '';
+
+  if (state.devices.length === 0) {
+    const hint = document.createElement('span');
+    hint.className = 'text-caption text-tertiary';
+    hint.textContent = '还没有设备可用';
+    box.appendChild(hint);
+  }
+
+  state.devices.forEach((d) => {
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'chip';
+    el.setAttribute('aria-pressed', shotDevice && shotDevice.device_id === d.device_id ? 'true' : 'false');
+    const dot = document.createElement('span');
+    dot.className = 'presence ' + (d.online ? 'presence--online' : 'presence--offline');
+    const t = document.createElement('span');
+    t.textContent = d.name;
+    el.append(dot, t);
+    el.onclick = () => openShot(d);
+    box.appendChild(el);
+  });
+
+  $('shot-again').disabled = !shotDevice;
+
+  if (!shotDevice) {
+    $('shot-empty').hidden = false;
+    $('shot-loading').hidden = true;
+    $('shot-img').hidden = true;
+    $('shot-title').textContent = '还没有选择设备';
+    $('shot-meta').textContent = '';
+  }
+}
 
 async function openShot(d) {
   shotDevice = d;
+  go('shot');                     // go() 里会 renderShotPicks()，标记选中的设备
   $('shot-title').textContent = `${d.name} · 桌面`;
   $('shot-meta').textContent = '';
-  openDialog($('dlg-shot'));
   await fetchShot();
 }
 
@@ -718,7 +861,9 @@ async function fetchShot() {
   const img = $('shot-img');
   img.hidden = true;
   img.removeAttribute('src');
+  $('shot-empty').hidden = true;
   $('shot-loading').hidden = false;
+  $('shot-loading').classList.remove('is-error');
   $('shot-loading-text').textContent = '正在获取桌面截图……';
   $('shot-meta').textContent = d.online ? '' : '设备当前离线，可能拿不到截图。';
 
@@ -732,6 +877,7 @@ async function fetchShot() {
     $('shot-meta').textContent = bits.join(' · ')
       + (r.screen_locked ? ' · 屏幕可能处于锁屏状态' : '');
   } catch (e) {
+    $('shot-loading').classList.add('is-error');
     $('shot-loading-text').textContent = '截图失败：' + e.message;
     $('shot-meta').textContent = '';
   }
@@ -757,11 +903,11 @@ async function refreshConversation() {
     box.innerHTML = '';
     if (list.length === 0) {
       const empty = document.createElement('div');
-      empty.className = 'md-empty';
-      empty.appendChild(icon('chat', 'md-icon md-icon--lg'));
+      empty.className = 'empty';
+      empty.appendChild(icon('chat', 'icon icon--lg'));
       empty.append(
-        Object.assign(document.createElement('span'), { className: 'md-empty__title', textContent: '还没有往来消息' }),
-        Object.assign(document.createElement('span'), { className: 'md-empty__hint', textContent: '在下面输入一条，PC 上会立刻弹窗。' }),
+        Object.assign(document.createElement('span'), { className: 'empty__title', textContent: '还没有往来消息' }),
+        Object.assign(document.createElement('span'), { className: 'empty__hint', textContent: '在下面输入一条，PC 上会立刻弹窗。' }),
       );
       box.appendChild(empty);
     }
@@ -806,7 +952,7 @@ async function sendFromConversation() {
 
 /* ── B10. WebSocket 实时事件 ─────────────────────────────────── */
 function setConn(on) {
-  $('ws-dot').className = 'md-dot ' + (on ? 'md-dot--online' : 'md-dot--offline');
+  $('ws-dot').className = 'presence ' + (on ? 'presence--online' : 'presence--offline');
   $('ws-text').textContent = on ? '已连接' : '连接断开，重连中…';
 }
 
@@ -900,7 +1046,7 @@ function renderNamesList() {
   box.innerHTML = '';
   if (names.length === 0) {
     const p = document.createElement('p');
-    p.className = 'md-body-small md-muted';
+    p.className = 'text-caption text-secondary';
     p.textContent = '还没有昵称，先添加一个吧。';
     box.appendChild(p);
     return;
@@ -911,7 +1057,7 @@ function renderNamesList() {
     row.className = 'name-row';
 
     const sw = document.createElement('span');
-    sw.className = 'md-dot';
+    sw.className = 'name-row__swatch';
     sw.style.background = nickColor(name);
 
     const input = document.createElement('input');
@@ -933,10 +1079,9 @@ function renderNamesList() {
 
     const del = document.createElement('button');
     del.type = 'button';
-    del.className = 'md-icon-btn';
+    del.className = 'icon-btn icon-btn--danger';
     del.setAttribute('aria-label', `删除昵称 ${name}`);
-    del.appendChild(icon('delete', 'md-icon md-icon--sm'));
-    del.style.color = 'var(--md-error)';
+    del.appendChild(icon('delete', 'icon icon--sm'));
     del.onclick = () => {
       names.splice(idx, 1);
       if (names.length === 0) names = ['我'];
@@ -998,7 +1143,6 @@ async function loadXiaomi() {
   }
 }
 
-
 async function xmGetUrl() {
   $('xm-url-hint').textContent = '正在获取……';
   try {
@@ -1036,7 +1180,7 @@ async function xmLogout() {
     body: '退出后要重新走一遍浏览器授权流程，已建立的绑定不会丢。',
     okText: '退出',
     danger: true,
-    iconName: 'i-logout',
+    iconName: 'i-sign-out',
   });
   if (!ok) return;
   try {
@@ -1243,14 +1387,15 @@ function renderXmBound() {
   box.innerHTML = '';
   if (!xmBoundList.length) {
     const p = document.createElement('p');
-    p.className = 'md-body-small md-muted';
+    p.className = 'text-caption text-secondary';
     p.textContent = '还没有绑定。上面选好设备、属性和目标值，再选关联的 PC，点「添加绑定」。';
     box.appendChild(p);
     return;
   }
 
-  const sec = document.createElement('span');
-  sec.className = 'md-section-label';
+  const sec = document.createElement('div');
+  sec.className = 'setting-group__title';
+  sec.style.marginTop = 'var(--spacing-lg)';
   sec.textContent = '已建立的绑定（改完即时生效）';
   box.appendChild(sec);
 
@@ -1292,7 +1437,7 @@ function renderXmBound() {
 
     // 属性
     const propPick = document.createElement('div');
-    propPick.className = 'md-select';
+    propPick.className = 'combo';
     const pItems = specs.length ? propItems(specs)
       : [{ value: nowKey, label: `${rowProp.name}（siid=${row.power_siid} piid=${row.power_piid}）` }];
     buildSelect(propPick, pItems, nowKey, (v) => {
@@ -1303,7 +1448,7 @@ function renderXmBound() {
 
     // 值
     const valPick = document.createElement('div');
-    valPick.className = 'md-select';
+    valPick.className = 'combo';
     const vItems = valueItems(rowProp);
     buildSelect(valPick, vItems.length ? vItems : [{ value: '', label: '（无可选值）' }], cur,
       (v) => xmPatch(row, { power_value: v },
@@ -1311,15 +1456,14 @@ function renderXmBound() {
 
     // 关联 PC
     const pcPick = document.createElement('div');
-    pcPick.className = 'md-select';
+    pcPick.className = 'combo';
     buildSelect(pcPick, pcItems, row.target_device_id || '',
       (v) => xmPatch(row, { target_device_id: v }, '已改关联 PC'));
 
     const del = document.createElement('button');
     del.type = 'button';
-    del.className = 'md-btn md-btn--danger-text';
-    del.style.height = '36px';
-    del.append(icon('delete', 'md-btn__icon'),
+    del.className = 'btn btn--danger';
+    del.append(icon('delete', 'btn__icon'),
                Object.assign(document.createElement('span'), { textContent: '删除' }));
     del.onclick = () => xmUnbind(row);
 
@@ -1364,13 +1508,12 @@ async function xmUnbind(row) {
   }
 }
 
-/* ── B13. 设置面板 ───────────────────────────────────────────── */
-function openSettings() {
+/* ── B13. 设置页 ─────────────────────────────────────────────── */
+/** 进入设置页时刷新这一段内容（设备列表可能变了） */
+function enterSettings() {
   renderModeRow();
-  renderSchemeGrid();
   renderNamesList();
-  loadXiaomi();          // 米家那块也要刷新（设备列表可能变了）
-  openDialog($('dlg-settings'));
+  loadXiaomi();
 }
 
 function renderModeRow() {
@@ -1380,39 +1523,13 @@ function renderModeRow() {
   MODES.forEach((m) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'md-btn ' + (m.id === cur ? 'md-btn--tonal' : 'md-btn--outlined');
+    b.className = 'choice';
     b.setAttribute('role', 'radio');
     b.setAttribute('aria-checked', m.id === cur ? 'true' : 'false');
-    b.append(icon(m.icon, 'md-btn__icon'),
+    b.append(icon(m.icon, 'icon icon--sm'),
              Object.assign(document.createElement('span'), { textContent: m.name }));
     b.onclick = () => { applyMode(m.id, true); renderModeRow(); };
     box.appendChild(b);
-  });
-}
-
-function renderSchemeGrid() {
-  const box = $('scheme-grid');
-  box.innerHTML = '';
-  const cur = loadScheme();
-  SCHEMES.forEach((s) => {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'scheme-item';
-    el.setAttribute('role', 'radio');
-    el.setAttribute('aria-checked', s.id === cur ? 'true' : 'false');
-    el.setAttribute('aria-label', `配色 ${s.name}`);
-
-    const sw = document.createElement('span');
-    sw.className = 'scheme-item__sw';
-    sw.style.background = schemeColor(s.id, 'primary');
-
-    const lb = document.createElement('span');
-    lb.className = 'scheme-item__t';
-    lb.textContent = s.name;
-
-    el.append(sw, lb);
-    el.onclick = () => { applyScheme(s.id, true); renderSchemeGrid(); };
-    box.appendChild(el);
   });
 }
 
@@ -1428,11 +1545,18 @@ $('btn-refresh').onclick = () => {
   Promise.all([loadDevices(), loadMessages()]).then(() => snack('已刷新'));
 };
 $('btn-history').onclick = () => { state.limit += 30; loadMessages(); };
+$('home-more').onclick = () => go('messages');
 
-$('shot-close').onclick = () => closeDialog($('dlg-shot'));
-$('shot-done').onclick = () => closeDialog($('dlg-shot'));
+/* 导航（左导航 + 底部导航共用同一套 data-page 按钮） */
+document.querySelectorAll('[data-page]').forEach((b) => {
+  b.onclick = () => go(b.dataset.page);
+});
+$('nav-toggle').onclick = () => {
+  if ($('app-shell').classList.contains('nav-open')) closeNavDrawer(); else openNavDrawer();
+};
+$('nav-scrim').onclick = closeNavDrawer;
+
 $('shot-again').onclick = fetchShot;
-$('dlg-shot').onclick = (e) => { if (e.target.id === 'dlg-shot') closeDialog($('dlg-shot')); };
 
 $('conv-close').onclick = () => { closeDialog($('dlg-conv')); convDevice = null; };
 $('dlg-conv').onclick = (e) => { if (e.target.id === 'dlg-conv') { closeDialog($('dlg-conv')); convDevice = null; } };
@@ -1444,9 +1568,7 @@ $('content').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
 });
 
-$('btn-settings').onclick = openSettings;
-$('settings-close').onclick = () => closeDialog($('dlg-settings'));
-$('dlg-settings').onclick = (e) => { if (e.target.id === 'dlg-settings') closeDialog($('dlg-settings')); };
+$('btn-settings').onclick = () => go('settings');
 $('name-add').onclick = addName;
 $('name-new').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addName(); }
