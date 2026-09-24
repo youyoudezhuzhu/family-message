@@ -48,7 +48,11 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          Compress-Archive -Path publish/FamilyAgent.exe `
+          # ★ 不能只打包 exe：壳需要同目录下的 shell/ 里的本地兜底页
+          #   （boot.html 首屏 / offline.html 连不上服务端时的配置页）。
+          #   只压 exe 的话，服务端一旦连不上，用户看到的就是白屏。
+          Get-ChildItem publish -Recurse | Select-Object FullName
+          Compress-Archive -Path publish/* `
             -DestinationPath FamilyAgent-win-x64.zip -Force
 
       - name: Upload artifact
