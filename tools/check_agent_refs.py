@@ -2,11 +2,11 @@
 """Windows Agent 的静态引用检查 —— 在编译前跑，提前抓出「运行期才会炸」的错误。
 
 为什么需要它：本地没有 .NET 工具链，改 C# 只能靠云端编译验证，一轮往返好几分钟；
-而更麻烦的是**有些错误编译能过、运行时才炸**。下面这条就是典型：
+而更麻烦的是**有些错误编译能过、运行时才炸**。下面这条就是典型（现已随 WPF 手绘界面
+一起删除，但规则留着，将来再写 XAML 一样会踩）：
 
     System.InvalidCastException: Specified cast is not valid.
        at System.Windows.Controls.Border.get_CornerRadius()
-       at FamilyAgent.PopupWindow.EnsureShown()
 
 根因是 {x:Static} 把一个 double 常量塞给了 Border.CornerRadius（类型是
 CornerRadius 结构）—— x:Static 的返回值**不走类型转换**，WPF 原样存进去，
@@ -17,14 +17,21 @@ CornerRadius 结构）—— x:Static 的返回值**不走类型转换**，WPF �
 用 [.] 代替 \\.），因为这类脚本很容易在多层转义中被写成双反斜杠而悄悄失效。
 
 检查项：
-  1. .cs 里 MdTheme.X / MdTheme.Type.X / MdTheme.Shape.X 引用都存在
-  2. .xaml 里 local:MdTheme.X 引用都存在
-  3. XAML 的 x:Static 不支持嵌套类型（MC3050）
-  4. ★ x:Static 的常量类型必须匹配目标属性（防止 InvalidCastException）
-  5. XAML 用的 DynamicResource 键都已在 MdTheme 中定义
-  6. XAML 的 x:Name 控件、事件处理函数都有对应实现
-  7. using 覆盖（本项目 ImplicitUsings=disable）
-  8. 花括号平衡 / XAML 是合法 XML
+  1. .cs 花括号平衡
+  2. using 覆盖（本项目 ImplicitUsings=disable）
+  3. XAML 是合法 XML
+  4. x:Static 引用的成员必须真的存在（本目录所有 .cs 里的 public/internal static 成员）
+  5. ★ x:Static 的常量类型必须匹配目标属性（防止 InvalidCastException）
+  6. x:Static 不能访问嵌套类型（MC3050）
+  7. XAML 的 x:Name 控件、事件处理函数都有对应实现
+  8. ★ 跨类调用缺少类名前缀（CS0103）
+  9. 已删除的手绘 UI（PopupWindow / MdTheme / MessageCard / MdPalette）不能有残留引用
+ 10. csproj 必须引 WebView2（固定版本）并把 web/shell 的页面复制到输出目录
+
+变更记录：
+  2026-09-24 PC 端改为 WebView2 壳：删掉 MdTheme 成员/Type/Shape/DynamicResource 那几项
+  （MdTheme.cs 已删除，留着只会报假错），第 4/5 项改成不依赖具体某个类的通用规则；
+  新增第 9/10 项，防止手绘 UI 或被删的文件又悄悄回来。
 
 用法：python3 tools/check_agent_refs.py [pc-agent/FamilyAgent]
 退出码 0 = 全通过，1 = 有问题。
@@ -47,7 +54,6 @@ ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else "pc-agent/FamilyAgent")
 # 反斜杠免疫的通用片段
 IDENT = r"[A-Za-z_][A-Za-z0-9_]*"          # 标识符
 WS = r"[ \t]*"                              # 空白
-QUAL = IDENT + r"(?:[.]" + IDENT + r")*"    # 限定名 Foo.Bar.Baz
 
 # XAML 里 {x:Static} 的常量类型必须和目标属性一致，否则运行期拆箱失败
 PROP_TYPES = {
@@ -74,164 +80,8 @@ NEEDS = [
     ("StringInfo", "System.Globalization"),
 ]
 
-errors: list[str] = []
-
-
-def main() -> int:
-    theme_path = ROOT / "MdTheme.cs"
-    if not theme_path.exists():
-        print(f"找不到 {theme_path}")
-        return 1
-    theme = theme_path.read_text(encoding="utf-8")
-
-    # ── 收集 MdTheme 的公开成员 + 各自的声明类型 ──
-    # 逐行解析，不用一个大正则：正则在类型名/泛型上很容易贪婪跑偏，
-    # 而且一旦写错就是「悄悄少认几个成员」，反而制造出假的「成员不存在」。
-    members: set[str] = set()
-    declared: dict[str, str] = {}
-
-    for raw in theme.splitlines():
-        line = raw.strip()
-        if not line.startswith("public "):
-            continue
-
-        rest = line[len("public "):]
-        # 名称 = 等号 / 分号 / 大括号 / 左括号 / 箭头 之前的最后一个标识符
-        cut = len(rest)
-        for sep in ("=", ";", "{", "(", "=>"):
-            i = rest.find(sep)
-            if i >= 0:
-                cut = min(cut, i)
-        head = rest[:cut].strip()
-        if not head:
-            continue
-
-        # 形如 "static readonly CornerRadius RadiusFull" → 最后一个标识符是名字
-        ids = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", head)
-        if not ids:
-            continue
-        name = ids[-1]
-        members.add(name)
-
-        # 类型（倒数第二个标识符，尽力而为即可 —— 只用于类型匹配检查）
-        skip = {"static", "readonly", "const", "sealed", "override", "virtual",
-                "abstract", "partial", "async", "record", "class", "struct", "enum"}
-        types = [i for i in ids[:-1] if i not in skip]
-        if types:
-            declared.setdefault(name, types[-1])
-
-    # 嵌套类
-    for m in re.finditer(r"public[ \t]+static[ \t]+class[ \t]+([A-Za-z_][A-Za-z0-9_]*)", theme):
-        members.add(m.group(1))
-
-    # Type / Shape 里的常量
-    type_block = theme.split("public static class Type")[1].split("public static class Shape")[0]
-    shape_block = theme.split("public static class Shape")[1].split("// ── 给 XAML 用")[0]
-    type_members = set(re.findall(r"public[ \t]+const[ \t]+double[ \t]+(" + IDENT + r")", type_block))
-    shape_members = set(re.findall(r"public[ \t]+const[ \t]+double[ \t]+(" + IDENT + r")", shape_block))
-
-    # ── ① .cs 检查 ──
-    for f in sorted(ROOT.glob("*.cs")):
-        txt = f.read_text(encoding="utf-8")
-
-        for m in set(re.findall(r"(?<![A-Za-z0-9_.])MdTheme[.](" + IDENT + r")", txt)):
-            if m not in members and m not in ("Type", "Shape"):
-                errors.append(f"{f.name}: 引用了不存在的 MdTheme.{m}")
-        for m in set(re.findall(r"MdTheme[.]Type[.](" + IDENT + r")", txt)):
-            if m not in type_members:
-                errors.append(f"{f.name}: 引用了不存在的 MdTheme.Type.{m}")
-        for m in set(re.findall(r"MdTheme[.]Shape[.](" + IDENT + r")", txt)):
-            if m not in shape_members:
-                errors.append(f"{f.name}: 引用了不存在的 MdTheme.Shape.{m}")
-
-        lines = txt.splitlines()
-        usings = {
-            re.sub(r"^[ \t]*using[ \t]+(?:static[ \t]+)?|;[ \t]*$", "", ln)
-            for ln in lines if ln.strip().startswith("using ")
-        }
-        body = "\n".join(ln for ln in lines if not ln.strip().startswith("using "))
-        for token, ns in NEEDS:
-            if ns in usings:
-                continue
-            # 只看「未限定」用法：System.IO.Path. 这种全限定名不需要 using，
-            # 而且是刻意为之（避免和 WPF 的 System.Windows.Shapes.Path 撞名）
-            if not re.search(r"(?<![A-Za-z0-9_.])" + re.escape(token), body):
-                continue
-            errors.append(f"{f.name}: 用到 {token} 但缺 using {ns}")
-
-        if txt.count("{") != txt.count("}"):
-            errors.append(f"{f.name}: 花括号不平衡 {txt.count('{')}/{txt.count('}')}")
-
-    # ── ② XAML 检查 ──
-    for xf in sorted(ROOT.glob("*.xaml")):
-        xaml = xf.read_text(encoding="utf-8")
-        try:
-            ET.fromstring(xaml)
-        except ET.ParseError as e:
-            errors.append(f"{xf.name}: 不是合法 XML —— {e}")
-
-        for ref in set(re.findall(r"local:MdTheme[.](" + IDENT + r")", xaml)):
-            if ref not in members:
-                errors.append(f"{xf.name}: 引用了不存在的 MdTheme.{ref}")
-
-        # ③ x:Static 不能访问嵌套类型
-        for nested in set(re.findall(r"local:MdTheme[.](Type|Shape)[.]", xaml)):
-            errors.append(f"{xf.name}: x:Static 不能访问嵌套类型 MdTheme.{nested}"
-                          f"（会报 MC3050），请改用扁平常量")
-
-        # ④ ★ 类型匹配：编译能过，但运行期会 InvalidCastException
-        # 注意属性值外面有引号：CornerRadius="{x:Static local:MdTheme.RadiusFull}"
-        static_re = (r"(" + IDENT + r")" + WS + r'=[ \t]*"[{]x:Static local:MdTheme[.]'
-                     + r"(" + IDENT + r")[}][\"]")
-        for prop, member in re.findall(static_re, xaml):
-            want = PROP_TYPES.get(prop)
-            got = declared.get(member)
-            if want and got and got != want:
-                errors.append(
-                    f"{xf.name}: {prop}={{x:Static MdTheme.{member}}} 类型不匹配 —— "
-                    f"{prop} 需要 {want}，而 {member} 声明成了 {got}"
-                    f"（x:Static 不做类型转换，运行期会抛 InvalidCastException）")
-
-        # ⑤ DynamicResource 键必须存在
-        defined = set(re.findall(r'[(]"(Md' + IDENT + r')"', theme))
-        defined |= set(re.findall(r'map\["(Md' + IDENT + r')"\]', theme))
-        defined |= set(re.findall(r'\["(Md' + IDENT + r')"\][ \t]*=', theme))
-        for key in set(re.findall(r"[{]DynamicResource[ ]+(" + IDENT + r")[}]", xaml)):
-            if key not in defined:
-                errors.append(f"{xf.name}: DynamicResource {key} 在 MdTheme 里没有定义")
-
-        # ⑥ 控件名 / 事件处理函数
-        cs_name = xf.with_suffix(".xaml.cs")
-        if cs_name.exists():
-            cs = cs_name.read_text(encoding="utf-8")
-            names = set(re.findall(r'x:Name="(' + IDENT + r')"', xaml))
-            used = set(re.findall(
-                r"(?<![A-Za-z0-9_.\"])([A-Z]" + IDENT[1:] + r")[.](?:Children|Visibility|Text"
-                r"|IsChecked|Items|Content|SelectedIndex|ItemsSource|Background|Foreground)", cs))
-            for u in sorted(used - names - NOT_A_CONTROL):
-                errors.append(f"{cs_name.name}: 用到控件 {u}，但 {xf.name} 里没有 x:Name=\"{u}\"")
-            handlers = set(re.findall(
-                r'(?:Click|KeyDown|KeyUp|SelectionChanged|Checked|Unchecked'
-                r'|TextChanged|MouseDown)="(' + IDENT + r')"', xaml))
-            for h in sorted(handlers):
-                if not re.search(r"void[ \t]+" + h + r"[ \t]*[(]", cs):
-                    errors.append(f"{cs_name.name}: 事件 {h} 没有实现")
-
-    print(f"  MdTheme 公开成员 {len(members)} 个｜Type 档位 {len(type_members)}｜"
-          f"Shape 档位 {len(shape_members)}｜已识别类型 {len(declared)} 个")
-    if errors:
-        print(f"\n发现 {len(errors)} 个问题：")
-        for e in errors:
-            print("  ✗ " + e)
-        return 1
-    print("  ✓ 静态引用检查全部通过")
-
-    # ── 跨类调用检查（防 CS0103，省一轮云端编译）──
-    if check_cross_class_calls() != 0:
-        return 1
-
-    return 0
-
+# 已经删掉的手绘 UI —— 这些名字再出现就是没删干净（注释里不算）
+REMOVED_UI = ("PopupWindow", "MdTheme", "MessageCard", "MdPalette")
 
 # 控件名检查的白名单：这些是 .NET 类型/命名空间，也会以 X.Something 出现，但不是 x:Name
 NOT_A_CONTROL = {
@@ -253,8 +103,192 @@ NOT_A_CONTROL = {
     "EasingMode", "StringComparison", "Uri", "Encoding", "Bitmap", "BitmapImage",
     "Cursors", "Points", "PixelFormats", "RenderTargetBitmap", "PngBitmapEncoder",
     "Screen", "Rectangle", "Graphics", "EventArgs", "Console", "CornerRadius",
-    "AgentLog", "PowerControl", "AutoStart", "ScreenCapture", "MdTheme", "MdPalette",
+    "AgentLog", "PowerControl", "AutoStart", "ScreenCapture",
 }
+
+errors: list[str] = []
+
+# public/internal [static] [readonly|const] 类型 名字
+_STATIC_DECL = re.compile(
+    r"^(?:public|internal)[ \t]+(?:static[ \t]+)?(?:readonly[ \t]+|const[ \t]+)?"
+    r"([A-Za-z_][A-Za-z0-9_<>,\[\]\.\?]*)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+    r"[ \t]*(?:=>|=|;|\{|\()"
+)
+_CLASS_DECL = re.compile(
+    r"(?:(?:public|private|protected|internal|static|sealed|abstract|partial)[ \t]+)*"
+    r"(?:class|struct|record|interface)[ \t]+([A-Za-z_][A-Za-z0-9_]*)"
+)
+
+
+def strip_comments(src: str) -> str:
+    """去掉注释与字符串字面量内容（跨类调用 / 残留检查都只看真代码）。"""
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    src = re.sub(r"//[^\n]*", " ", src)
+    src = re.sub(r'@"(?:[^"]|"")*"', '""', src, flags=re.S)
+    src = re.sub(r'\$?"(?:\\.|[^"\\])*"', '""', src)
+    return src
+
+
+def collect_static_members() -> dict:
+    """本目录所有 .cs 里的 public/internal 静态成员 → {(类名, 成员名): 类型}。
+
+    只用于 x:Static 检查（XAML 只能引用公开的静态成员）。
+    """
+    members: dict = {}
+    for f in sorted(ROOT.glob("*.cs")):
+        text = strip_comments(f.read_text(encoding="utf-8", errors="replace"))
+        cur_class = ""
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            m = _CLASS_DECL.match(line)
+            if m:
+                cur_class = m.group(1)
+                continue
+            m = _STATIC_DECL.match(line)
+            if m:
+                type_name, name = m.group(1), m.group(2)
+                if name in ("var", "int", "string", "bool", "double", "void", "object"):
+                    continue
+                members.setdefault((cur_class, name), type_name)
+    return members
+
+
+def main() -> int:
+    if not ROOT.exists():
+        print(f"找不到 {ROOT}")
+        return 1
+
+    cs_files = sorted(ROOT.glob("*.cs"))
+    xaml_files = sorted(ROOT.glob("*.xaml"))
+    if not cs_files:
+        print(f"{ROOT} 下没有 .cs 文件")
+        return 1
+
+    static_members = collect_static_members()
+
+    # ── ① .cs：花括号平衡 + using 覆盖 ──
+    for f in cs_files:
+        txt = f.read_text(encoding="utf-8", errors="replace")
+        if txt.count("{") != txt.count("}"):
+            errors.append(f"{f.name}: 花括号不平衡 {txt.count('{')}/{txt.count('}')}")
+
+        lines = txt.splitlines()
+        usings = {
+            re.sub(r"^[ \t]*using[ \t]+(?:static[ \t]+)?|;[ \t]*$", "", ln)
+            for ln in lines if ln.strip().startswith("using ")
+        }
+        body = "\n".join(ln for ln in lines if not ln.strip().startswith("using "))
+        for token, ns in NEEDS:
+            if ns in usings:
+                continue
+            # 只看「未限定」用法：System.IO.Path. 这种全限定名不需要 using，
+            # 而且是刻意为之（避免和 WPF 的 System.Windows.Shapes.Path 撞名）
+            if not re.search(r"(?<![A-Za-z0-9_.])" + re.escape(token), body):
+                continue
+            errors.append(f"{f.name}: 用到 {token} 但缺 using {ns}")
+
+    # ── ② XAML 检查 ──
+    for xf in xaml_files:
+        xaml = xf.read_text(encoding="utf-8", errors="replace")
+        try:
+            ET.fromstring(xaml)
+        except ET.ParseError as e:
+            errors.append(f"{xf.name}: 不是合法 XML —— {e}")
+
+        # ④ x:Static 引用的成员必须存在（重建 MdTheme 时代的等价规则，但不再绑定某个类）
+        for cls, member in set(re.findall(
+                r"x:Static[ ]+local:(" + IDENT + r")[.](" + IDENT + r")[}]", xaml)):
+            if (cls, member) not in static_members:
+                errors.append(f"{xf.name}: x:Static local:{cls}.{member} 找不到对应的"
+                              f" public/internal 静态成员（该名字被改名或删除了？）")
+
+        # ⑤ ★ 类型匹配：编译能过，但运行期会 InvalidCastException
+        # 注意属性值外面有引号：CornerRadius="{x:Static local:MdTheme.RadiusFull}"
+        static_re = (r"(" + IDENT + r")" + WS + r'=[ \t]*"[{]x:Static local:'
+                     + r"(" + IDENT + r")[.](" + IDENT + r")[}][\"]")
+        for prop, cls, member in re.findall(static_re, xaml):
+            want = PROP_TYPES.get(prop)
+            got = static_members.get((cls, member))
+            if want and got and got != want:
+                errors.append(
+                    f"{xf.name}: {prop}={{x:Static local:{cls}.{member}}} 类型不匹配 —— "
+                    f"{prop} 需要 {want}，而 {member} 声明成了 {got}"
+                    f"（x:Static 不做类型转换，运行期会抛 InvalidCastException）")
+
+        # ⑥ x:Static 不能访问嵌套类型（MC3050）
+        for cls, nested in set(re.findall(
+                r"x:Static[ ]+local:(" + IDENT + r")[.](" + IDENT + r")[.]", xaml)):
+            errors.append(f"{xf.name}: x:Static 不能访问嵌套类型 {cls}.{nested}"
+                          f"（会报 MC3050），请改用扁平常量")
+
+        # ⑦ 控件名 / 事件处理函数
+        cs_name = xf.with_suffix(".xaml.cs")
+        if cs_name.exists():
+            cs = cs_name.read_text(encoding="utf-8", errors="replace")
+            names = set(re.findall(r'x:Name="(' + IDENT + r')"', xaml))
+            # ⚠ 原本这里是 ([A-Z] + IDENT[1:])，靠切掉 IDENT 的首字符拼出类名 —— 拼出来的
+            #   模式是坏的（[A-Z]A-Za-z_]...），这个检查其实**从来没生效过**。改成直白的
+            #   大写开头标识符，别再用字符串拼接取巧。
+            used = set(re.findall(
+                r'(?<![A-Za-z0-9_."])([A-Z][A-Za-z0-9_]*)[.](?:Children|Visibility|Text'
+                r'|IsChecked|Items|Content|SelectedIndex|ItemsSource|Background|Foreground)', cs))
+            for u in sorted(used - names - NOT_A_CONTROL):
+                errors.append(f"{cs_name.name}: 用到控件 {u}，但 {xf.name} 里没有 x:Name=\"{u}\"")
+            handlers = set(re.findall(
+                r'(?:Click|KeyDown|KeyUp|SelectionChanged|Checked|Unchecked'
+                r'|TextChanged|MouseDown|RequestNavigate)="(' + IDENT + r')"', xaml))
+            for h in sorted(handlers):
+                if not re.search(r"void[ \t]+" + h + r"[ \t]*[(]", cs):
+                    errors.append(f"{cs_name.name}: 事件 {h} 没有实现")
+
+    # ── ③ 已删除的手绘 UI 不能有残留引用 ──
+    for f in sorted(list(ROOT.glob("*.cs")) + list(ROOT.glob("*.xaml"))):
+        text = f.read_text(encoding="utf-8", errors="replace")
+        if f.suffix == ".xaml":
+            # XAML 注释 <!-- --> 里的说明不算引用
+            text = re.sub(r"<!--.*?-->", " ", text, flags=re.S)
+        else:
+            text = strip_comments(text)
+        for token in REMOVED_UI:
+            if token in text:
+                errors.append(f"{f.name}: 还引用着已删除的 {token}（PC 端界面已改为 WebView2 壳，"
+                              f"见 docs/PC-WEBVIEW2-REWRITE.md）")
+
+    # ── csproj：WebView2 包 + 本地页面随 exe 发布 ──
+    csproj = ROOT / "FamilyAgent.csproj"
+    if csproj.exists():
+        proj = csproj.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'PackageReference[ \t]+Include="Microsoft[.]Web[.]WebView2"[ \t]+Version="([^"]+)"', proj)
+        if not m:
+            errors.append("FamilyAgent.csproj: 少了 Microsoft.Web.WebView2 包引用（壳模式必需）")
+        elif "*" in m.group(1):
+            errors.append("FamilyAgent.csproj: WebView2 用了浮动版本 "
+                          f"{m.group(1)}，云编译不可复现，请写死版本号")
+        if not re.search(r"Content[ \t]+Include=" + r'"[^"]*web\\shell[^"]*"', proj):
+            errors.append("FamilyAgent.csproj: 没把 web/shell 的本地页面复制到输出目录 "
+                          "（boot/offline 页会缺失）")
+        elif "CopyToOutputDirectory" not in proj:
+            errors.append("FamilyAgent.csproj: shell 的 Content 没有 CopyToOutputDirectory"
+                          "（会只列不复制）")
+    else:
+        errors.append("找不到 FamilyAgent.csproj")
+
+    print(f"  静态成员 {len(static_members)} 个｜.cs {len(cs_files)} 个｜.xaml {len(xaml_files)} 个")
+    if errors:
+        print(f"\n发现 {len(errors)} 个问题：")
+        for e in errors:
+            print("  ✗ " + e)
+        return 1
+    print("  ✓ 静态引用检查全部通过")
+
+    # ── 跨类调用检查（防 CS0103，省一轮云端编译）──
+    if check_cross_class_calls() != 0:
+        return 1
+
+    return 0
+
 
 # ═══════════════════════════════════════════════════════════════════
 #  跨类调用检查（CS0103）
@@ -263,7 +297,7 @@ NOT_A_CONTROL = {
 #  跑完才知道 —— 一轮 3 分钟，而且编译器的报错位置离真正原因很远。
 #  实际踩过的例子：
 #      error CS0103: The name 'ToFluent' does not exist in the current context
-#  原因只是 ToFluent 定义在 App 里，从 PopupWindow 调用时漏了 App. 前缀。
+#  原因只是 ToFluent 定义在 App 里，从别的类调用时漏了 App. 前缀。
 #
 #  规则：在文件 F 里看到一次「不加限定的调用 Ident(...)」，而 Ident 只被
 #  其它文件的类定义过 —— 那就是编译错误。
@@ -281,16 +315,6 @@ _NOT_A_CALL = {
     "while", "do", "else", "get", "set", "throw", "await", "yield", "case", "when",
     "stackalloc", "in", "out", "ref", "params", "is", "as", "this", "base",
 }
-
-
-def _strip_comments(src: str) -> str:
-    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
-    src = re.sub(r"//[^\n]*", " ", src)
-    # 字符串字面量里的内容不算代码
-    src = re.sub(r'@"(?:[^"]|"")*"', '""', src, flags=re.S)
-    src = re.sub(r'\$?"(?:\\.|[^"\\])*"', '""', src)
-    return src
-
 
 # C# 关键字/内建类型名，不能当成员名
 _CS_KEYWORDS = {
@@ -342,7 +366,7 @@ def _file_decls(src: str) -> dict:
                 decls[name] = cur_class
             continue
 
-        # 本地函数 / 委托赋值：名字 = ( 或 名字 => 
+        # 本地函数 / 委托赋值：名字 = ( 或 名字 =>
         m = re.search(r"\b(" + _ID + r")\s*=\s*(?:\([^)]*\)\s*=>|delegate|async)", line)
         if m and m.group(1) not in _CS_KEYWORDS:
             decls[m.group(1)] = cur_class
@@ -358,7 +382,7 @@ def check_cross_class_calls() -> int:
 
     decls_by_file = {}
     for f in files:
-        decls_by_file[f] = _file_decls(_strip_comments(
+        decls_by_file[f] = _file_decls(strip_comments(
             f.read_text(encoding="utf-8", errors="replace")))
 
     # 某个名字被哪些「文件」定义过（同文件内多类一律放过，避免嵌套类误报）
@@ -370,7 +394,7 @@ def check_cross_class_calls() -> int:
     bad = []
     for f in files:
         mine = set(decls_by_file[f])
-        src = _strip_comments(f.read_text(encoding="utf-8", errors="replace"))
+        src = strip_comments(f.read_text(encoding="utf-8", errors="replace"))
         # 收集本文件的局部变量/参数名，避免把变量当方法
         locals_ = set(re.findall(r"\b(?:var|" + _ID + r"(?:<[^>]*>)?)\s+(" + _ID + r")\s*=", src))
         locals_ |= set(re.findall(r"\b(" + _ID + r")\s*=>", src))

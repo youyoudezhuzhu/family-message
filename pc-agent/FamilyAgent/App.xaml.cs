@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,7 +22,7 @@ public partial class App : Application
 
     private Mutex? _singleInstance;
     private WinForms.NotifyIcon? _tray;
-    private PopupWindow? _popup;
+    private WebHostWindow? _host;
     private string? _pendingReplyClientId;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -78,9 +77,8 @@ public partial class App : Application
         Config = AgentConfig.Load();
 
         // ── 启用 WPF 内置 Fluent 主题 ─────────────────────────────
-        // 只设 ThemeMode 还不够：真正生效的前提是**不要再给控件手写 ControlTemplate**，
-        // 否则自定义模板会盖过 Fluent 的样式。所以 PopupWindow.xaml 里那些
-        // 手写的 Button/TextBox/ComboBox/CheckBox 模板已全部删除。
+        // 界面现在全在 WebView2 里由网页渲染（真正的明暗由页面的 prefers-color-scheme
+        // 决定），这里保留只为「缺 WebView2 Runtime 时的本地提示页」不至于刺眼。
         //
         // ⚠️ 这段必须在 AgentConfig.Load() **之后**：之前写在前面，
         //    读到的是还没加载的默认 Config，用户的明暗偏好根本没生效。
@@ -95,8 +93,8 @@ public partial class App : Application
             AgentLog.Write("启用 Fluent 主题失败（继续用默认主题）：" + ex.Message);
         }
 
-        MdTheme.Apply(Config.ThemeId, Config.ThemeMode);
-        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} theme={MdTheme.CurrentId} agent={AgentClient.ReportedVersion} ===");
+        AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} "
+                       + $"theme={Config.ThemeMode} agent={AgentClient.ReportedVersion} ===");
         Client = new AgentClient(Config);
         Client.ConnectionChanged += OnConnectionChanged;
         Client.MessageReceived += OnMessageReceived;
@@ -131,41 +129,22 @@ public partial class App : Application
         // 交互式实例：持续写心跳，让 headless 实例知道有人在用桌面、该让位了
         Presence.StartHeartbeat();
 
-        // 系统主题/强调色变化时重新取一次色。
-        // MdTheme 的颜色来自 Fluent 主题字典，是**当时**取到的画刷对象；
-        // Windows 切换明暗或主题色后，不去重取就会一直用旧颜色。
-        Microsoft.Win32.SystemEvents.UserPreferenceChanged += (_, e) =>
-        {
-            try
-            {
-                Dispatcher.Invoke(() =>
-                {
-                    MdTheme.Apply(Config.ThemeId, Config.ThemeMode);
-                    _popup?.RefreshCardThemes();
-                });
-            }
-            catch (Exception ex)
-            {
-                AgentLog.Write("跟随系统主题变化失败：" + ex.Message);
-            }
-        };
+        // 系统主题变化不再需要在宿主里做任何事：界面在网页里，
+        // 页面自己监听 prefers-color-scheme；本地提示页由 WPF 的 ThemeMode.System 跟。
 
         SetupTray();
 
-        // --tray：开机自启时静默进托盘；手动启动则直接打开消息界面
+        // --tray：开机自启时静默进托盘；手动启动则直接打开界面
         var silent = HasArg(e.Args, "--tray");
         if (!Config.IsConfigured)
-            ShowSettings();          // 还没配置过 → 直接进设置页
+            ShowSettings();          // 还没配置过 → 直接进控制台
         else if (!silent)
             ShowConversation();      // 打开就是消息界面，设置在右上角
     }
 
     /// <summary>
-    /// 把本机的明暗偏好转成 WPF 的 ThemeMode。
-    ///
-    /// ⚠️ 必须和 MdTheme 用同一个偏好：应用自己的面板颜色由 MdTheme 决定，
-    /// 而按钮/输入框等标准控件由 Fluent 决定 —— 两边明暗不一致的话，
-    /// 会出现「浅色控件压在深色背景上」的错配。
+    /// 把本机的明暗偏好转成 WPF 的 ThemeMode（只影响缺 WebView2 Runtime 时的本地提示页；
+    /// 页面主题由页面自己决定）。
     /// </summary>
     internal static ThemeMode ToFluent(string? pref) => (pref ?? "system").Trim().ToLowerInvariant() switch
     {
@@ -195,15 +174,8 @@ public partial class App : Application
         return false;
     }
 
-    // ---------------- 弹窗（全局复用同一个窗口）----------------
+    // ---------------- 壳窗口（全局复用同一个窗口）----------------
 
-    /// <summary>
-    /// 取（必要时创建）唯一的消息窗口。
-    ///
-    /// 创建失败时**不能只是静默**：之前窗口建不起来，用户看到的现象是
-    /// 「点菜单没反应」，而异常被全局兜底吞掉，连日志都要翻文件才知道 ——
-    /// 所以这里既写日志也弹框，把原因直接摆到用户面前。
-    /// </summary>
     private static bool _reportedOnce;
 
     /// <summary>把异常摆到用户面前（只弹第一次，避免连环弹窗刷屏）。</summary>
@@ -221,49 +193,88 @@ public partial class App : Application
         catch { /* 连弹框都失败就只留日志 */ }
     }
 
-    private PopupWindow? EnsurePopup()
+    /// <summary>
+    /// 取（必要时创建）唯一的界面窗口。
+    ///
+    /// 创建失败时**不能只是静默**：之前窗口建不起来，用户看到的现象是
+    /// 「点菜单没反应」，而异常被全局兜底吞掉，连日志都要翻文件才知道 ——
+    /// 所以这里既写日志也弹框，把原因直接摆到用户面前。
+    /// </summary>
+    private WebHostWindow? EnsureHost()
     {
-        if (_popup is not null)
-            return _popup;
+        if (_host is not null)
+            return _host;
 
         try
         {
-            return CreatePopup();
+            _host = CreateHost();
+            return _host;
         }
         catch (Exception ex)
         {
-            AgentLog.Write("!! 创建消息窗口失败：" + ex);
-            ReportOnce("打开消息窗口失败", ex);
+            AgentLog.Write("!! 创建 WebView2 壳窗口失败：" + ex);
+            ReportOnce("打开界面失败", ex);
             return null;
         }
     }
 
-    private PopupWindow CreatePopup()
+    private WebHostWindow CreateHost()
     {
-        var popup = new PopupWindow();
-        popup.Acknowledged += id => Client.Ack(id, "read");
-        popup.RetryAck += id => Client.Ack(id, "read");
-        popup.ReplyRequested += OnReplyRequested;
-        popup.ReplyNameChanged += OnReplyNameChanged;
-        popup.SettingsSaved += OnSettingsSaved;
-        popup.SetReplyNames(Config.ReplyNames, Config.ReplyName);
-        popup.SetConfig(Config);
-        _popup = popup;
+        var host = new WebHostWindow();
 
-        return popup;
+        // 页面回报「这条消息真的画到屏幕上了」→ 才回报 popup_displayed。
+        // （不能提前回报：页面一次渲染都没发生就回报，是谎报。）
+        host.MessageAcked += id =>
+        {
+            try { Client.Ack(id, "popup_displayed"); }
+            catch (Exception ex) { AgentLog.Write("回报 popup_displayed 失败：" + ex.Message); }
+        };
+
+        // 关窗 / 自动关闭 / Alt+F4（含页面点「知道了」）→ 这些未读按「已读」回报
+        host.Dismissed += id =>
+        {
+            try { Client.Ack(id, "read"); }
+            catch (Exception ex) { AgentLog.Write("回报已读失败：" + ex.Message); }
+        };
+
+        // ── 页面 → 宿主：每一条都落到原来那套逻辑上，语义不变 ──
+        host.Bridge.ReplyReceived += OnReplyRequested;
+        host.Bridge.ScreenshotRequested += OnLocalScreenshotRequested;
+        host.Bridge.ActionRequested += OnLocalActionRequested;
+        host.Bridge.ServerChanged += OnServerSettingsChanged;
+        host.Bridge.QuitRequested += ExitApp;
+
+        return host;
     }
 
-    private void OnReplyRequested(string senderName, string content)
+    /// <summary>
+    /// 页面发来的回复。client_id 由页面给（页面要拿它对应哪条气泡在「发送中」），
+    /// 页面没给就现生成一个。
+    /// </summary>
+    private void OnReplyRequested(string senderName, string content, string clientId)
     {
-        var clientId = Guid.NewGuid().ToString("N")[..12];
+        content = (content ?? "").Trim();
+        if (content.Length == 0)
+        {
+            _host?.Bridge.PostReplyAck(clientId, "empty", 0, "内容为空");
+            return;
+        }
+
+        var who = (senderName ?? "").Trim();
+        if (who.Length == 0)
+            who = Config.ReplyName;         // 页面没给昵称就用本机配置里选的那个
+
+        if (string.IsNullOrWhiteSpace(clientId))
+            clientId = Guid.NewGuid().ToString("N")[..12];
         _pendingReplyClientId = clientId;
 
         // 不再预判连接状态：直接尝试发送，发不出去会自动入队，重连后补发。
         // （之前 `if (!Connected) 报失败` 会把能发的回复也拦下来。）
-        var dispatched = Client.Reply(senderName, content, clientId);
+        var dispatched = Client.Reply(who, content, clientId);
         if (!dispatched)
         {
-            _popup?.MarkReplyQueued();
+            _host?.Bridge.PostReplyAck(clientId, "queued", 0,
+                "暂时没连上服务器，已排队，恢复后自动发送");
             return;
         }
 
@@ -274,28 +285,98 @@ public partial class App : Application
             if (_pendingReplyClientId == clientId)
             {
                 AgentLog.Write($"✗ 回复 12 秒内未收到 reply_ack（连接状态：{Client.DescribeConnection()}）");
-                Dispatcher.Invoke(() => _popup?.MarkReplyQueued());
+                Dispatcher.Invoke(() => _host?.Bridge.PostReplyAck(clientId, "queued", 0,
+                    "服务器 12 秒内没有回执，已排队，恢复后自动发送"));
             }
         });
     }
 
-    /// <summary>弹窗设置页保存后：落盘、应用自启、重连。</summary>
-    private void OnSettingsSaved()
+    /// <summary>
+    /// 页面自己点了「查看桌面」：本地和「服务端请求截图」走同一套截图能力。
+    /// headless（会话 0）下没有桌面，直接回中文原因，不让用户拿到一张黑图。
+    /// </summary>
+    private void OnLocalScreenshotRequested(string requestId)
     {
-        Config.Save();
-        // 用户在设置里主动开关 → 允许弹一次 UAC 来注册 SYSTEM 计划任务
-        // （「开机后未登录也能连上」靠的就是它）
-        AutoStart.Apply(Config.AutoStart, allowElevation: true);
-        Client.Restart();
+        if (IsHeadless)
+        {
+            AgentLog.Write("headless：尚无人登录，无法截图（页面请求）");
+            _host?.PushScreenshot(requestId, null, HeadlessScreenshotReason);
+            return;
+        }
+
+        _ = Task.Run(() =>
+        {
+            var (base64, _, _) = ScreenCapture.CaptureJpeg();
+            var error = ScreenCapture.LastError;
+            Dispatcher.Invoke(() => _host?.PushScreenshot(requestId, base64, error));
+        });
     }
 
-    /// <summary>弹窗里换了回复昵称 → 存到本地配置（服务端不参与）。</summary>
-    private void OnReplyNameChanged(string name)
+    /// <summary>页面要求执行动作（关机 / 解锁）。</summary>
+    private void OnLocalActionRequested(string action, string deviceId)
     {
-        if (string.IsNullOrWhiteSpace(name))
+        // 宿主自己再校验一次归属：带 device_id 的动作必须是指向本机的
+        // （页面上可能有别的设备的卡片；协议约定「宿主收到后自己校验」）
+        if (!string.IsNullOrWhiteSpace(deviceId)
+            && !string.Equals(deviceId.Trim(), Config.DeviceId, StringComparison.OrdinalIgnoreCase))
+        {
+            AgentLog.Write($"✗ 页面要求的动作 {action} 指向 {deviceId}，本机是 {Config.DeviceId}，拒绝");
+            _host?.Bridge.PostActionResult(action, false, "这条动作不是发给本机的（device_id 不匹配）");
             return;
-        Config.ReplyName = name;
+        }
+
+        if (string.Equals(action, "shutdown", StringComparison.OrdinalIgnoreCase))
+        {
+            var (ok, detail) = ExecuteShutdown(PowerControl.DefaultDelaySeconds);
+            _host?.Bridge.PostActionResult("shutdown", ok, detail);
+            return;
+        }
+
+        if (string.Equals(action, "unlock", StringComparison.OrdinalIgnoreCase))
+        {
+            // Phase 1 的解锁必须由服务端发起：一次性令牌、时效、request_id 全在服务端，
+            // 页面直接点「解锁」在这里给不出合法请求。如实回绝，不假装成功。
+            _host?.Bridge.PostActionResult("unlock", false,
+                "远程解锁由服务端发起：请在网页端调用解锁接口，PC 端只接受服务端下发的 unlock_request");
+            return;
+        }
+
+        AgentLog.Write($"✗ 页面要求了不支持的动作：{action}");
+        _host?.Bridge.PostActionResult(action, false, "不支持的动作：" + action);
+    }
+
+    /// <summary>兜底页保存服务端配置：落盘 + 应用自启 + 重连（语义同旧的「保存并连接」）。</summary>
+    private void OnServerSettingsChanged(string url, string enrollToken)
+    {
+        var clean = (url ?? "").Trim().TrimEnd('/');
+        if (clean.Length == 0)
+        {
+            _host?.Bridge.PostActionResult("set_server", false, "服务端地址不能为空");
+            return;
+        }
+
+        Config.ServerUrl = clean;
+        if (!string.IsNullOrWhiteSpace(enrollToken))
+            Config.EnrollToken = enrollToken.Trim();
+        Config.Normalize();
+
+        SaveAndReconnect();
+        AgentLog.Write($"兜底页保存配置：server={Config.ServerUrl} device={Config.DeviceId}");
+        _host?.Bridge.PostActionResult("set_server", true, "已保存，正在连接…");
+        _host?.ReloadAfterServerChange();
+    }
+
+    /// <summary>
+    /// 配置落盘 + 应用自启 + 重连。
+    ///
+    /// ⚠ 这里是「用户在界面上主动改设置」那条路，<c>allowElevation: true</c> ——
+    /// 允许弹一次 UAC 去注册 SYSTEM 计划任务（「开机后未登录也能连上」靠的就是它）。
+    /// </summary>
+    private void SaveAndReconnect()
+    {
         Config.Save();
+        AutoStart.Apply(Config.AutoStart, allowElevation: true);
+        Client.Restart();
     }
 
     // ---------------- 服务端事件 ----------------
@@ -314,7 +395,7 @@ public partial class App : Application
 
         Dispatcher.Invoke(() =>
         {
-            _popup?.SetConnectionStatus(connected, connected ? "已连接" : "未连接");
+            _host?.SetConnection(connected, connected ? "已连接" : "未连接");
             if (_tray is not null)
                 _tray.Text = connected ? "家庭消息 Agent · 已连接" : "家庭消息 Agent · 未连接";
         });
@@ -326,26 +407,12 @@ public partial class App : Application
         {
             long messageId = 0;
             if (el.TryGetProperty("message_id", out var idEl) && idEl.ValueKind == JsonValueKind.Number)
-                messageId = idEl.GetInt64();
+                messageId = el.GetInt64();
 
-            var sender = el.TryGetProperty("sender_name", out var sEl) ? sEl.GetString() ?? "" : "";
-            var content = el.TryGetProperty("content", out var cEl) ? cEl.GetString() ?? "" : "";
-            var created = el.TryGetProperty("created_at", out var tEl) ? tEl.GetString() ?? "" : "";
             var autoClose = el.TryGetProperty("auto_close_seconds", out var aEl)
                             && aEl.ValueKind == JsonValueKind.Number
                 ? aEl.GetInt32()
                 : 0;
-
-            var history = new List<HistoryItem>();
-            if (el.TryGetProperty("history", out var hEl) && hEl.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var h in hEl.EnumerateArray())
-                    history.Add(HistoryItem.FromJson(h, messageId));
-            }
-
-            // 有消息来了 → 回到全屏强提醒形态
-            var popupWin = EnsurePopup();
-            popupWin?.ApplyWindowMode(PopupWindow.WindowMode.Popup);
 
             if (IsHeadless)
             {
@@ -356,12 +423,14 @@ public partial class App : Application
                 return;
             }
 
-            var win = EnsurePopup();
-            if (win is null) return;
-            win.AppendMessage(messageId, sender, content, created, autoClose, history);
+            var host = EnsureHost();
+            if (host is null) return;
 
-            // 弹窗已经显示在屏幕上 → 回报 popup_displayed
-            Client.Ack(messageId, "popup_displayed");
+            // 有消息来了 → 回到全屏强提醒形态，把整帧推给页面去渲染。
+            // popup_displayed **不在这里回报**：等页面 web.ack
+            // （「真的画到屏幕上了」）到达才算数，见 CreateHost。
+            host.ShowPopup();
+            host.PushMessage(el, autoClose);
         });
     }
 
@@ -370,13 +439,24 @@ public partial class App : Application
         Dispatcher.Invoke(() =>
         {
             _pendingReplyClientId = null;
-            var status = el.TryGetProperty("status", out var sEl) ? sEl.GetString() : "";
+
+            var status = el.TryGetProperty("status", out var sEl) ? sEl.GetString() ?? "" : "";
+            var clientId = el.TryGetProperty("client_id", out var cEl) ? cEl.GetString() ?? "" : "";
+            long messageId = el.TryGetProperty("message_id", out var mEl)
+                             && mEl.ValueKind == JsonValueKind.Number
+                ? mEl.GetInt64()
+                : 0;
+
+            var bridge = _host?.Bridge;
+            if (bridge is null) return;
+
             if (status == "ok")
-                _popup?.MarkReplyDelivered();
+                bridge.PostReplyAck(clientId, "ok", messageId, "回复已送达服务器");
             else if (status == "empty")
-                _popup?.MarkReplyFailed("内容为空");
+                bridge.PostReplyAck(clientId, "empty", messageId, "内容为空");
             else
-                _popup?.MarkReplyFailed(status ?? "未知错误");
+                bridge.PostReplyAck(clientId, "error", messageId,
+                    status.Length > 0 ? status : "未知错误");
         });
     }
 
@@ -384,16 +464,15 @@ public partial class App : Application
     {
         Dispatcher.Invoke(() =>
         {
-            var items = new List<HistoryItem>();
+            // 壳模式下页面不连 /ws/web，服务端发来的历史直接转给页面渲染
+            // （页面自己也能走 HTTP 拉，这条是省一次往返的新增帧）。
             if (el.TryGetProperty("messages", out var arr) && arr.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var h in arr.EnumerateArray())
-                    items.Add(HistoryItem.FromJson(h, 0));
-            }
-            // 右侧历史弹幕已移除（和网页端消息记录重复），历史现在直接铺进对话区
-            _popup?.SeedFromHistory(items);
+                _host?.PushHistory(arr);
         });
     }
+
+    /// <summary>headless（会话 0）下没桌面可截，统一用这句中文原因回过去。</summary>
+    private const string HeadlessScreenshotReason = "电脑已开机但尚无人登录，当前没有可截取的桌面";
 
     private void OnScreenshotRequested(string requestId)
     {
@@ -402,16 +481,21 @@ public partial class App : Application
             // 会话 0 没有桌面，截出来只会是黑屏。直接说明原因，
             // 比回一张黑图让用户以为电脑坏了要好。
             AgentLog.Write("headless：尚无人登录，无法截图");
-            _ = Client.SendScreenshotAsync(requestId, null, 0, 0,
-                "电脑已开机但尚无人登录，当前没有可截取的桌面");
+            _ = Client.SendScreenshotAsync(requestId, null, 0, 0, HeadlessScreenshotReason);
             return;
         }
 
         _ = Task.Run(async () =>
         {
             var (base64, width, height) = ScreenCapture.CaptureJpeg();
-            await Client.SendScreenshotAsync(requestId, base64, width, height,
-                ScreenCapture.LastError);
+            var error = ScreenCapture.LastError;
+
+            // ① 回给服务端（网页端其他会话靠它看到图）
+            await Client.SendScreenshotAsync(requestId, base64, width, height, error);
+
+            // ② 顺手推给本地页面：壳模式下页面不连 /ws/web，收不到服务端的截图广播，
+            //    只回服务端的话「查看桌面」在那台电脑自己的界面上会一直转圈。
+            Dispatcher.Invoke(() => _host?.PushScreenshot(requestId, base64, error));
         });
     }
 
@@ -421,7 +505,17 @@ public partial class App : Application
     /// </summary>
     private void OnShutdownRequested(int delaySeconds)
     {
-        Dispatcher.Invoke(() =>
+        // 托盘气泡是 WinForms 组件，统一回到 UI 线程再动它
+        Dispatcher.Invoke(() => ExecuteShutdown(delaySeconds));
+    }
+
+    /// <summary>
+    /// 执行关机的唯一实现（服务端指令与页面请求共用）。
+    /// 返回 (是否已下发, 给界面看的中文说明)。
+    /// </summary>
+    private (bool Ok, string Detail) ExecuteShutdown(int delaySeconds)
+    {
+        try
         {
             AgentLog.Write($"收到关机指令，{delaySeconds} 秒后执行");
 
@@ -436,27 +530,28 @@ public partial class App : Application
                 // 气泡提示失败不影响关机
             }
 
-            try
+            PowerControl.Shutdown(delaySeconds);
+            Client.SendOrQueue(new
             {
-                PowerControl.Shutdown(delaySeconds);
-                Client.SendOrQueue(new
-                {
-                    type = "event",
-                    kind = "shutdown",
-                    detail = $"delay={delaySeconds}s",
-                }, "event");
-            }
-            catch (Exception ex)
+                type = "event",
+                kind = "shutdown",
+                detail = $"delay={delaySeconds}s",
+            }, "event");
+
+            return (true, $"已下发关机，{delaySeconds} 秒后执行（命令行 shutdown /a 可取消）");
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("执行关机失败：" + ex.Message);
+            Client.SendOrQueue(new
             {
-                AgentLog.Write("执行关机失败：" + ex.Message);
-                Client.SendOrQueue(new
-                {
-                    type = "event",
-                    kind = "shutdown_failed",
-                    detail = ex.Message,
-                }, "event");
-            }
-        });
+                type = "event",
+                kind = "shutdown_failed",
+                detail = ex.Message,
+            }, "event");
+
+            return (false, "执行关机失败：" + ex.Message);
+        }
     }
 
     /// <summary>
@@ -484,7 +579,7 @@ public partial class App : Application
     /// <summary>
     /// 会话状态变化（锁屏 / 解锁 / 登录 / 注销）→ 立刻上报一次，
     /// 不等下一个 15 秒心跳周期：网页端的「远程解锁」按钮可用性靠它及时更新。
-    /// 回调已在 UI 线程上（SessionState 内部切过 Dispatcher），这里不碰界面。
+    /// 回调已在 UI 线程上（SessionState 内部切过 Dispatcher），这里只多推一份给页面。
     /// </summary>
     private void OnSessionStateChanged(string state)
     {
@@ -498,6 +593,9 @@ public partial class App : Application
             // 上报失败不致命：下一个周期心跳（≤15 秒）会带上最新状态
             AgentLog.Write("上报会话状态失败（下个心跳周期会补上）：" + ex.Message);
         }
+
+        try { _host?.PushSession(); }
+        catch (Exception ex) { AgentLog.Write("推送会话状态给页面失败：" + ex.Message); }
     }
 
     /// <summary>用系统默认程序打开一个路径（文件或目录）。</summary>
@@ -568,21 +666,20 @@ public partial class App : Application
     private void ShowConversation()
     {
         IsSystemShuttingDown = false;
-        var win = EnsurePopup();
-        if (win is null) return;
+        var host = EnsureHost();
+        if (host is null) return;
         try
         {
-            // 从托盘打开 → 普通窗口（有标题栏、可缩放、居中）
-            win.ApplyWindowMode(PopupWindow.WindowMode.Window);
-            win.PresentIdle();
-            AgentLog.Write($"托盘打开会话：窗口已显示 visible={win.IsVisible} "
-                           + $"state={win.WindowState} size={win.Width}x{win.Height} "
-                           + $"at=({win.Left},{win.Top})");
+            // 从托盘打开 → 普通窗口形态（有标题栏、可缩放、居中），页面进控制台
+            host.ShowConsole("conversation");
+            AgentLog.Write($"托盘打开会话：窗口已显示 visible={host.IsVisible} "
+                           + $"state={host.WindowState} size={host.Width}x{host.Height} "
+                           + $"at=({host.Left},{host.Top})");
         }
         catch (Exception ex)
         {
-            AgentLog.Write("!! 显示消息窗口失败：" + ex);
-            ReportOnce("显示消息窗口失败", ex);
+            AgentLog.Write("!! 显示界面失败：" + ex);
+            ReportOnce("显示界面失败", ex);
         }
         Client.RequestHistory(50);
     }
@@ -617,17 +714,20 @@ public partial class App : Application
 
     private void ShowSettings()
     {
-        var popup = EnsurePopup();
-        if (popup is null) return;
-        try { popup.ShowSettingsPage(); }
+        var host = EnsureHost();
+        if (host is null) return;
+        try { host.ShowConsole("settings"); }
         catch (Exception ex)
         {
-            AgentLog.Write("!! 打开设置页失败：" + ex);
-            ReportOnce("打开设置页失败", ex);
+            AgentLog.Write("!! 打开设置失败：" + ex);
+            ReportOnce("打开设置失败", ex);
         }
     }
 
     // ---------------- 退出 ----------------
+
+    /// <summary>页面点了「退出程序」（或缺运行时的提示页上的退出按钮）。</summary>
+    internal void ForceQuit() => ExitApp();
 
     private void ExitApp()
     {
@@ -650,7 +750,7 @@ public partial class App : Application
         }
 
         try { Client?.Stop(); } catch { }
-        try { _popup?.ForceClose(); } catch { }
+        try { _host?.ForceClose(); } catch { }
         if (_tray is not null)
         {
             _tray.Visible = false;

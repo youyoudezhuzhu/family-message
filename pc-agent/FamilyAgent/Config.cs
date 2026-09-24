@@ -41,7 +41,7 @@ public sealed class AgentConfig
     [JsonPropertyName("reply_name")]
     public string ReplyName { get; set; } = "";
 
-    /// <summary>配色方案 id（纯本地，可选值见 MdTheme.Schemes）。</summary>
+    /// <summary>配色方案 id（纯本地；壳模式下界面在网页里，色调由页面自己决定）。</summary>
     [JsonPropertyName("theme")]
     public string ThemeId { get; set; } = "indigo";
 
@@ -126,9 +126,12 @@ public sealed class AgentConfig
         for (var i = 0; i < ReplyNames.Count; i++)
             ReplyNames[i] = ReplyNames[i].Trim();
 
-        // 配色 id 不认识就回默认（家里手改坏了配置也不至于起不来）
-        if (MdTheme.Find(ThemeId) is null)
-            ThemeId = MdTheme.Schemes[0].Id;
+        // 配色 id / 明暗模式现在由网页端页面决定（壳模式下界面在 WebView2 里渲染），
+        // 这里只做「别是空的」兜底：手改坏了配置也不至于起不来。
+        if (string.IsNullOrWhiteSpace(ThemeId))
+            ThemeId = "indigo";
+        if (string.IsNullOrWhiteSpace(ThemeMode))
+            ThemeMode = "system";
     }
 
     public void Save()
