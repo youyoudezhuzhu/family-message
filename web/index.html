@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.12.2">
-<link rel="stylesheet" href="static/style.css?v=0.12.2">
-<link rel="stylesheet" href="static/shell.css?v=0.12.2">
+<link rel="stylesheet" href="static/tokens.css?v=0.12.3">
+<link rel="stylesheet" href="static/style.css?v=0.12.3">
+<link rel="stylesheet" href="static/shell.css?v=0.12.3">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -194,7 +194,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
     <section class="page" id="page-home">
       <div class="page__head">
         <h2 class="page__title" id="home-greeting">你好</h2>
-        <p class="page__sub" id="home-sub">家里的电脑都在等着你的留言。</p>
+        <p class="page__sub" id="home-sub">一条消息进家庭群聊，家里所有电脑都会看到。</p>
       </div>
 
       <section class="section" aria-labelledby="t-online">
@@ -213,22 +213,27 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       <section class="card" aria-labelledby="t-compose">
         <div class="card__head">
           <h3 class="card__title" id="t-compose">发送消息</h3>
+          <span class="card__hint">家庭群聊</span>
         </div>
 
         <div class="field">
-          <label class="field-label" for="content">留言内容</label>
-          <textarea class="text-input" id="content" rows="3" placeholder="输入留言……" maxlength="2000"></textarea>
+          <label class="field-label" for="content">消息内容</label>
+          <textarea class="text-input" id="content" rows="3" placeholder="说点什么……" maxlength="2000"></textarea>
           <span class="field-support">Ctrl/⌘ + Enter 快速发送</span>
         </div>
 
         <div class="compose__quick" id="quick" role="group" aria-label="快捷短语"></div>
 
+        <!-- 群聊模型：没有「发送给」—— 消息进一个共享空间，所有设备都能看到，
+             谁说的完全靠昵称区分。所以这一行只有 昵称 + 发送。 -->
         <div class="compose__bar">
           <div class="compose__sender">
             <div class="combo" id="sender-sel" aria-label="发送人"></div>
           </div>
-          <span class="compose__arrow" aria-hidden="true"><svg class="icon"><use href="#i-arrow-right"/></svg></span>
-          <div class="compose__targets" id="targets" role="group" aria-label="选择接收设备"></div>
+          <span class="compose__group-hint">
+            <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg>
+            <span>发进家庭群聊，所有已注册设备都能看到</span>
+          </span>
           <button class="btn btn--primary compose__send" id="btn-send">
             <svg class="btn__icon" aria-hidden="true"><use href="#i-send"/></svg>
             <span>发送</span>
@@ -246,16 +251,16 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
         <div class="empty" id="home-recent-empty">
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
           <span class="empty__title">还没有消息</span>
-          <span class="empty__hint">在上面写一条留言，选好接收的设备就能发出去。</span>
+          <span class="empty__hint">在上面写一条，发进家庭群聊，所有设备都能看到。</span>
         </div>
       </section>
     </section>
 
-    <!-- ── 消息记录 ───────────────────────────────────────────── -->
+    <!-- ── 消息记录：一条统一的群聊流（不按设备分组、不做设备筛选）───── -->
     <section class="page" id="page-messages" hidden>
       <div class="page__head">
         <h2 class="page__title">消息记录</h2>
-        <p class="page__sub">网页发出的留言和 PC 的回复都记在这里，按时间倒序。</p>
+        <p class="page__sub">家庭群聊的全部消息，网页发出的和 PC 回复的都在这里，按时间倒序。</p>
       </div>
       <div class="section__head">
         <h3 class="section__title">全部消息</h3>
@@ -268,7 +273,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       <div class="empty" id="log-empty">
         <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
         <span class="empty__title">还没有消息</span>
-        <span class="empty__hint">在首页的「发送消息」里写一条留言，选好接收的设备就能发出去。</span>
+        <span class="empty__hint">在首页的「发送消息」里写一条，所有设备都会看到。</span>
       </div>
     </section>
 
@@ -465,32 +470,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       </button>
 </nav>
 
-<!-- ══ 对话框：对话 ═════════════════════════════════════════════ -->
-<div class="scrim" id="dlg-conv" role="dialog" aria-modal="true" aria-labelledby="conv-title">
-  <div class="dialog dialog--conv">
-    <div class="dialog__head">
-      <svg class="icon" aria-hidden="true"><use href="#i-desktop"/></svg>
-      <div class="grow">
-        <h2 class="dialog__title" id="conv-title">对话</h2>
-        <span class="text-caption text-secondary" id="conv-state"></span>
-      </div>
-      <button class="icon-btn" id="conv-close" aria-label="关闭对话">
-        <svg class="icon" aria-hidden="true"><use href="#i-dismiss"/></svg>
-      </button>
-    </div>
-    <div class="conv-body" id="conv-body"></div>
-    <div class="conv-input">
-      <div class="combo" id="conv-sender-sel" aria-label="以谁的名义发送"></div>
-      <div class="field">
-        <input class="text-input" id="conv-text" maxlength="2000" placeholder="输入消息，回车发送">
-      </div>
-      <button class="icon-btn icon-btn--primary" id="conv-send" aria-label="发送">
-        <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
-      </button>
-    </div>
-  </div>
-</div>
-
 <!-- ══ 通用确认对话框（替代 confirm / alert / prompt）═══════════ -->
 <div class="scrim" id="dlg-confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-body">
   <div class="dialog dialog--confirm">
@@ -527,10 +506,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       <span class="presence" id="popup-dot"></span>
       <span id="popup-conn-text">连接中…</span>
     </span>
-    <button class="btn btn--secondary" id="popup-console" title="切换到控制台界面">
-      <svg class="btn__icon" aria-hidden="true"><use href="#i-navigation"/></svg>
-      <span>打开控制台</span>
-    </button>
   </header>
 
   <div class="popup-stage" id="popup-stage">
@@ -563,13 +538,15 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 </div>
 
 <!-- ══ 壳模式 · PC 消息客户端（mode=client）═════════════════════════════
-     托盘里打开的那个普通窗口：只有「消息记录 + 回复栏」，没有任何侧边栏/导航。
+     PC 端是**纯群聊客户端**：只有「群聊消息流 + 回复栏」，没有任何侧边栏/导航，
+     也没有设备管理入口（设备页只在 NAS 网页端显示，网页端才是全功能版本）。
+     消息流来自共享空间（GET /api/messages），不按设备拉。
      跟全屏弹窗（mode=popup）是**同一套视觉语言** —— 消息沿用 .popup-msg--lead
      （最新一条大字）/.popup-msg--prev（更早的单行字幕），回复栏沿用 .popup-reply，
      响应与提示沿用 .popup-actions__hint，只是装在一个普通窗口里。
      两处刻意的差异：
        · 没有「知道了」（那是弹窗强提醒的语义，消息已经在看板上了）
-       · 顶栏给一个「控制台」按钮 → web.switch_mode {mode:'console'}
+       · 顶栏显示这台电脑自己的名字（只读标识，不是设备管理入口）
      浏览器模式永远不显示（默认 hidden），只在壳里由 shell.js 揭开。 -->
 <div class="shell-client" id="shell-client" hidden>
   <header class="popup-bar client-bar">
@@ -581,10 +558,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       <span class="presence" id="client-dot"></span>
       <span id="client-conn-text">连接中…</span>
     </span>
-    <button class="btn btn--secondary" id="client-console" title="切换到完整控制台界面">
-      <svg class="btn__icon" aria-hidden="true"><use href="#i-navigation"/></svg>
-      <span>控制台</span>
-    </button>
   </header>
 
   <div class="popup-stage client-stage" id="client-stage">
@@ -613,7 +586,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 </div>
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<script src="static/shell.js?v=0.12.2"></script>
-<script src="static/app.js?v=0.12.2"></script>
+<script src="static/shell.js?v=0.12.3"></script>
+<script src="static/app.js?v=0.12.3"></script>
 </body>
 </html>

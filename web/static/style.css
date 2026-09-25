@@ -367,7 +367,6 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 .chip--suggestion:hover { background: var(--fluent-fill-control-hover, var(--fluent-color-surface-tertiary)); color: var(--fluent-color-text); }
 .chip--suggestion:active { color: var(--fluent-color-primary); }
 .chip .icon { width: 14px; height: 14px; }
-.compose__targets .chip .icon { width: 8px; height: 8px; fill: currentColor; }
 
 /* ── 在线状态指示（小型 Presence，不用夸张大圆点）───────────── */
 .presence {
@@ -504,7 +503,6 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   display: flex; justify-content: flex-end; gap: var(--spacing-sm);
   padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl);
 }
-.dialog--conv { width: min(620px, 100%); height: min(720px, 88dvh); }
 .dialog--confirm { width: min(460px, 100%); }
 .dialog--settings { width: min(720px, 100%); }
 
@@ -539,17 +537,12 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 }
 .msg__time { margin-left: auto; font: var(--font-caption); color: var(--fluent-color-text-tertiary); white-space: nowrap; }
 .msg__body { font: var(--font-body); white-space: pre-wrap; word-break: break-word; }
+/* 状态行：群聊模型下每条消息就一个「已发送」标签（容器保留，方便以后加别的） */
 .msg__tags { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); margin-top: var(--spacing-xs); }
-.msg__badge {
-  padding: 1px var(--spacing-sm);
-  border-radius: var(--radius-small);
-  background: var(--fluent-color-primary-tint);
-  color: var(--fluent-color-primary);
-  font: var(--font-caption); font-weight: 600;
-}
 .msg-list--compact .msg { padding: var(--spacing-sm) var(--spacing-md); }
 
-/* 投递状态：颜色 + 图标 + 文字三重表达，不只靠颜色 */
+/* 消息状态：群聊模型下只有一种 —— 已发送（已送达 / 已显示 等逐设备状态已移除）。
+   颜色 + 图标 + 文字三重表达，不只靠颜色。 */
 .status {
   display: inline-flex; align-items: center; gap: var(--spacing-xs);
   padding: 2px var(--spacing-sm);
@@ -559,10 +552,6 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   color: var(--fluent-color-text-secondary);
 }
 .status--sent { background: var(--fluent-color-surface-tertiary); color: var(--fluent-color-text-secondary); }
-.status--delivered { background: var(--fluent-color-primary-tint); color: var(--fluent-color-primary); }
-.status--displayed { background: var(--fluent-color-primary-tint-strong); color: var(--fluent-color-primary); }
-.status--read { background: var(--fluent-color-success-tint); color: var(--fluent-color-success); }
-.status--failed { background: var(--fluent-color-error-tint); color: var(--fluent-color-error); }
 
 /* ── 7. 设备 ─────────────────────────────────────────────────── */
 .dev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--spacing-md); }
@@ -646,7 +635,9 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 /* 小号进度环：按钮内与说明行都用它（默认 28px 太大） */
 .progress-ring--sm { width: 14px; height: 14px; border-width: 2px; }
 
-/* ── 8. 首页 · 发送区 ────────────────────────────────────────── */
+/* ── 8. 首页 · 发送区 ──────────────────────────────────────────
+   群聊模型：只有 昵称 + 发送，没有「发送给」设备选择（消息进共享空间，
+   所有设备都能看到）。中间那行是群聊语义的说明文案。 */
 .compose__quick { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); }
 .compose__bar {
   display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;
@@ -654,43 +645,14 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   border-top: 1px solid var(--fluent-color-border-subtle);
 }
 .compose__sender { width: 168px; flex: 0 0 auto; }
-.compose__arrow { display: flex; color: var(--fluent-color-text-tertiary); }
-.compose__arrow .icon { width: 16px; height: 16px; }
-.compose__targets { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); flex: 1 1 220px; min-width: 0; }
+.compose__group-hint {
+  display: inline-flex; align-items: center; gap: var(--spacing-sm);
+  flex: 1 1 220px; min-width: 0;
+  font: var(--font-caption); color: var(--fluent-color-text-secondary);
+}
+.compose__group-hint .icon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--fluent-color-text-tertiary); }
 .compose__send { margin-left: auto; }
 .compose__hint { font: var(--font-caption); color: var(--fluent-color-text-secondary); min-height: 16px; }
-
-/* ── 9. 对话气泡（Dialog 内）────────────────────────────────── */
-.conv-body { display: flex; flex-direction: column; gap: var(--spacing-md); padding: var(--spacing-lg) var(--spacing-xl); overflow-y: auto; flex: 1; }
-.bubble {
-  max-width: 80%;
-  padding: var(--spacing-sm) var(--spacing-md);
-  border-radius: var(--radius-large);
-  background: var(--fluent-color-surface-tertiary);
-  color: var(--fluent-color-text);
-  font: var(--font-body);
-  white-space: pre-wrap; word-break: break-word;
-  align-self: flex-start;
-}
-.bubble--out { align-self: flex-end; background: var(--fluent-color-primary-tint); color: var(--fluent-color-primary); }
-.bubble--out .bubble__meta { color: var(--fluent-color-primary); }
-.bubble__meta {
-  display: flex; align-items: center; gap: var(--spacing-sm);
-  margin-bottom: 2px; font: var(--font-caption); font-weight: 600;
-  color: var(--fluent-color-text-secondary);
-}
-.bubble__meta::before {
-  content: ""; width: 6px; height: 6px; flex: 0 0 6px;
-  border-radius: var(--radius-circle);
-  background: var(--msg-nick, var(--fluent-color-primary));
-}
-.conv-input {
-  display: flex; gap: var(--spacing-sm); align-items: center;
-  padding: var(--spacing-md) var(--spacing-xl) var(--spacing-xl);
-  border-top: 1px solid var(--fluent-color-border-subtle);
-}
-.conv-input .combo { flex: 0 0 140px; }
-.conv-input .field { flex: 1; min-width: 0; }
 
 /* ── 10. 截图 ───────────────────────────────────────────────── */
 .shot-picks { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); }
@@ -867,14 +829,10 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   .dialog__head { padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-sm); }
   .dialog__body { padding: 0 var(--spacing-lg) var(--spacing-lg); }
   .dialog__actions { padding: var(--spacing-md) var(--spacing-lg) var(--spacing-xl); }
-  .dialog--conv { height: 90dvh; }
-  .conv-body { padding: var(--spacing-md) var(--spacing-lg); }
-  .conv-input { padding: var(--spacing-md) var(--spacing-lg) var(--spacing-xl); flex-wrap: wrap; }
-  .conv-input .combo { flex: 1 1 100%; }
   .compose__sender { width: 100%; flex: 1 1 100%; }
-  /* 窄屏下「发送人」和「发送给」变成上下两行，中间的箭头会孤立占一行 —— 隐掉。
-     上下排布本身已经表达了「谁 → 发给谁」的顺序。 */
-  .compose__arrow { display: none; }
+  /* 窄屏下「发送人」「群聊说明」「发送」变成上下几行 —— 群聊说明文案在窄屏
+     收起（首页卡片标题旁的「家庭群聊」已经在说同一件事），别挤成三行。 */
+  .compose__group-hint { display: none; }
   .compose__send { margin-left: 0; width: 100%; }
   .dev-grid, .dev-strip { grid-template-columns: 1fr; }
   .dev__acts .btn { flex: 1 1 calc(50% - var(--spacing-sm)); }

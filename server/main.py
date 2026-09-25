@@ -4,6 +4,12 @@
 - Web Sender 只有一个身份，浏览器之间不区分用户，昵称只是发送时选的标签
 - Device Agent 是受信任的家庭设备，不需要登录账号、不需要申请权限
 - 消息与设备管理是两层逻辑，但共用同一条长连接
+
+⚠️ 消息是**群聊**（docs/GROUP-CHAT-MODEL.md）：一条消息发进一个共享空间，
+所有已注册设备都能看到，空间里以昵称区分谁说的。
+  · POST /api/messages 不再需要 targets（保留但忽略）→ 自动广播给全部已注册设备
+  · 消息对外只有一个状态 status="sent"（逐设备状态只留在服务端内部记账）
+  · 推给 PC 的 message 帧 = 广播给所有已连接设备，排除发起者自己（sender_device_id）
 """
 from __future__ import annotations
 
@@ -285,8 +291,11 @@ def _apply_reported_state(device_id: str, data: dict) -> bool:
 def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dict:
     """推给 PC Agent 的消息体。
 
-    附带该设备与 Web Sender 的最近往来，Agent 弹窗右侧直接渲染，
-    不需要再多一次往返请求。
+    附带**群聊最近的往来**（不再局限于该设备与 Web Sender 的往来）：
+    一条消息进的是共享空间，弹窗右侧的上下文就该是空间里最近发生的事。
+    Agent 直接渲染，不需要再多一次往返请求。
+
+    对外只有单一状态：status = "sent"（逐设备的已送达/已显示只存在于服务端内部）。
     """
     payload = {
         "type": "message",
@@ -295,14 +304,40 @@ def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dic
         "content": msg["content"],
         "message_type": msg["message_type"],
         "created_at": msg["created_at"],
+        "status": msg_svc.STATUS_SENT,
         "auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
-        "history": msg_svc.history_for_device(
-            device_id, limit=int(CONFIG["message"].get("history_limit", 30))
+        "history": msg_svc.group_history(
+            limit=int(CONFIG["message"].get("history_limit", 30)),
+            viewer_device_id=device_id,
         ),
     }
     if redelivered:
         payload["redelivered"] = True
     return payload
+
+
+async def _broadcast_message(msg: dict) -> list[str]:
+    """群聊广播：把消息推给**所有已连接设备**，但排除发起者自己。
+
+    群聊里你不该看到自己的消息弹自己的窗 —— 发起者判定用消息的
+    `sender_device_id`（PC 回复时带上来）；网页端发的消息它是 NULL，
+    所以对设备侧是「全员广播」。
+
+    离线设备不在这一层处理：它们靠 message_targets 记账，
+    上线握手时由 msg_svc.pending_for_device() 补投（见 ws_device）。
+    返回真正推出去的 device_id 列表。
+    """
+    sender = (msg.get("sender_device_id") or "").strip()
+    delivered: list[str] = []
+    for device_id in list(HUB.devices.keys()):
+        if sender and device_id == sender:
+            continue  # 自己发的不回显给自己
+        if await HUB.send_to_device(device_id, _device_payload(msg, device_id)):
+            # 内部投递记账照旧推进（网页端发起的消息才有 target 行；
+            # 设备回复没有 target 行，advance() 自然 no-op）
+            msg_svc.advance(msg["id"], device_id, "device_received")
+            delivered.append(device_id)
+    return delivered
 
 
 # ============================================================
@@ -311,47 +346,55 @@ def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dic
 class MessageBody(BaseModel):
     sender_name: str = Field(min_length=1, max_length=32)
     content: str = Field(min_length=1, max_length=2000)
+    # 群聊模型：不再选接收设备。targets 保留但**忽略**（向后兼容老前端：
+    # 老前端还在传 targets，传了不报错、不生效；不传也完全正常）。
     targets: list[str] = Field(default_factory=list)
     message_type: str = "text"
 
 
 @app.post("/api/messages", dependencies=[WebAuth])
 async def api_send_message(body: MessageBody):
-    targets = [t for t in body.targets if t]
-    if not targets:
-        raise HTTPException(400, "至少选择一个接收设备")
-    if len(targets) > int(CONFIG["message"]["max_targets"]):
-        raise HTTPException(400, "接收设备过多")
+    """发一条消息进群聊：**自动广播给所有已注册设备**。
 
-    known = {d["device_id"] for d in dev_svc.list_devices()}
-    unknown = [t for t in targets if t not in known]
-    if unknown:
-        raise HTTPException(400, f"设备不存在: {unknown}")
+    一条消息进一个共享空间，谁都能看到 —— 服务端自己把接收方算成
+    「全部已注册设备」，不再由前端指定。已连接设备立刻推帧；
+    离线设备靠 message_targets 记账，上线时补投（pending_for_device）。
+    """
+    targets = [d["device_id"] for d in dev_svc.list_devices()]
 
     msg = msg_svc.create_message(body.sender_name, body.content, targets, body.message_type)
 
-    delivered, failed = [], []
-    for dev_id in targets:
-        ok = await HUB.send_to_device(dev_id, _device_payload(msg, dev_id))
-        if ok:
-            msg_svc.advance(msg["id"], dev_id, "device_received")
-            delivered.append(dev_id)
-        else:
-            failed.append(dev_id)
+    # 群聊广播：所有已连接设备（网页端发的消息 sender_device_id 为 NULL → 不排除任何设备）
+    delivered = await _broadcast_message(msg)
+    offline = [t for t in targets if t not in delivered]
 
-    msg = msg_svc.get_message(msg["id"]) or msg
-    await HUB.broadcast_web({"type": "message", "message": msg})
-    return {"message": msg, "delivered": delivered, "offline": failed}
+    public = msg_svc.public_message(msg)
+    await HUB.broadcast_web({"type": "message", "message": public})
+    # delivered/offline 是**本次投递的即时回执**（老前端用它提示「离线设备会补投」），
+    # 不是消息状态 —— 消息对外只有一个状态：已发送（public["status"]）。
+    return {"message": public, "delivered": delivered, "offline": offline}
 
 
 @app.get("/api/messages", dependencies=[WebAuth])
 async def api_messages(limit: int = 50, device_id: Optional[str] = None):
-    return msg_svc.list_messages(limit=min(limit, 200), device_id=device_id)
+    """群聊流：全部消息按时间（新→旧）返回。
+
+    每条消息对外只有一个状态 status="sent"，不带逐设备的已送达/已显示。
+    `device_id` 是遗留的「按设备过滤」参数（老客户端可能还在用），主流程不传。
+    """
+    return msg_svc.public_messages(
+        msg_svc.list_messages(limit=min(limit, 200), device_id=device_id)
+    )
 
 
 @app.get("/api/conversations/{device_id}", dependencies=[WebAuth])
 async def api_conversation(device_id: str, limit: int = 50):
-    """某台设备与 Web Sender 的双向对话（含 PC 端回复）。"""
+    """[老视图] 某台设备与 Web Sender 的双向对话。
+
+    群聊模型下**不再作为主流程**（主流程走 /api/messages 的群聊流），
+    这里保留只是「按设备过滤的视图」，给老浏览器书签 / 老客户端兜底：
+    返回体仍带 targets，老前端靠它渲染每台设备的投递状态。
+    """
     if not dev_svc.get_device(device_id):
         raise HTTPException(404, "设备不存在")
     return msg_svc.conversation(device_id, limit=min(limit, 200))
@@ -359,14 +402,15 @@ async def api_conversation(device_id: str, limit: int = 50):
 
 @app.post("/api/messages/{message_id}/read", dependencies=[WebAuth])
 async def api_mark_read(message_id: int, device_id: str):
+    """[内部链路] 标记某设备已读。
+
+    群聊模型下逐设备状态不再对外展示，所以只落库、不广播；
+    接口保留是因为数据链路一点没变（以后想恢复展示很容易）。
+    """
     row = msg_svc.advance(message_id, device_id, "read")
     if not row:
         raise HTTPException(404, "目标不存在")
-    await HUB.broadcast_web(
-        {"type": "message_status", "message_id": message_id, "device_id": device_id,
-         "status": row["status"], "target": row}
-    )
-    return row
+    return {"ok": True, "message_id": message_id, "status": msg_svc.STATUS_SENT}
 
 
 # ============================================================
@@ -791,12 +835,16 @@ async def handle_device_message(device_id: str, data: dict) -> None:
         status = data.get("status", "device_received")
         if msg_id is None:
             return
-        row = msg_svc.advance(int(msg_id), device_id, status)
-        if row:
-            await HUB.broadcast_web({
-                "type": "message_status", "message_id": int(msg_id),
-                "device_id": device_id, "status": row["status"], "target": row,
-            })
+        # 群聊模型：PC 的 ack / popup_displayed 上报**照旧落库**（投递记账），
+        # 但不再对外广播逐设备的已送达/已显示 —— 对外只有「已发送」。
+        # 以后想恢复展示：放开下面那两行广播即可（数据一直都在，不用改结构）。
+        msg_svc.advance(int(msg_id), device_id, status)
+        # row = msg_svc.advance(int(msg_id), device_id, status)
+        # if row:
+        #     await HUB.broadcast_web({
+        #         "type": "message_status", "message_id": int(msg_id),
+        #         "device_id": device_id, "status": row["status"], "target": row,
+        #     })
 
     elif mtype in ("screenshot_response", "screenshot"):
         rid = data.get("request_id", "")
@@ -804,7 +852,7 @@ async def handle_device_message(device_id: str, data: dict) -> None:
             HUB.resolve(rid, data)
 
     elif mtype == "reply":
-        # ★ 双向对话：PC 端在弹窗里回复 → 落库 → 广播给所有浏览器
+        # ★ 群聊：PC 端在弹窗里回一句 → 落库 → 广播给所有浏览器 + 其他所有设备
         content = (data.get("content") or "").strip()
         client_id = data.get("client_id") or ""
         if not content:
@@ -816,6 +864,11 @@ async def handle_device_message(device_id: str, data: dict) -> None:
                 "status": "empty",
             })
             return
+        # PC 端可能把 sender_device_id 带上来（群聊广播要据此跳过发起者自己）。
+        # 但**身份以连接为准**：不接受一台设备冒充另一台。
+        claimed = (data.get("sender_device_id") or "").strip()
+        if claimed and claimed != device_id:
+            db.log_event(device_id, "reply_sender_mismatch", f"claimed={claimed[:64]}")
         dev = dev_svc.get_device(device_id)
         # 昵称由 PC 端本地维护并随消息带上来；没带就用设备名兜底
         sender_name = (data.get("sender_name") or "").strip()[:32] \
@@ -828,7 +881,11 @@ async def handle_device_message(device_id: str, data: dict) -> None:
             "status": "ok",
             "created_at": msg.get("created_at"),
         })
-        await HUB.broadcast_web({"type": "message", "message": msg, "reply": True})
+        await HUB.broadcast_web(
+            {"type": "message", "message": msg_svc.public_message(msg), "reply": True}
+        )
+        # 群里其他人（其他 PC）也要看到这句话；发起者自己由 sender_device_id 排除
+        await _broadcast_message(msg)
 
     elif mtype == "history_request":
         rid = data.get("request_id") or ""
@@ -837,7 +894,9 @@ async def handle_device_message(device_id: str, data: dict) -> None:
             "type": "history_response",
             "request_id": rid,
             "device_id": device_id,
-            "messages": msg_svc.history_for_device(device_id, limit=min(limit, 200)),
+            "messages": msg_svc.group_history(
+                limit=min(limit, 200), viewer_device_id=device_id
+            ),
         })
 
     elif mtype == "unlock_result":

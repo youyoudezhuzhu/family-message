@@ -172,6 +172,11 @@ html[data-shell="1"] .shell-local:empty { display: none; }
 }
 .popup-msg--prev .popup-msg__time { order: 3; margin-left: 0; }
 
+/* 群聊模型：每条消息只有一个「已发送」（逐设备状态已去掉）。
+   lead 是居中大卡片 → 标签也居中；prev 是单行字幕 → 标签排到行尾。 */
+.popup-msg--lead .popup-msg__status { align-self: center; }
+.popup-msg--prev .popup-msg__status { order: 4; flex: 0 0 auto; }
+
 /* 昵称色沿用网页端同一个圆点语言（跨端「谁是谁」颜色一致） */
 .popup-msg__sender::before {
   content: ""; width: 10px; height: 10px; flex: 0 0 10px;
