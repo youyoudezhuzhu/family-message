@@ -74,6 +74,15 @@ public partial class WebHostWindow : Window
     private string _connectionDetail = "未连接";
     private string _view = "";       // 控制台要打开的视图（网址参数，可选）
 
+    /// <summary>
+    /// 页面模式：popup（全屏强提醒）/ client（消息客户端窗口）/ console（完整网页控制台）。
+    ///
+    /// 和 <see cref="_mode"/>（窗口形态）是两件事，别混：
+    /// 窗口形态说的是「窗口长什么样」，页面模式说的是「里面加载哪套界面」。
+    /// 客户端窗口里也可能临时切到 console 看一眼设备/截图。
+    /// </summary>
+    private string _shellMode = "popup";
+
     /// <summary>还没收到 web.ack 的消息 id（关窗/自动关闭时按「已读」回报）。</summary>
     private readonly List<long> _pending = new();
 
@@ -125,18 +134,50 @@ public partial class WebHostWindow : Window
     /// <summary>有消息要强提醒：切 Popup 形态 → 显示 → 保证页面已加载。</summary>
     public void ShowPopup()
     {
+        SetShellMode("popup");
         ApplyWindowMode(WindowMode.Popup);
         ShowWindow(alert: true);
         _ = EnsureLoadedAsync();
     }
 
-    /// <summary>托盘打开对话/设置：切标准窗口形态 → 显示 → 加载控制台页面。</summary>
-    public void ShowConsole(string view)
+    /// <summary>
+    /// 托盘打开对话（双击托盘 / 启动）：**消息客户端**形态 —— 只有消息记录 + 回复栏。
+    ///
+    /// 以前这里加载的是 console（完整网页控制台），结果 PC 上弹出了带侧边栏的
+    /// 管理后台，看着就像「打开了一个网页」。客户端窗口不该长成后台的样子。
+    /// </summary>
+    public void ShowClient()
     {
-        _view = view ?? "";
+        _view = "";
+        SetShellMode("client");
         ApplyWindowMode(WindowMode.Window);
         ShowWindow(alert: false);
         _ = EnsureLoadedAsync();
+    }
+
+    /// <summary>托盘打开设置 / 点「控制台」：完整的网页端控制台。</summary>
+    public void ShowConsole(string view)
+    {
+        _view = view ?? "";
+        SetShellMode("console");
+        ApplyWindowMode(WindowMode.Window);
+        ShowWindow(alert: false);
+        _ = EnsureLoadedAsync();
+    }
+
+    /// <summary>
+    /// 切页面模式。模式没变就不重新导航 —— 否则每点一次「控制台」都白屏重载一次。
+    /// </summary>
+    private void SetShellMode(string mode)
+    {
+        if (mode != "popup" && mode != "client" && mode != "console")
+            return;
+        if (_shellMode == mode)
+            return;
+        _shellMode = mode;
+        Bridge.Mode = mode;          // 与桥里的字段保持同步
+        AgentLog.Write($"页面模式 → {mode}");
+        _ = NavigateServerAsync();
     }
 
     /// <summary>连接状态变化 → 转给页面（顶栏状态点）。</summary>
@@ -212,13 +253,24 @@ public partial class WebHostWindow : Window
     /// <summary>页面要求切形态（弹窗里点「打开设置」）。</summary>
     private void SetModeFromPage(string mode)
     {
-        var target = string.Equals(mode, "popup", StringComparison.OrdinalIgnoreCase)
-            ? WindowMode.Popup
-            : WindowMode.Window;
+        var m = (mode ?? "").Trim().ToLowerInvariant();
+        if (m != "popup" && m != "client" && m != "console")
+        {
+            AgentLog.Write($"✗ 页面请求切到不认识的模式（{mode}，已忽略）");
+            return;
+        }
 
-        ApplyWindowMode(target);
+        // 窗口形态跟着页面模式走：popup 全屏置顶，client / console 用普通窗口
+        ApplyWindowMode(m == "popup" ? WindowMode.Popup : WindowMode.Window);
         if (!IsVisible)
             ShowWindow(alert: false);
+
+        // ★ 这里**不重新导航**：页面自己已经换好界面了，再导航一次会把刚切好的
+        //   界面冲掉（并且闪一下白）。宿主发起的切换走 SetShellMode()，那条才导航。
+        _shellMode = m;
+        Bridge.Mode = m;
+        if (m != "console")
+            _view = "";
         Bridge.PostMode();
     }
 
@@ -419,9 +471,8 @@ public partial class WebHostWindow : Window
 
     private string ServerPageUrl()
     {
-        var mode = _mode == WindowMode.Popup ? "popup" : "console";
         var view = string.IsNullOrWhiteSpace(_view) ? "" : "&view=" + Uri.EscapeDataString(_view);
-        return $"{ServerBaseUrl(App.Config is null ? "" : App.Config.ServerUrl)}/?shell=1&mode={mode}{view}";
+        return $"{ServerBaseUrl(App.Config is null ? "" : App.Config.ServerUrl)}/?shell=1&mode={_shellMode}{view}";
     }
 
     /// <summary>

@@ -670,8 +670,10 @@ public partial class App : Application
         if (host is null) return;
         try
         {
-            // 从托盘打开 → 普通窗口形态（有标题栏、可缩放、居中），页面进控制台
-            host.ShowConsole("conversation");
+            // 从托盘打开 → **消息客户端**形态：只有消息记录 + 回复栏。
+            // 不能用 ShowConsole("conversation") —— 那会把带侧边栏的网页管理后台
+            // 整个搬到 PC 上，看着就像「打开了一个网页」。控制台另有入口。
+            host.ShowClient();
             AgentLog.Write($"托盘打开会话：窗口已显示 visible={host.IsVisible} "
                            + $"state={host.WindowState} size={host.Width}x{host.Height} "
                            + $"at=({host.Left},{host.Top})");

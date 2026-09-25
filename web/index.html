@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.12.1">
-<link rel="stylesheet" href="static/style.css?v=0.12.1">
-<link rel="stylesheet" href="static/shell.css?v=0.12.1">
+<link rel="stylesheet" href="static/tokens.css?v=0.12.2">
+<link rel="stylesheet" href="static/style.css?v=0.12.2">
+<link rel="stylesheet" href="static/shell.css?v=0.12.2">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -562,8 +562,58 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
   </footer>
 </div>
 
+<!-- ══ 壳模式 · PC 消息客户端（mode=client）═════════════════════════════
+     托盘里打开的那个普通窗口：只有「消息记录 + 回复栏」，没有任何侧边栏/导航。
+     跟全屏弹窗（mode=popup）是**同一套视觉语言** —— 消息沿用 .popup-msg--lead
+     （最新一条大字）/.popup-msg--prev（更早的单行字幕），回复栏沿用 .popup-reply，
+     响应与提示沿用 .popup-actions__hint，只是装在一个普通窗口里。
+     两处刻意的差异：
+       · 没有「知道了」（那是弹窗强提醒的语义，消息已经在看板上了）
+       · 顶栏给一个「控制台」按钮 → web.switch_mode {mode:'console'}
+     浏览器模式永远不显示（默认 hidden），只在壳里由 shell.js 揭开。 -->
+<div class="shell-client" id="shell-client" hidden>
+  <header class="popup-bar client-bar">
+    <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg></span>
+    <span class="popup-bar__title">家庭消息</span>
+    <span class="client-bar__id" id="client-device" title="这台电脑在服务端登记的名字"></span>
+    <span class="popup-bar__spacer"></span>
+    <span class="popup-bar__conn">
+      <span class="presence" id="client-dot"></span>
+      <span id="client-conn-text">连接中…</span>
+    </span>
+    <button class="btn btn--secondary" id="client-console" title="切换到完整控制台界面">
+      <svg class="btn__icon" aria-hidden="true"><use href="#i-navigation"/></svg>
+      <span>控制台</span>
+    </button>
+  </header>
+
+  <div class="popup-stage client-stage" id="client-stage">
+    <div class="popup-stack client-stack" id="client-stack"></div>
+    <div class="popup-empty client-empty" id="client-empty">
+      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
+      <span class="popup-empty__title" id="client-empty-title">正在读取消息记录…</span>
+      <span class="popup-empty__hint" id="client-empty-hint"></span>
+    </div>
+  </div>
+
+  <footer class="popup-actions client-actions">
+    <div class="popup-reply">
+      <div class="combo" id="client-sender" aria-label="以谁的名义回复"></div>
+      <div class="field">
+        <input class="text-input" id="client-reply-text" maxlength="2000" placeholder="回复一句，回车发送">
+      </div>
+      <button class="icon-btn icon-btn--primary" id="client-reply-send" aria-label="发送回复" title="发送回复">
+        <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
+      </button>
+    </div>
+    <div class="client-actions__row">
+      <span class="popup-actions__hint" id="client-reply-hint" role="status" aria-live="polite"></span>
+    </div>
+  </footer>
+</div>
+
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<script src="static/shell.js?v=0.12.1"></script>
-<script src="static/app.js?v=0.12.1"></script>
+<script src="static/shell.js?v=0.12.2"></script>
+<script src="static/app.js?v=0.12.2"></script>
 </body>
 </html>

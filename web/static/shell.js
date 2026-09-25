@@ -15,7 +15,8 @@
  * 让宿主能如实回报 popup_displayed（提前发就是谎报）。
  * 注意：ack 只在**弹窗形态**发 —— 控制台里消息进的是列表，不是「弹窗已显示」。
  *
- * 形态：host.hello.mode=popup → 全屏消息弹窗；=console → 现有的控制台界面。
+ * 形态：host.hello.mode=popup → 全屏消息弹窗；=client → PC 消息客户端窗口
+ *       （只有消息记录 + 回复栏，见 §6b）；=console → 现有的控制台界面。
  * 之后宿主可以用 host.mode 随时切换，页面里的「打开控制台」也会发 web.switch_mode 请求。
  */
 (function () {
@@ -27,8 +28,8 @@
   var params = new URLSearchParams(location.search);
   var HAS_BRIDGE = !!(window.chrome && window.chrome.webview);
   var IS_SHELL = HAS_BRIDGE || params.get('shell') === '1';
-  var PARAM_MODE = params.get('mode') === 'popup' || params.get('mode') === 'console'
-    ? params.get('mode') : '';
+  var PARAM_MODE = params.get('mode') === 'popup' || params.get('mode') === 'client'
+    || params.get('mode') === 'console' ? params.get('mode') : '';
 
   if (!IS_SHELL) {
     window.FM_SHELL = { enabled: false };
@@ -44,15 +45,27 @@
   var ACTION_TIMEOUT = 20000;    // 等 host.action_result 的兜底时限
   var MAX_HISTORY = 6;           // 弹窗里最多堆几条（最新的 1 条 + 更早的 5 条）
   var OWN_REPLY_CAP = 50;        // 自己回复过的 message_id 记忆上限
+  var CLIENT_HISTORY = 100;      // 客户端进来时拉多少条历史（现有接口的上限内）
+  var CLIENT_MAX_NODES = 300;    // 客户端窗口里最多留多少条 DOM（防长跑无界增长）
+  var CLIENT_STICK_SLACK = 24;   // 离底部多少像素以内算「还贴在底部」
 
   var S = {
-    mode: '',                 // '' | 'popup' | 'console'
+    mode: '',                 // '' | 'popup' | 'client' | 'console'
     helloDone: false,
     pendingHello: '',         // hello 比 start() 先到时先存着
+    deviceId: '',             // host.hello 带来的「我是哪台机器」（拉会话记录要用）
+    deviceName: '',
+    hostNames: null,          // 宿主带来的昵称表（PC 端本地设置这份），没有就用网页端那份
+    hostName: '',             // 宿主默认选中的昵称
     consoleBoot: null,        // app.js 传进来的「起控制台」函数
     consolePromise: null,     // 只跑一次
     consoleBooted: false,
     rendered: [],             // [{ msg, el }] —— 弹窗舞台里已有的消息节点（复用，不重建）
+    clientList: [],           // [{ msg, el }] —— 客户端窗口里的完整消息记录
+    clientLoaded: false,      // 历史拉过没有（同一个形态重复通知时不重复拉）
+    clientLoading: null,      // 拉历史中的 Promise（防重入）
+    clientNote: '',           // 历史没读出来时的原因（空态里如实说明）
+    clientStick: true,        // 记录是否贴在底部；用户往上翻时置 false，别打断他
     ownReplyIds: new Set(),   // 自己回复产生的 message_id（宿主回推时不当新消息弹）
     pendingReply: null,
     replyTimer: null,
@@ -87,25 +100,31 @@
     el.hidden = !on;
   }
 
-  /* ── 3. 状态机：popup / console ─────────────────────────────── */
+  /* ── 3. 状态机：popup / client / console ────────────────────── */
   function setMode(mode, why) {
-    if (mode !== 'popup' && mode !== 'console') return;
+    if (mode !== 'popup' && mode !== 'client' && mode !== 'console') return;
     if (S.mode === mode) {
-      // 已经是这个形态：控制台可能还没起来（弹窗里点「打开控制台」后宿主又发了一次）
+      // 已经是这个形态：界面可能还没起来（宿主又发了一次，或从别处切回来）
       if (mode === 'console') enterConsole();
+      else if (mode === 'client') showClient();
       return;
     }
     console.info('[shell] 切形态 →', mode, why || '');
-    if (mode === 'popup') enterPopup(); else enterConsole();
+    // 供 CSS 用：client 形态要把下面的网页控制台收起来（见 shell.css 15.6）
+    document.documentElement.setAttribute('data-shell-mode', mode);
+    if (mode === 'popup') enterPopup();
+    else if (mode === 'client') enterClient();
+    else enterConsole();
   }
 
   /** 弹窗形态：全屏消息弹窗 */
   function enterPopup() {
     S.mode = 'popup';
+    hideClient();
     var pop = $('shell-popup');
     if (!pop) return;
     pop.hidden = false;
-    ensureSenderCombo();
+    ensureSenderCombo($('popup-sender'));
     renderPopupStack(null);
     // 一进来还没消息：先留在加载态，等第一条消息到了再揭开（避免闪一下空弹窗）
     if (!S.rendered.length) {
@@ -120,6 +139,7 @@
   /** 控制台形态：现有的网页端界面，只是实时事件走桥 */
   function enterConsole() {
     S.mode = 'console';
+    hideClient();
     var pop = $('shell-popup');
     if (pop) pop.hidden = true;
     ensureConsole().then(function () {
@@ -128,6 +148,154 @@
       // 起不来时把加载态收掉，让 app.js 自己的错误提示（口令框 / Toast）露出来
       setBoot(false);
     });
+  }
+
+  /* ── 3b. 客户端形态（mode=client）：只有消息记录 + 回复栏的普通窗口 ────
+     跟弹窗同一套视觉语言（同一批 .popup-* 组件），区别只在：
+       · 没有「知道了」（消息已经在看板上了，不需要人确认）
+       · 没有侧边栏/导航，顶栏给一个「控制台」按钮
+       · 消息是**完整记录**（进形态时拉一次），不是弹窗那最多 6 条的舞台
+     实时事件照旧走桥（host.message），不连 /ws/web。 */
+  function enterClient() {
+    showClient();
+    ensureClientHistory(true);    // 进这个形态时拉一次这台机器的往来记录
+  }
+
+  /** 让客户端窗口就位（不碰 HTTP；宿主重复通知同一个形态时走这里） */
+  function showClient() {
+    S.mode = 'client';
+    var el = $('shell-client');
+    if (!el) return;
+    el.hidden = false;
+    ensureSenderCombo($('client-sender'));
+    bindClientScroll();
+    updateClientEmpty();
+    renderClientStack(null);
+    setBoot(false);
+    focusReply();
+  }
+
+  function hideClient() {
+    var el = $('shell-client');
+    if (el) el.hidden = true;
+  }
+
+  /** 这台机器与 Web Sender 的往来记录：现有接口原样调用，不改路径/结构。
+      宿主在 host.hello 里给了 device_id → GET /api/conversations/{device_id}；
+      老宿主没给 → 退回控制台消息页那个 GET /api/messages。
+      force=true 表示「进这个形态了，重新拉一次」（同一形态重复通知不会重复拉）。 */
+  function ensureClientHistory(force) {
+    if (S.clientLoading) return S.clientLoading;
+    if (S.clientLoaded && !force) return Promise.resolve();
+    S.clientNote = '';
+    updateClientEmpty();          // 先显示「正在读取消息记录…」
+    S.clientLoading = fetchClientHistory().then(function (list) {
+      S.clientLoading = null;
+      S.clientLoaded = true;
+      resetClientStack();
+      S.clientList = list.map(function (m) { return { msg: m, el: null }; });
+      renderClientStack(null);
+      updateClientEmpty();
+      scrollClientToBottom(true);
+    }).catch(function (e) {
+      S.clientLoading = null;
+      S.clientLoaded = true;
+      S.clientNote = (e && e.message) ? e.message : '未知错误';
+      updateClientEmpty();
+    });
+    return S.clientLoading;
+  }
+
+  function fetchClientHistory() {
+    var path = S.deviceId
+      ? '/api/conversations/' + encodeURIComponent(S.deviceId) + '?limit=' + CLIENT_HISTORY
+      : '/api/messages?limit=' + CLIENT_HISTORY;
+    return fmApi(path).then(function (list) {
+      if (!Array.isArray(list)) return [];
+      // 会话接口本来就是时间正序；这里再兜一次，别的接口顺序不同也不会把记录倒过来
+      return list.slice().sort(function (a, b) {
+        return (Number(a && a.id) || 0) - (Number(b && b.id) || 0);
+      });
+    });
+  }
+
+  /** 借用 app.js 那套 api()（同一份 401 → 口令框、同一份错误提示），
+      拿不到（app.js 没加载 / 还没初始化）就退回等价的 fetch。 */
+  function fmApi(path) {
+    var base = '';
+    try { base = BASE; } catch (_) {}
+    try {
+      if (typeof api === 'function') return Promise.resolve(api(path));
+    } catch (_) { /* api 还在 TDZ 里 */ }
+    return fetch(base + path, {
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+    }).then(function (r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  function resetClientStack() {
+    var stack = $('client-stack');
+    if (stack) stack.textContent = '';
+    S.clientList = [];
+  }
+
+  /** 空态文案：加载中 / 还没有往来 / 没读出来（如实说明原因） */
+  function updateClientEmpty() {
+    var title = $('client-empty-title');
+    var hint = $('client-empty-hint');
+    var first = !S.clientLoaded;          // 还在读历史 = 首屏
+    if (title) {
+      title.textContent = S.clientNote ? '没能读取消息记录'
+        : (first ? '正在读取消息记录…' : '还没有往来消息');
+    }
+    if (hint) {
+      hint.textContent = S.clientNote ? ('服务端说：' + S.clientNote)
+        : (first ? '' : '家里人给这台电脑留言、或在这台电脑上回复，都会记在这里。');
+    }
+    var empty = $('client-empty');
+    if (empty) empty.hidden = S.clientList.length > 0;
+  }
+
+  /** 桥推来的新消息：进客户端窗口的记录（贴在底部时自动滚下去） */
+  function pushClient(m) {
+    if (!m || typeof m !== 'object') return;
+    var dup = S.clientList.some(function (r) {
+      return r.msg === m || (m.id != null && r.msg.id === m.id);
+    });
+    if (dup) return;
+    S.clientList.push({ msg: m, el: null });
+    while (S.clientList.length > CLIENT_MAX_NODES) {
+      var gone = S.clientList.shift();
+      if (gone.el) gone.el.remove();
+    }
+    renderClientStack(m);
+    updateClientEmpty();
+  }
+
+  /* 记录是不是还贴着底部：用户往上翻看旧消息时，不把他拽回来 */
+  function clientAtBottom() {
+    var s = $('client-stage');
+    if (!s) return true;
+    return s.scrollHeight - s.scrollTop - s.clientHeight <= CLIENT_STICK_SLACK;
+  }
+
+  function bindClientScroll() {
+    var s = $('client-stage');
+    if (!s || s._fmScrollBound) return;
+    s._fmScrollBound = true;
+    s.addEventListener('scroll', function () { S.clientStick = clientAtBottom(); });
+  }
+
+  /** force=true（刚进来/刚拉完历史）一定滚到底；否则只在本来就贴底时才滚 */
+  function scrollClientToBottom(force) {
+    var s = $('client-stage');
+    if (!s) return;
+    if (!force && !S.clientStick) return;
+    s.scrollTop = s.scrollHeight;
+    S.clientStick = true;
   }
 
   /** 控制台只在需要时初始化一次（弹窗形态下不碰 HTTP，免得在弹窗后面弹口令框） */
@@ -203,15 +371,41 @@
   else window.addEventListener('message', onBridgeMessage);
 
   function onHello(d) {
+    // 「我是哪台机器」—— 客户端形态要用它去拉这台机器的往来记录（协议只加字段）
+    if (d.device_id) S.deviceId = String(d.device_id);
+    if (d.device_name) S.deviceName = String(d.device_name);
+    // PC 端自己那份昵称表（本地设置）：客户端窗口/弹窗的「以谁的名义回复」照它来
+    if (Array.isArray(d.reply_names)) {
+      var ns = d.reply_names.filter(function (n) {
+        return typeof n === 'string' && n.trim();
+      });
+      S.hostNames = ns.length ? ns : null;
+    }
+    if (d.reply_name) S.hostName = String(d.reply_name);
+    applyHostDevice();
+
     if (!S.helloDone) {
       S.helloDone = true;
-      settleHello(d.mode === 'popup' ? 'popup' : 'console');
+      settleHello(normMode(d.mode));
     } else {
       setMode(d.mode, 'host.hello');
     }
     console.info('[shell] 宿主 ' + (d.version || '?') + ' · ' + (d.platform || '?')
       + ' · 服务端 ' + (d.server || '?'));
     applyHostTheme(d.theme_mode);
+  }
+
+  /** 形态取值：popup | client | console（不认识的按 console 处理，跟以前一样） */
+  function normMode(m) {
+    return m === 'popup' || m === 'client' ? m : 'console';
+  }
+
+  /** 顶栏里那行「这台电脑是谁」（宿主给的 device_name / device_id） */
+  function applyHostDevice() {
+    var el = $('client-device');
+    if (!el) return;
+    var name = S.deviceName || S.deviceId;
+    el.textContent = name ? '· ' + name : '';
   }
 
   /** 宿主说 Windows 现在是什么明暗 —— 用户自己没在设置里选过就跟着它 */
@@ -228,9 +422,14 @@
     if (typeof window.setConn === 'function') window.setConn(connected);   // 控制台标题栏那个状态
     var detail = d.detail || (connected ? '已连接' : '连接断开，重连中…');
     var t = $('ws-text'); if (t && d.detail) t.textContent = d.detail;
+    setPresence($('popup-dot'), connected);
+    setPresence($('client-dot'), connected);
     var pt = $('popup-conn-text'); if (pt) pt.textContent = detail;
-    var pd = $('popup-dot');
-    if (pd) pd.className = 'presence ' + (connected ? 'presence--online' : 'presence--offline');
+    var ct = $('client-conn-text'); if (ct) ct.textContent = detail;
+  }
+
+  function setPresence(dot, connected) {
+    if (dot) dot.className = 'presence ' + (connected ? 'presence--online' : 'presence--offline');
   }
 
   /** 宿主推来的消息（壳模式下它就是原来的 /ws/web message 帧） */
@@ -244,6 +443,7 @@
     }
 
     if (S.mode === 'popup') pushPopup(m);
+    else if (S.mode === 'client') pushClient(m);   // 客户端窗口：追加到消息记录
     forwardToConsole(m);
   }
 
@@ -267,8 +467,7 @@
       }
     }
     if (d.status === 'ok') {
-      var input = $('popup-reply-text');
-      if (input && input.value.trim() === sent) input.value = '';
+      clearReplyInput(sent);
       setReplyHint('已回复', 'ok');
     } else if (d.status === 'empty') {
       setReplyHint(d.detail || '内容是空的，没有发出去', 'error');
@@ -314,7 +513,17 @@
       + (caps.length ? '（宿主能力：' + caps.join(' / ') + '）' : '');
   }
 
-  /* ── 6. 弹窗里的消息堆叠 ───────────────────────────────────── */
+  /* ── 6. 消息堆叠（弹窗与客户端窗口共用同一套渲染）─────────────
+     两个形态装的是同一批节点、同一批样式（.popup-msg--lead / --prev），
+     只是容器和条数不同：
+       · popup  —— 全屏舞台，最多 MAX_HISTORY 条（最新一条 + 更早的几条做上下文）
+       · client —— 客户端窗口，完整消息记录（进来时拉的历史 + 桥推来的新消息）
+     一样是「只追加/降级节点，不重建整页」。 */
+  var STACKS = {
+    popup:  { stack: 'popup-stack',  empty: 'popup-empty',  list: function () { return S.rendered; } },
+    client: { stack: 'client-stack', empty: 'client-empty', list: function () { return S.clientList; } },
+  };
+
   function pushPopup(m) {
     if (S.rendered.some(function (r) { return r.msg === m || (m.id != null && r.msg.id === m.id); })) return;
     S.rendered.push({ msg: m, el: null });
@@ -333,13 +542,15 @@
   }
 
   /** 只追加/降级节点，不重建整页（新消息的动画才轻） */
-  function renderPopupStack(newMsg) {
-    var stack = $('popup-stack');
+  function renderStack(which, newMsg) {
+    var spec = STACKS[which];
+    var list = spec.list();
+    var stack = $(spec.stack);
     if (!stack) return;
-    var empty = $('popup-empty');
-    if (empty) empty.hidden = S.rendered.length > 0;
+    var empty = $(spec.empty);
+    if (empty) empty.hidden = list.length > 0;
 
-    S.rendered.forEach(function (r) {
+    list.forEach(function (r) {
       if (!r.el) {
         r.el = buildPopupMsgEl(r.msg);
         if (newMsg && r.msg === newMsg) r.el.classList.add('is-new');
@@ -348,17 +559,27 @@
     });
 
     // 最后一条 = 主角，其余弱化成字幕
-    S.rendered.forEach(function (r, i) {
-      var lead = i === S.rendered.length - 1;
+    list.forEach(function (r, i) {
+      var lead = i === list.length - 1;
       r.el.classList.toggle('popup-msg--lead', lead);
       r.el.classList.toggle('popup-msg--prev', !lead);
       if (lead && r.el.classList.contains('is-new')) {
         setTimeout(function () { r.el.classList.remove('is-new'); }, 400);
       }
     });
+  }
 
+  /** 弹窗那份：渲染完直接把舞台滚到底（弹窗永远只看最新） */
+  function renderPopupStack(newMsg) {
+    renderStack('popup', newMsg);
     var stage = $('popup-stage');
     if (stage) stage.scrollTop = stage.scrollHeight;
+  }
+
+  /** 客户端那份：只有本来就贴着底时才滚 —— 用户正在往上翻旧消息就别打断他 */
+  function renderClientStack(newMsg) {
+    renderStack('client', newMsg);
+    afterPaint(function () { scrollClientToBottom(false); });
   }
 
   function buildPopupMsgEl(m) {
@@ -387,19 +608,32 @@
     return el;
   }
 
-  /* ── 7. 弹窗的回复区 ───────────────────────────────────────── */
-  function ensureSenderCombo() {
-    var host = $('popup-sender');
+  /* ── 7. 回复区（弹窗与客户端窗口共用同一段逻辑）───────────────
+     两套回复栏是同一套组件（.popup-reply + 发送人下拉 + 输入框 + 发送按钮），
+     只是元素 id 不同；同一时刻只有一个形态可见，所以 pendingReply 一份就够。 */
+  var REPLY_BARS = {
+    popup:  { sender: 'popup-sender',  text: 'popup-reply-text',  hint: 'popup-reply-hint' },
+    client: { sender: 'client-sender', text: 'client-reply-text', hint: 'client-reply-hint' },
+  };
+
+  function activeBar() {
+    return S.mode === 'client' ? REPLY_BARS.client : REPLY_BARS.popup;
+  }
+
+  function ensureSenderCombo(host) {
+    if (!host) host = $(activeBar().sender);
     if (!host || typeof window.buildSelect !== 'function') return;
     var list = appNames();
     var items = list.map(function (n) { return { value: n, label: n, color: nickColorOf(n) }; });
-    var cur = popupSender();
+    var cur = barSender(host);
     var val = items.some(function (i) { return i.value === cur; }) ? cur : items[0].value;
     window.buildSelect(host, items, val, function (v) { rememberSenderOf(v); });
   }
 
-  /** 昵称表在浏览器 localStorage 里（服务端不参与），改完昵称要跟着变 */
+  /** 昵称表：壳带来了 PC 端自己那份就用它（客户端窗口就是这台机器在说话），
+      没有则沿用网页端 localStorage 那份 —— 弹窗原来的行为不变。 */
   function appNames() {
+    if (Array.isArray(S.hostNames) && S.hostNames.length) return S.hostNames;
     try {
       return Array.isArray(names) && names.length ? names : ['我'];
     } catch (_) {
@@ -412,13 +646,14 @@
     return '#90CAF9';
   }
 
-  function popupSender() {
-    var host = $('popup-sender');
+  /** 当前选中的发送人（下拉 → 宿主给的默认 → localStorage → 第一个） */
+  function barSender(host) {
+    if (!host) host = $(activeBar().sender);
     var list = appNames();
     var v = host && host._value;
     if (v && list.indexOf(v) >= 0) return v;
-    var last = '';
-    try { last = localStorage.getItem('fm.lastSender') || ''; } catch (_) {}
+    var last = S.hostName || '';
+    if (!last) { try { last = localStorage.getItem('fm.lastSender') || ''; } catch (_) {} }
     return list.indexOf(last) >= 0 ? last : list[0];
   }
 
@@ -435,14 +670,26 @@
   }
 
   function setReplyHint(text, kind) {
-    var el = $('popup-reply-hint');
-    if (!el) return;
-    el.textContent = text || '';
-    el.className = 'popup-actions__hint' + (kind ? ' is-' + kind : '');
+    // 两个形态各有一条提示行：都写一遍，发送途中切形态也不会「回执丢了」
+    Object.keys(REPLY_BARS).forEach(function (k) {
+      var el = $(REPLY_BARS[k].hint);
+      if (!el) return;
+      el.textContent = text || '';
+      el.className = 'popup-actions__hint' + (kind ? ' is-' + kind : '');
+    });
+  }
+
+  /** 回执到了：把「还是刚才那条原文」的输入框清掉（哪个形态都清） */
+  function clearReplyInput(sent) {
+    Object.keys(REPLY_BARS).forEach(function (k) {
+      var input = $(REPLY_BARS[k].text);
+      if (input && input.value.trim() === sent) input.value = '';
+    });
   }
 
   function sendReply() {
-    var input = $('popup-reply-text');
+    var bar = activeBar();
+    var input = $(bar.text);
     if (!input) return;
     var text = (input.value || '').trim();
     if (!text) { setReplyHint('先写点什么再回复', 'error'); input.focus(); return; }
@@ -454,7 +701,7 @@
     post({
       type: 'web.reply',
       client_id: id,
-      sender_name: popupSender(),
+      sender_name: barSender($(bar.sender)),
       content: text,
     });
     S.replyTimer = setTimeout(function () {
@@ -466,7 +713,7 @@
   }
 
   function focusReply() {
-    var input = $('popup-reply-text');
+    var input = $(activeBar().text);
     if (!input || document.activeElement === input) return;
     setTimeout(function () { try { input.focus(); } catch (_) {} }, 60);
   }
@@ -558,7 +805,8 @@
     post({ type: 'web.switch_mode', mode: 'console' });
     // 宿主应当回 host.mode=console；万一没回（老宿主/调试），自己也切过去，
     // 免得点一下什么都没发生 —— 页面自己的形态只是表现层，不影响宿主窗口。
-    setTimeout(function () { if (S.mode === 'popup') setMode('console', 'switch_mode 兜底'); }, 700);
+    // 弹窗里的「打开控制台」和客户端窗口顶栏的「控制台」都走这里。
+    setTimeout(function () { if (S.mode !== 'console') setMode('console', 'switch_mode 兜底'); }, 700);
   }
 
   function quitApp() {
@@ -578,18 +826,27 @@
     var ok = $('popup-ok');
     if (ok) ok.onclick = closePopup;
 
+    // 「打开控制台」：弹窗顶栏与客户端窗口顶栏各一个，同一个动作
     var toConsole = $('popup-console');
     if (toConsole) toConsole.onclick = openConsole;
+    var clientConsole = $('client-console');
+    if (clientConsole) clientConsole.onclick = openConsole;
 
-    var send = $('popup-reply-send');
-    if (send) send.onclick = sendReply;
-
-    var input = $('popup-reply-text');
-    if (input) input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') { e.preventDefault(); sendReply(); }
+    // 两套回复栏（弹窗 / 客户端）绑同一段逻辑
+    Object.keys(REPLY_BARS).forEach(function (k) {
+      var bar = REPLY_BARS[k];
+      var input = $(bar.text);
+      if (!input) return;
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); sendReply(); }
+      });
+    });
+    ['popup-reply-send', 'client-reply-send'].forEach(function (id) {
+      var send = $(id);
+      if (send) send.onclick = sendReply;
     });
 
-    // Esc = 知道了（只有弹窗形态、且不在输入里时才抢）
+    // Esc = 知道了（只有弹窗形态、且不在输入里时才抢；客户端窗口不关窗）
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'Escape' || S.mode !== 'popup') return;
       var t = document.activeElement;
@@ -605,8 +862,11 @@
   window.FM_SHELL = {
     enabled: true,
     start: start,
-    // app.js 改完昵称后同步弹窗里的发送人下拉
-    syncNames: function () { if (S.mode === 'popup') ensureSenderCombo(); },
+    // app.js 改完昵称后同步两套回复栏里的发送人下拉
+    syncNames: function () {
+      if (S.mode === 'popup') ensureSenderCombo($('popup-sender'));
+      else if (S.mode === 'client') ensureSenderCombo($('client-sender'));
+    },
     mode: function () { return S.mode; },
     requestScreenshot: requestScreenshot,
     requestAction: requestAction,

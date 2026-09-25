@@ -53,6 +53,10 @@ public sealed class JsBridge
             // 昵称列表是纯本地设置，页面照着 PC 这份来（协议「只加字段」，这是新增字段）
             reply_names = names,
             reply_name = cfg is null ? "" : cfg.ReplyName,
+            // 页面要拿它去 GET /api/conversations/{device_id} 拉这台机器的往来记录 ——
+            // 客户端视图只关心「我这台机器」的会话，不是整个家庭的消息
+            device_id = cfg is null ? "" : cfg.DeviceId,
+            device_name = cfg is null ? "" : cfg.DeviceName,
         });
     }
 
@@ -307,8 +311,10 @@ public sealed class JsBridge
 
                 case "web.switch_mode":
                 {
-                    var mode = GetString(root, "mode");
-                    if (mode != "popup" && mode != "console")
+                    var mode = (GetString(root, "mode") ?? "").Trim().ToLowerInvariant();
+                    // client = 消息客户端窗口（只有消息记录 + 回复栏），
+                    // 跟 popup（全屏强提醒）、console（完整网页控制台）并列的第三种形态
+                    if (mode != "popup" && mode != "client" && mode != "console")
                     {
                         AgentLog.Write($"✗ 桥：web.switch_mode 的 mode 不认识（{mode}，已忽略）");
                         return;
