@@ -15,9 +15,10 @@
  * 让宿主能如实回报 popup_displayed（提前发就是谎报）。
  * 注意：ack 只在**弹窗形态**发 —— 控制台里消息进的是列表，不是「弹窗已显示」。
  *
- * 形态：host.hello.mode=popup → 全屏消息弹窗；=client → PC 消息客户端窗口
- *       （只有消息记录 + 回复栏，见 §6b）；=console → 现有的控制台界面。
- * 之后宿主可以用 host.mode 随时切换，页面里的「打开控制台」也会发 web.switch_mode 请求。
+ * 形态：host.hello.mode=popup → 全屏消息弹窗；=client → PC 群聊客户端窗口
+ *       （只有群聊消息流 + 回复栏，见 §6b）；=console → 网页端那个完整控制台界面。
+ * 形态由**宿主**用 host.hello/host.mode 决定；页面自己**不再**发 web.switch_mode
+ * （两个「控制台」按钮已从页面删掉：PC 端不展示设备管理，设备页只在 NAS 网页端）。
  */
 (function () {
   'use strict';
@@ -53,7 +54,7 @@
     mode: '',                 // '' | 'popup' | 'client' | 'console'
     helloDone: false,
     pendingHello: '',         // hello 比 start() 先到时先存着
-    deviceId: '',             // host.hello 带来的「我是哪台机器」（拉会话记录要用）
+    deviceId: '',             // host.hello 带来的「我是哪台机器」（顶栏本机标识用）
     deviceName: '',
     hostNames: null,          // 宿主带来的昵称表（PC 端本地设置这份），没有就用网页端那份
     hostName: '',             // 宿主默认选中的昵称
@@ -150,15 +151,15 @@
     });
   }
 
-  /* ── 3b. 客户端形态（mode=client）：只有消息记录 + 回复栏的普通窗口 ────
+  /* ── 3b. 客户端形态（mode=client）：群聊视图 —— 消息流 + 回复栏 ────
      跟弹窗同一套视觉语言（同一批 .popup-* 组件），区别只在：
        · 没有「知道了」（消息已经在看板上了，不需要人确认）
-       · 没有侧边栏/导航，顶栏给一个「控制台」按钮
-       · 消息是**完整记录**（进形态时拉一次），不是弹窗那最多 6 条的舞台
+       · 没有侧边栏/导航，**也没有「控制台」入口**（设备页只在 NAS 网页端显示）
+       · 消息是**整个群聊的完整记录**（进形态时拉一次），不是弹窗那最多 6 条的舞台
      实时事件照旧走桥（host.message），不连 /ws/web。 */
   function enterClient() {
     showClient();
-    ensureClientHistory(true);    // 进这个形态时拉一次这台机器的往来记录
+    ensureClientHistory(true);    // 进这个形态时拉一次群聊记录
   }
 
   /** 让客户端窗口就位（不碰 HTTP；宿主重复通知同一个形态时走这里） */
@@ -180,9 +181,9 @@
     if (el) el.hidden = true;
   }
 
-  /** 这台机器与 Web Sender 的往来记录：现有接口原样调用，不改路径/结构。
-      宿主在 host.hello 里给了 device_id → GET /api/conversations/{device_id}；
-      老宿主没给 → 退回控制台消息页那个 GET /api/messages。
+  /** 群聊流：**不按设备拉**，就是这个共享空间里最近的一批消息。
+      现有接口原样调用（GET /api/messages），不改路径/结构；它对外只有单一状态
+      status="sent"，所以客户端窗口也没有逐设备状态可展示。
       force=true 表示「进这个形态了，重新拉一次」（同一形态重复通知不会重复拉）。 */
   function ensureClientHistory(force) {
     if (S.clientLoading) return S.clientLoading;
@@ -207,12 +208,9 @@
   }
 
   function fetchClientHistory() {
-    var path = S.deviceId
-      ? '/api/conversations/' + encodeURIComponent(S.deviceId) + '?limit=' + CLIENT_HISTORY
-      : '/api/messages?limit=' + CLIENT_HISTORY;
-    return fmApi(path).then(function (list) {
+    return fmApi('/api/messages?limit=' + CLIENT_HISTORY).then(function (list) {
       if (!Array.isArray(list)) return [];
-      // 会话接口本来就是时间正序；这里再兜一次，别的接口顺序不同也不会把记录倒过来
+      // 群聊流接口是**新→旧**；消息记录要从上往下读，统一成时间正序（旧→新）
       return list.slice().sort(function (a, b) {
         return (Number(a && a.id) || 0) - (Number(b && b.id) || 0);
       });
@@ -242,18 +240,18 @@
     S.clientList = [];
   }
 
-  /** 空态文案：加载中 / 还没有往来 / 没读出来（如实说明原因） */
+  /** 空态文案：加载中 / 群里还没有消息 / 没读出来（如实说明原因） */
   function updateClientEmpty() {
     var title = $('client-empty-title');
     var hint = $('client-empty-hint');
     var first = !S.clientLoaded;          // 还在读历史 = 首屏
     if (title) {
-      title.textContent = S.clientNote ? '没能读取消息记录'
-        : (first ? '正在读取消息记录…' : '还没有往来消息');
+      title.textContent = S.clientNote ? '没能读取群聊消息'
+        : (first ? '正在读取消息记录…' : '群里还没有消息');
     }
     if (hint) {
       hint.textContent = S.clientNote ? ('服务端说：' + S.clientNote)
-        : (first ? '' : '家里人给这台电脑留言、或在这台电脑上回复，都会记在这里。');
+        : (first ? '' : '家里人在群里说的、和这台电脑回复的，都在这里，靠昵称区分谁说的。');
     }
     var empty = $('client-empty');
     if (empty) empty.hidden = S.clientList.length > 0;
@@ -371,7 +369,8 @@
   else window.addEventListener('message', onBridgeMessage);
 
   function onHello(d) {
-    // 「我是哪台机器」—— 客户端形态要用它去拉这台机器的往来记录（协议只加字段）
+    // 「我是哪台机器」—— 群聊模型下不再用它拉记录（客户端窗口拉的是共享空间
+    // 的群聊流），只用于顶栏那个本机标识（协议只加字段，一个都没改）
     if (d.device_id) S.deviceId = String(d.device_id);
     if (d.device_name) S.deviceName = String(d.device_name);
     // PC 端自己那份昵称表（本地设置）：客户端窗口/弹窗的「以谁的名义回复」照它来
@@ -605,7 +604,21 @@
     body.textContent = m.content == null ? '' : String(m.content);
 
     el.append(head, body);
+
+    // 群聊模型：**只有一种状态 —— 已发送**。逐设备状态（已送达 / 已显示）
+    // 服务端都不再对外暴露，这里也就不可能有第二种。跟网页端同一个 .status 组件。
+    el.appendChild(buildSentTag());
+
     return el;
+  }
+
+  /** 单一「已发送」标签（网页端 .status / .status--sent，跨端同一套样式） */
+  function buildSentTag() {
+    var tag = document.createElement('span');
+    tag.className = 'popup-msg__status status status--sent';
+    if (typeof window.icon === 'function') tag.appendChild(window.icon('check', 'icon icon--xs'));
+    tag.appendChild(Object.assign(document.createElement('span'), { textContent: '已发送' }));
+    return tag;
   }
 
   /* ── 7. 回复区（弹窗与客户端窗口共用同一段逻辑）───────────────
@@ -801,13 +814,8 @@
     if (S.replyTimer) { clearTimeout(S.replyTimer); S.replyTimer = null; }
   }
 
-  function openConsole() {
-    post({ type: 'web.switch_mode', mode: 'console' });
-    // 宿主应当回 host.mode=console；万一没回（老宿主/调试），自己也切过去，
-    // 免得点一下什么都没发生 —— 页面自己的形态只是表现层，不影响宿主窗口。
-    // 弹窗里的「打开控制台」和客户端窗口顶栏的「控制台」都走这里。
-    setTimeout(function () { if (S.mode !== 'console') setMode('console', 'switch_mode 兜底'); }, 700);
-  }
+  /* 「打开控制台」已随群聊模型去掉：PC 端不展示设备管理（设备页只在 NAS 网页端）。
+     页面不再发 web.switch_mode —— 形态由宿主用 host.mode 决定。 */
 
   function quitApp() {
     var ask = typeof window.confirmDialog === 'function'
@@ -826,11 +834,7 @@
     var ok = $('popup-ok');
     if (ok) ok.onclick = closePopup;
 
-    // 「打开控制台」：弹窗顶栏与客户端窗口顶栏各一个，同一个动作
-    var toConsole = $('popup-console');
-    if (toConsole) toConsole.onclick = openConsole;
-    var clientConsole = $('client-console');
-    if (clientConsole) clientConsole.onclick = openConsole;
+    // 「控制台」按钮已从页面删掉（PC 端不展示设备管理），这里不再绑 web.switch_mode。
 
     // 两套回复栏（弹窗 / 客户端）绑同一段逻辑
     Object.keys(REPLY_BARS).forEach(function (k) {

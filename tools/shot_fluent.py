@@ -62,16 +62,9 @@ def main():
         shoot(page, "1440-home-light")
 
         nav(page, "messages")
-        shoot(page, "1440-messages-light")          # 消息状态徽标
+        shoot(page, "1440-messages-light")          # 群聊流：每条一个「已发送」
         nav(page, "devices")
         shoot(page, "1440-devices-light")
-
-        # 对话对话框
-        page.locator(".dev__acts .btn", has_text="对话").first.click()
-        page.wait_for_timeout(900)
-        shoot(page, "dialog-conv-light")
-        page.click("#conv-close")
-        page.wait_for_timeout(400)
 
         # 关机确认（Fluent ContentDialog）
         page.locator(".dev__acts .btn", has_text="关机").first.click()
@@ -155,11 +148,6 @@ def main():
         shoot(page, "390-drawer-light")
         page.click("#nav-scrim")
         page.wait_for_timeout(400)
-        # 对话框在手机上是底部浮层
-        nav(page, "devices", mobile=True)
-        page.locator(".dev__acts .btn", has_text="对话").first.click()
-        page.wait_for_timeout(900)
-        shoot(page, "390-dialog-light")
         ctx.close()
 
         ctx, page = open_page(browser, 360, 780, "dark", "home")

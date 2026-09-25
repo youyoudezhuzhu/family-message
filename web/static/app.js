@@ -14,6 +14,16 @@
  *   以及一个「远程解锁」按钮；解锁请求用现有 Web 会话下发（不弹第二个密码框），
  *   结果由 /ws/web 的 unlock_result 帧推回。见 B5b / B6b。
  *
+ * 追加（群聊模型，见 docs/GROUP-CHAT-MODEL.md）：家庭留言**不是设备间投递，是群聊**。
+ *   一条消息发进一个共享空间，所有已注册设备都能看到，谁说的完全靠昵称区分。
+ *   这次改动（只在表现层与交互层，API 路径 / 请求体结构 / WS 帧格式一律没动）：
+ *     · 发送区去掉「发送给」设备选择与快捷设备网格 —— 只留 昵称 + 内容 + 发送，
+ *       请求体里不再带 targets（字段本身保留，服务端自动广播给所有设备）
+ *     · 消息记录是一条统一的群聊流，每条只有 昵称 + 内容 + 时间 + 「已发送」
+ *       （已送达 / 已显示 / popup_displayed 这类逐设备状态展示全部移除）
+ *     · 设备页完整保留（截图 / 远程关机 / 远程解锁 / 在线状态一律没动）
+ *     · 「与某台设备的对话」弹窗随设备间投递语义一起去掉：消息只有一个共同空间
+ *
  * 追加（WebView2 壳模式，纯分支，不动上面任何东西）：
  *   PC 端改成「WebView2 壳加载这个页面」，同一个网页既能当浏览器控制台，
  *   也能当原生应用界面（含全屏消息弹窗）。壳的判定、桥协议、弹窗视图全在
@@ -25,14 +35,10 @@
  *   浏览器模式下这三处都不触发，行为与改动前逐字节等价。
  */
 
-const STATE_ORDER = ['created', 'server_received', 'device_received', 'popup_displayed', 'read'];
-const STATE_LABEL = {
-  created: '已创建',
-  server_received: '服务器已接收',
-  device_received: 'PC 已收到',
-  popup_displayed: '弹窗已显示',
-  read: '已读',
-};
+/* 消息状态：群聊模型下只有一种 —— 已发送。
+   逐设备状态表（created / server_received / device_received / popup_displayed / read）
+   及其颜色映射已随「设备间投递」模型一起删除。 */
+const STATUS_SENT = { cls: 'status--sent', icon: 'check', label: '已发送' };
 const QUICK = ['下来吃饭了', '该睡觉了', '有人找你', '快出来一下', '开会中，勿扰'];
 
 /* 裸端口访问时 BASE=""；走飞牛网关时 BASE="/app/family-message"。 */
@@ -58,7 +64,7 @@ const api = async (path, opts = {}) => {
   return res.json();
 };
 
-let state = { config: null, devices: [], messages: [], selected: new Set(), limit: 30 };
+let state = { config: null, devices: [], messages: [], limit: 30 };
 
 /* ══════════════════════════════════════════════════════════════
    A. 表现层
@@ -240,7 +246,7 @@ document.addEventListener('keydown', (e) => {
   const top = dialogStack[dialogStack.length - 1];
   // 有输入焦点时不抢 Esc（避免打断输入法）
   const t = document.activeElement;
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && t.id !== 'conv-text') return;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
   const btn = top.querySelector('.dialog__head .icon-btn');
   if (btn) btn.click();
 });
@@ -484,20 +490,10 @@ async function loadVersion() {
 /* ── B5. 设备 ────────────────────────────────────────────────── */
 async function loadDevices() {
   state.devices = await api('/api/devices');
-  if (state.selected.size === 0) {
-    state.devices.filter((d) => d.online).forEach((d) => state.selected.add(d.device_id));
-  } else {
-    const ids = new Set(state.devices.map((d) => d.device_id));
-    [...state.selected].forEach((id) => { if (!ids.has(id)) state.selected.delete(id); });
-  }
   renderDevices();
   renderHomeDevices();
-  renderTargets();
   renderXmPcPick();
   renderShotPicks();
-  // 消息里的投递标签要显示设备「名字」，设备列表晚于消息到达时
-  // 之前渲染出来的会一直是 fallback 的 device_id，这里补一次。
-  renderMessages();
 }
 
 /** 首页顶部的一排在线设备（只读展示；点一下去设备页） */
@@ -515,8 +511,8 @@ function renderHomeDevices() {
   $('home-sub').textContent = state.devices.length === 0
     ? '还没有设备接入。在 Windows PC 上跑起 Family Agent 就会出现在这里。'
     : (online.length
-        ? `${online.length} 台电脑在线，留言会直接弹到它们的屏幕上。`
-        : '电脑都不在线，留言会在它们上线后补投。');
+        ? `${online.length} 台电脑在线，发一条消息它们都会看到。`
+        : '电脑都不在线，消息会在它们上线后送到。');
 
   list.forEach((d) => {
     const el = document.createElement('button');
@@ -708,8 +704,8 @@ function renderDevices() {
     const acts = document.createElement('div');
     acts.className = 'dev__acts';
 
-    // 对话 / 查看桌面：次要操作 → Secondary
-    acts.appendChild(mkBtn('对话', 'chat', 'btn--secondary', () => deviceAction(d, 'conv')));
+    // 查看桌面：次要操作 → Secondary
+    // （「对话」入口已随设备间投递语义移除：消息只有一个共同的群聊空间）
     const shotBtn = mkBtn('桌面', 'camera', 'btn--secondary', () => deviceAction(d, 'shot'));
     if (!d.online) shotBtn.disabled = true;
     acts.appendChild(shotBtn);
@@ -764,46 +760,9 @@ function mkBtn(text, iconName, variant, onclick) {
   return b;
 }
 
-function renderTargets() {
-  const box = $('targets');
-  box.innerHTML = '';
-
-  if (state.devices.length === 0) {
-    const hint = document.createElement('span');
-    hint.className = 'text-caption text-tertiary';
-    hint.textContent = '还没有设备';
-    box.appendChild(hint);
-  }
-
-  state.devices.forEach((d) => {
-    const on = state.selected.has(d.device_id);
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'chip';
-    el.setAttribute('aria-pressed', on ? 'true' : 'false');
-    if (!d.online) el.setAttribute('aria-disabled', 'true');
-
-    const dot = document.createElement('span');
-    dot.className = 'presence ' + (d.online ? 'presence--online' : 'presence--offline');
-    const t = document.createElement('span');
-    t.textContent = d.name;
-    el.append(dot, t);
-    el.onclick = () => {
-      if (state.selected.has(d.device_id)) state.selected.delete(d.device_id);
-      else state.selected.add(d.device_id);
-      renderTargets();
-    };
-    box.appendChild(el);
-  });
-  $('btn-send').disabled = state.selected.size === 0;
-}
-
 /* ── B6. 设备动作 ────────────────────────────────────────────── */
 async function deviceAction(d, act) {
-  if (act === 'conv') {
-    openConversation(d);
-
-  } else if (act === 'shot') {
+  if (act === 'shot') {
     openShot(d);
 
   } else if (act === 'wake') {
@@ -923,29 +882,30 @@ function onUnlockResult(msg) {
 }
 
 /* ── B7. 消息 ────────────────────────────────────────────────── */
+/** 发一条消息进群聊：只带昵称 + 内容，服务端自动广播给所有已注册设备。 */
 async function sendMessage() {
   const content = $('content').value.trim();
   if (!content) { snack('先写点什么再发吧', { error: true }); return; }
-  if (state.selected.size === 0) { snack('还没有选接收的设备', { error: true }); return; }
 
   const btn = $('btn-send');
   btn.disabled = true;
   $('send-hint').textContent = '发送中……';
   try {
+    // 群聊模型：不传 targets（没有「发送给」这一步）。字段服务端保留了但会忽略。
     const r = await api('/api/messages', {
       method: 'POST',
       body: JSON.stringify({
         sender_name: currentSender(),
         content,
-        targets: [...state.selected],
       }),
     });
     $('content').value = '';
+    // offline 只是「本次即时推送没送到的设备」，不是消息状态 —— 它们上线后照样会看到。
     const off = r.offline || [];
     $('send-hint').textContent = '';
     snack(off.length
-      ? `已发送；${off.length} 个设备离线，会在上线后补投`
-      : '已送达设备', { action: '知道了' });
+      ? `已发送（${off.length} 台设备离线，上线后也能看到）`
+      : '已发送，在线的设备都能看到', { action: '知道了' });
     upsertMessage(r.message);
   } catch (e) {
     $('send-hint').textContent = '';
@@ -966,16 +926,6 @@ function upsertMessage(msg) {
   renderMessages();
 }
 
-/* 投递状态 → Fluent Badge：颜色 + 图标 + 文字三重表达（不只靠颜色） */
-const STATUS_STYLE = {
-  created:          { cls: 'status--sent',      icon: 'refresh' },
-  server_received:  { cls: 'status--sent',      icon: 'sync' },
-  device_received:  { cls: 'status--delivered', icon: 'check' },
-  popup_displayed:  { cls: 'status--displayed', icon: 'check' },
-  read:             { cls: 'status--read',      icon: 'check-circle' },
-};
-const STATUS_FALLBACK = { cls: 'status--failed', icon: 'warning' };
-
 /** 一条消息的 DOM（列表页与首页「最近消息」共用） */
 function buildMsgEl(m) {
   const el = document.createElement('article');
@@ -991,13 +941,6 @@ function buildMsgEl(m) {
   who.textContent = m.sender_name;
   head.appendChild(who);
 
-  if (m.sender_kind === 'device') {
-    const badge = document.createElement('span');
-    badge.className = 'msg__badge';
-    badge.textContent = 'PC 回复';
-    head.appendChild(badge);
-  }
-
   const time = document.createElement('span');
   time.className = 'msg__time';
   time.textContent = m.created_at;
@@ -1009,23 +952,18 @@ function buildMsgEl(m) {
 
   el.append(head, body);
 
-  // 设备回复的接收方是「Web Sender」统一入口，没有逐设备投递状态
-  if (m.sender_kind !== 'device' && (m.targets || []).length) {
-    const tags = document.createElement('div');
-    tags.className = 'msg__tags';
-    m.targets.forEach((t) => {
-      const dev = state.devices.find((d) => d.device_id === t.device_id);
-      const st = STATUS_STYLE[t.status] || STATUS_FALLBACK;
-      const tag = document.createElement('span');
-      tag.className = 'status ' + st.cls;
-      tag.append(icon(st.icon, 'icon icon--xs'),
-                 Object.assign(document.createElement('span'), {
-                   textContent: `${dev ? dev.name : t.device_id} · ${STATE_LABEL[t.status] || t.status}`,
-                 }));
-      tags.appendChild(tag);
-    });
-    el.appendChild(tags);
-  }
+  // 群聊模型：**只有一种状态 —— 已发送**。
+  // 谁说的靠昵称区分，不靠「PC 回复」之类的来源徽标；
+  // 逐设备的 已送达 / 已显示 也全部去掉（服务端只对外暴露单一 status="sent"）。
+  const tags = document.createElement('div');
+  tags.className = 'msg__tags';
+  const tag = document.createElement('span');
+  tag.className = 'status ' + STATUS_SENT.cls;
+  tag.append(icon(STATUS_SENT.icon, 'icon icon--xs'),
+             Object.assign(document.createElement('span'), { textContent: STATUS_SENT.label }));
+  tags.appendChild(tag);
+  el.appendChild(tags);
+
   return el;
 }
 
@@ -1122,73 +1060,6 @@ async function fetchShot() {
   }
 }
 
-/* ── B9. 对话视图（Web Sender ⇄ 某台设备）────────────────────── */
-let convDevice = null;
-
-async function openConversation(device) {
-  convDevice = device;
-  $('conv-title').textContent = device.name;
-  $('conv-state').textContent = device.online ? '在线' : '离线（消息会在它上线后补投）';
-  renderNameSelectors();
-  openDialog($('dlg-conv'), $('conv-text'));
-  await refreshConversation();
-}
-
-async function refreshConversation() {
-  if (!convDevice) return;
-  try {
-    const list = await api(`/api/conversations/${convDevice.device_id}?limit=100`);
-    const box = $('conv-body');
-    box.innerHTML = '';
-    if (list.length === 0) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.appendChild(icon('chat', 'icon icon--lg'));
-      empty.append(
-        Object.assign(document.createElement('span'), { className: 'empty__title', textContent: '还没有往来消息' }),
-        Object.assign(document.createElement('span'), { className: 'empty__hint', textContent: '在下面输入一条，PC 上会立刻弹窗。' }),
-      );
-      box.appendChild(empty);
-    }
-    list.forEach((m) => {
-      const b = document.createElement('div');
-      b.className = 'bubble ' + (m.sender_kind === 'device' ? 'bubble--out' : '');
-      b.style.setProperty('--msg-nick', nickColor(m.sender_name));
-      const meta = document.createElement('span');
-      meta.className = 'bubble__meta';
-      meta.textContent = `${m.sender_name} · ${m.created_at}`;
-      const text = document.createElement('span');
-      text.textContent = m.content;
-      b.append(meta, text);
-      box.appendChild(b);
-    });
-    box.scrollTop = box.scrollHeight;
-  } catch (e) {
-    $('conv-body').textContent = '加载失败：' + e.message;
-  }
-}
-
-async function sendFromConversation() {
-  if (!convDevice) return;
-  const text = $('conv-text').value.trim();
-  if (!text) return;
-  const who = $('conv-sender-sel')._value || names[0];
-  try {
-    await api('/api/messages', {
-      method: 'POST',
-      body: JSON.stringify({
-        sender_name: who,
-        content: text,
-        targets: [convDevice.device_id],
-      }),
-    });
-    $('conv-text').value = '';
-    await refreshConversation();
-  } catch (e) {
-    $('conv-state').textContent = '发送失败：' + e.message;
-  }
-}
-
 /* ── B10. WebSocket 实时事件 ─────────────────────────────────── */
 function setConn(on) {
   $('ws-dot').className = 'presence ' + (on ? 'presence--online' : 'presence--offline');
@@ -1222,19 +1093,9 @@ function handleServerFrame(d) {
     onUnlockResult(d);
   } else if (d.type === 'message') {
     upsertMessage(d.message);
-    if (convDevice) {
-      const m = d.message;
-      const mine = m.sender_device_id === convDevice.device_id ||
-        (m.targets || []).some((t) => t.device_id === convDevice.device_id);
-      if (mine) refreshConversation();
-    }
   } else if (d.type === 'message_status') {
-    const m = state.messages.find((x) => x.id === d.message_id);
-    if (m) {
-      const t = (m.targets || []).find((x) => x.device_id === d.device_id);
-      if (t && d.target) Object.assign(t, d.target);
-      renderMessages();
-    }
+    // 逐设备状态上报（ack / popup_displayed）链路服务端仍然保留，但群聊模型下
+    // 一条消息只有一个「已发送」——所以这里**故意什么都不做**，不要"修好"它。
   } else if (d.type === 'wake') {
     snack(`${d.result.plug || '米家设备'} 已开启，等待 PC 上线……`);
   } else if (d.type === 'xiaomi') {
@@ -1281,15 +1142,11 @@ function currentSender() {
   return names.includes(last) ? last : names[0];
 }
 
-/** 把本地昵称同步到两个下拉框（主发送区 + 对话窗） */
+/** 把本地昵称同步到发送区那个下拉框（群聊模型下只有这一个） */
 function renderNameSelectors() {
   const items = names.map((n) => ({ value: n, label: n, color: nickColor(n) }));
 
   buildSelect($('sender-sel'), items, currentSender(), (v) => rememberSender(v));
-
-  const convKeep = $('conv-sender-sel')._value;
-  const convVal = names.includes(convKeep) ? convKeep : names[0];
-  buildSelect($('conv-sender-sel'), items, convVal, null);
 
   renderNamesList();
 
@@ -1814,12 +1671,6 @@ $('nav-scrim').onclick = closeNavDrawer;
 
 $('shot-again').onclick = fetchShot;
 
-$('conv-close').onclick = () => { closeDialog($('dlg-conv')); convDevice = null; };
-$('dlg-conv').onclick = (e) => { if (e.target.id === 'dlg-conv') { closeDialog($('dlg-conv')); convDevice = null; } };
-$('conv-send').onclick = sendFromConversation;
-$('conv-text').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') { e.preventDefault(); sendFromConversation(); }
-});
 $('content').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
 });

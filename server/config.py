@@ -20,6 +20,9 @@ _DEFAULTS: dict = {
         "auto_register": True,
         "offline_after_seconds": 45,
     },
+    # ── 群聊模型（docs/GROUP-CHAT-MODEL.md）───────────────────────────
+    # max_targets 已废弃：接收方不再由前端指定，服务端自动广播给全部已注册设备。
+    # 保留键值只为兼容老配置文件（代码里已不再校验）。
     "message": {"popup_auto_close_seconds": 0, "max_targets": 20, "history_limit": 30},
     "xiaomi": {
         # 官方 OAuth2（不保存账号密码）：redirect_url 必须是小米那边为该 client_id
