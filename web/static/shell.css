@@ -14,7 +14,8 @@
      · 启动加载态（第一帧的中性画面）的关键样式 **内联在 index.html 的 <head>**
        —— 它必须在任何外链样式到达前就把底色和布局定死，否则会闪白/闪错布局；
        这里不再重复第二份。
-     · 本文件负责：壳模式下的控制台微调 + 全屏消息弹窗（popup）视图。
+     · 本文件负责：壳模式下的控制台微调 + 全屏消息弹窗（popup）视图
+       + PC 消息客户端窗口（client）视图（见 15.6）。
    ═══════════════════════════════════════════════════════════════ */
 
 /* ══════════════════════════════════════════════════════════════
@@ -225,3 +226,47 @@ html[data-shell="1"] #btn-quit { display: inline-flex; }
 
 /* 本机 Windows 会话徽标复用设备卡片上的 .winstate 组件，加个前缀不抢层级 */
 .shell-local { max-width: 220px; }
+
+/* ══════════════════════════════════════════════════════════════
+   15.6 PC 消息客户端窗口（mode=client）
+   ──────────────────────────────────────────────────────────────
+   托盘打开的那个普通窗口：只有「消息记录 + 回复栏」，没有侧边栏/导航。
+   它**不是新的一套样式** —— 顶栏复用 .popup-bar、消息区复用 .popup-stage /
+   .popup-stack、消息复用 .popup-msg--lead（最新一条大字）/.popup-msg--prev
+   （更早的单行字幕）、回复栏复用 .popup-reply、提示复用 .popup-actions__hint，
+   跟全屏弹窗是同一套视觉语言。这里只写「装在普通窗口里」需要的几处差异。
+
+   浏览器模式看不到这一层：.shell-client 默认 hidden，只有壳里才被揭开。
+   ══════════════════════════════════════════════════════════════ */
+.shell-client {
+  position: fixed; inset: 0;
+  /* 层号取 --z-flyout(60)：在普通内容之上，但在启动加载态(70)/Dialog(80)/
+     Toast(100) 之下 —— 口令对话框必须能盖住它。全屏弹窗是 200，不是这一层。 */
+  z-index: var(--z-flyout);
+  display: flex; flex-direction: column;
+  background: var(--fluent-color-background);
+  color: var(--fluent-color-text);
+}
+.shell-client[hidden] { display: none; }
+
+/* client 形态下把网页控制台整个收起来 —— 它就在下面一层，不收起来会在窗口
+   边缘露出侧边栏和滚动条。Dialog / Toast 不在 .app-shell 里，所以口令框、
+   Toast 仍然能正常浮在客户端之上。 */
+html[data-shell-mode="client"] .app-shell { display: none; }
+
+/* 顶栏：跟弹窗同一条信息条，只多一行「这台电脑是谁」 */
+.client-bar__id {
+  font: var(--font-caption); color: var(--fluent-color-text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 200px;
+}
+.client-bar__id:empty { display: none; }
+
+/* 消息记录：从顶部往下排（弹窗是「一屏大字」的舞台，客户端是滚动的记录），
+   比容器高时自然滚动；最新一条仍然是大字主条，跟弹窗一致。 */
+.client-stack { margin: 0 auto; }
+
+/* 回复栏：只有「输入 + 提示」两行，没有「知道了」那一行 */
+.client-actions__row {
+  display: flex; align-items: center; min-height: 16px;
+}
