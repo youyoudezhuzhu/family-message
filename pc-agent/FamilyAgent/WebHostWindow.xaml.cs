@@ -158,26 +158,45 @@ public partial class WebHostWindow : Window
     /// <summary>托盘打开设置 / 点「控制台」：完整的网页端控制台。</summary>
     public void ShowConsole(string view)
     {
-        _view = view ?? "";
-        SetShellMode("console");
+        SetShellMode("console", view ?? "");
         ApplyWindowMode(WindowMode.Window);
         ShowWindow(alert: false);
         _ = EnsureLoadedAsync();
     }
 
     /// <summary>
-    /// 切页面模式。模式没变就不重新导航 —— 否则每点一次「控制台」都白屏重载一次。
+    /// 切页面模式（可同时指定控制台的 view）。
+    ///
+    /// 分两种情况，别一律重新导航：
+    ///   · 已经在正式页面上、只是换形态 → 用 <c>host.mode</c> 通知，**页面自己切视图**
+    ///     （重新导航会丢页面状态，还会闪白一下）
+    ///   · 还没加载过、或要换 view 参数（view 只存在于网址里）→ 必须重新导航
     /// </summary>
-    private void SetShellMode(string mode)
+    private void SetShellMode(string mode, string? view = null)
     {
         if (mode != "popup" && mode != "client" && mode != "console")
             return;
-        if (_shellMode == mode)
+
+        var viewChanged = view is not null && view != _view;
+        if (_shellMode == mode && !viewChanged)
             return;
+
         _shellMode = mode;
         Bridge.Mode = mode;          // 与桥里的字段保持同步
-        AgentLog.Write($"页面模式 → {mode}");
-        _ = NavigateServerAsync();
+        if (view is not null)
+            _view = view;
+        AgentLog.Write($"页面模式 → {mode}" + (view is null ? "" : $" view={view}"));
+
+        if (_stage == Stage.Server && !viewChanged)
+        {
+            Bridge.PostMode();
+            return;
+        }
+
+        if (_stage == Stage.Server)
+            GoServer();              // 重新导航到带新 view 的地址
+        else
+            _ = EnsureLoadedAsync();
     }
 
     /// <summary>连接状态变化 → 转给页面（顶栏状态点）。</summary>
