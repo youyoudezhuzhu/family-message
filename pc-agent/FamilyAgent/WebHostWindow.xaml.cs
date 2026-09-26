@@ -468,6 +468,7 @@ public partial class WebHostWindow : Window
                 LocalHostName, ShellDir(), CoreWebView2HostResourceAccessKind.Allow);
 
             core.WebMessageReceived += OnWebMessageReceived;
+            core.NavigationCompleted += OnNavigationCompleted;
             core.NewWindowRequested += OnNewWindowRequested;
 
             _webViewReady = true;
@@ -529,7 +530,9 @@ public partial class WebHostWindow : Window
         // 换文档 = 页面就绪状态作废：新文档要自己发一次 web.ready。
         // 缓存的消息不动它 —— 正式页面就绪后会补推。
         Bridge.PageReady = false;
-        try { core.Navigate($"{LocalOrigin}/shell/{file}"); }
+        // ⚠ 映射根目录就是 ShellDir()（<exe>\shell），所以 URL 里**不能再带 /shell/** ——
+        //   带上会解析成 <exe>\shell\shell\app.html，404 → 白屏（v0.13.0 就是这样翻车的）。
+        try { core.Navigate($"{LocalOrigin}/{file}"); }
         catch (Exception ex) { AgentLog.Write($"✗ 加载本地页面 {file} 失败：{ex.Message}"); }
     }
 
@@ -551,6 +554,30 @@ public partial class WebHostWindow : Window
     }
 
     private static string ShellDir() => System.IO.Path.Combine(AppContext.BaseDirectory, "shell");
+
+    /// <summary>
+    /// 导航完成 → 失败必须落日志。
+    ///
+    /// 这一条是拿白屏换来的教训：v0.13.0 加载本地页时 URL 多拼了一层 `/shell/`，
+    /// WebView2 老老实实给了个 404，然后**什么都没说** —— 用户看到纯白窗口，
+    /// 日志里也一点线索都没有，只能靠猜。以后凡是导航失败（连不上、404、证书…），
+    /// 这里都要把它连同 URL 一起写进 app.log。
+    /// </summary>
+    private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    {
+        if (e.IsSuccess)
+            return;
+
+        var url = "";
+        try { url = Web.CoreWebView2?.Source ?? ""; } catch { /* 拿不到就算了 */ }
+
+        // HttpStatusCode 也带上 —— 404（文件不在 shell/ 里 / URL 拼错）会显示成 404，
+        // 这比只有 WebErrorStatus 好查得多：白屏那次就是 404，但当时什么都没记。
+        var http = e.HttpStatusCode == 0 ? "-" : e.HttpStatusCode.ToString();
+        AgentLog.Write($"✗ 页面加载失败：{e.WebErrorStatus}（HTTP {http}）url={url}"
+                     + (e.WebErrorStatus == CoreWebView2WebErrorStatus.ConnectionAborted
+                        ? "  ← 用户主动中断，通常无害" : ""));
+    }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
