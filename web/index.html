@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.12.3">
-<link rel="stylesheet" href="static/style.css?v=0.12.3">
-<link rel="stylesheet" href="static/shell.css?v=0.12.3">
+<link rel="stylesheet" href="static/tokens.css?v=0.12.4">
+<link rel="stylesheet" href="static/style.css?v=0.12.4">
+<link rel="stylesheet" href="static/shell.css?v=0.12.4">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -247,7 +247,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
           <h3 class="section__title" id="t-recent">最近消息</h3>
           <button class="btn btn--subtle" id="home-more">查看全部</button>
         </div>
-        <div class="msg-list msg-list--compact" id="home-recent"></div>
+        <div class="chat-list chat-list--compact" id="home-recent"></div>
         <div class="empty" id="home-recent-empty">
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
           <span class="empty__title">还没有消息</span>
@@ -260,7 +260,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
     <section class="page" id="page-messages" hidden>
       <div class="page__head">
         <h2 class="page__title">消息记录</h2>
-        <p class="page__sub">家庭群聊的全部消息，网页发出的和 PC 回复的都在这里，按时间倒序。</p>
+        <p class="page__sub">家庭群聊的全部消息，网页发出的和 PC 回复的都在这里，按时间顺序。</p>
       </div>
       <div class="section__head">
         <h3 class="section__title">全部消息</h3>
@@ -269,7 +269,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
           <span>更早</span>
         </button>
       </div>
-      <div class="msg-list" id="log"></div>
+      <div class="chat-list" id="log"></div>
       <div class="empty" id="log-empty">
         <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
         <span class="empty__title">还没有消息</span>
@@ -561,7 +561,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
   </header>
 
   <div class="popup-stage client-stage" id="client-stage">
-    <div class="popup-stack client-stack" id="client-stack"></div>
+    <div class="popup-stack client-stack chat-list" id="client-stack"></div>
     <div class="popup-empty client-empty" id="client-empty">
       <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
       <span class="popup-empty__title" id="client-empty-title">正在读取消息记录…</span>
@@ -586,7 +586,8 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 </div>
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<script src="static/shell.js?v=0.12.3"></script>
-<script src="static/app.js?v=0.12.3"></script>
+<script src="static/chat.js?v=0.12.4"></script>
+<script src="static/shell.js?v=0.12.4"></script>
+<script src="static/app.js?v=0.12.4"></script>
 </body>
 </html>

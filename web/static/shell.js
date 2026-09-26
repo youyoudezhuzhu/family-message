@@ -551,21 +551,25 @@
 
     list.forEach(function (r) {
       if (!r.el) {
-        r.el = buildPopupMsgEl(r.msg);
+        r.el = (which === 'client') ? buildClientMsgEl(r.msg) : buildPopupMsgEl(r.msg);
         if (newMsg && r.msg === newMsg) r.el.classList.add('is-new');
         stack.appendChild(r.el);
       }
     });
 
-    // 最后一条 = 主角，其余弱化成字幕
-    list.forEach(function (r, i) {
-      var lead = i === list.length - 1;
-      r.el.classList.toggle('popup-msg--lead', lead);
-      r.el.classList.toggle('popup-msg--prev', !lead);
-      if (lead && r.el.classList.contains('is-new')) {
-        setTimeout(function () { r.el.classList.remove('is-new'); }, 400);
-      }
-    });
+    // 「最后一条是主角、其余弱化成字幕」是**弹窗舞台**的语义。
+    // 客户端窗口是聊天记录，每条同等重要，不做主角/字幕层级 ——
+    // 而且 popup-msg--* 是独立类名，加到 chat-row 上会串味。
+    if (which === 'popup') {
+      list.forEach(function (r, i) {
+        var lead = i === list.length - 1;
+        r.el.classList.toggle('popup-msg--lead', lead);
+        r.el.classList.toggle('popup-msg--prev', !lead);
+        if (lead && r.el.classList.contains('is-new')) {
+          setTimeout(function () { r.el.classList.remove('is-new'); }, 400);
+        }
+      });
+    }
   }
 
   /** 弹窗那份：渲染完直接把舞台滚到底（弹窗永远只看最新） */
@@ -579,6 +583,19 @@
   function renderClientStack(newMsg) {
     renderStack('client', newMsg);
     afterPaint(function () { scrollClientToBottom(false); });
+  }
+
+  /** 客户端窗口那条消息：交给共用的群聊组件（static/chat.js），
+      所以 PC 端和网页端「消息」页长得完全一样 —— 别人发的靠左、自己发的靠右。
+      「自己」= 这台电脑的回复昵称（群聊里身份只看昵称，不看 device_id）。
+      chat.js 万一没加载，退回弹窗那套渲染，至少不白屏。 */
+  var CLIENT_STATUS = { cls: 'status--sent', icon: 'check', label: '已发送' };
+
+  function buildClientMsgEl(m) {
+    if (typeof FMChat === 'object' && FMChat && typeof FMChat.row === 'function') {
+      return FMChat.row(m, { myName: barSender($('client-sender')), status: CLIENT_STATUS });
+    }
+    return buildPopupMsgEl(m);
   }
 
   function buildPopupMsgEl(m) {
@@ -640,7 +657,10 @@
     var items = list.map(function (n) { return { value: n, label: n, color: nickColorOf(n) }; });
     var cur = barSender(host);
     var val = items.some(function (i) { return i.value === cur; }) ? cur : items[0].value;
-    window.buildSelect(host, items, val, function (v) { rememberSenderOf(v); });
+    window.buildSelect(host, items, val, function (v) {
+      rememberSenderOf(v);
+      rerenderClient();          // 昵称一换，自己的消息立刻挪到右边
+    });
   }
 
   /** 昵称表：壳带来了 PC 端自己那份就用它（客户端窗口就是这台机器在说话），
@@ -668,6 +688,18 @@
     var last = S.hostName || '';
     if (!last) { try { last = localStorage.getItem('fm.lastSender') || ''; } catch (_) {} }
     return list.indexOf(last) >= 0 ? last : list[0];
+  }
+
+  /** 换了昵称 → 「哪条是我发的」就变了 → 左右阵营必须重排。
+      只重画节点，不重新拉历史（记录没变，变的只是站位）。 */
+  function rerenderClient() {
+    if (S.mode !== 'client') return;
+    var stack = $('client-stack');
+    if (!stack) return;
+    stack.textContent = '';
+    (S.clientList || []).forEach(function (r) { r.el = null; });
+    renderClientStack(null);
+    afterPaint(function () { scrollClientToBottom(true); });
   }
 
   function rememberSenderOf(v) {

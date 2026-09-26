@@ -854,3 +854,64 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
     transition-duration: .01ms !important;
   }
 }
+
+
+/* ── 8b. 群聊气泡（网页端「消息」页 / 首页「最近消息」/ PC 端客户端窗口 共用） ──
+   组件本体在 static/chat.js，两端调的是同一份。别人发的靠左，自己发的靠右。
+   靠右只认「昵称 == 我的本地昵称」，不认 device_id —— 群聊里设备不是身份。 */
+.chat-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }
+.chat-list--compact { gap: var(--spacing-md); }
+
+.chat-row { display: flex; align-items: flex-start; gap: var(--spacing-sm); }
+.chat-row--out { flex-direction: row-reverse; }
+
+/* 头像：昵称色圆点 + 首字（颜色按昵称哈希，同一昵称两端一致） */
+.chat-avatar {
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  border-radius: var(--radius-circle);
+  background: var(--chat-nick, var(--fluent-color-surface-tertiary));
+  color: rgba(0, 0, 0, 0.7);
+  display: grid; place-items: center;
+  font: var(--font-caption); font-weight: 600;
+  user-select: none;
+}
+
+.chat-main {
+  display: flex; flex-direction: column; gap: var(--spacing-xs);
+  min-width: 0;
+  max-width: min(72%, 560px);   /* 气泡不撑满整行，左右留白区分阵营 */
+}
+.chat-row--out .chat-main { align-items: flex-end; }
+
+.chat-meta { display: flex; align-items: baseline; gap: var(--spacing-sm); }
+.chat-row--out .chat-meta { flex-direction: row-reverse; }
+.chat-name { font: var(--font-caption); font-weight: 600; color: var(--fluent-color-text-secondary); }
+.chat-time { font: var(--font-caption); color: var(--fluent-color-text-tertiary); white-space: nowrap; }
+
+.chat-bubble {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-large);
+  background: var(--fluent-color-surface-secondary);
+  border: 1px solid var(--fluent-color-border-subtle);
+  color: var(--fluent-color-text);
+  font: var(--font-body);
+  white-space: pre-wrap; word-break: break-word;
+}
+/* 自己发的：主题色实心。明暗两套下 primary-fill / on-primary 都是配好对比度的 */
+.chat-row--out .chat-bubble {
+  background: var(--fluent-color-primary-fill);
+  border-color: transparent;
+  color: var(--fluent-color-on-primary);
+}
+
+/* 投递状态只挂在自己的消息下面（群聊里不需要看别人那条「已发送」） */
+.chat-tags { display: flex; gap: var(--spacing-xs); }
+/* 徽标在气泡**外面**（页面底色上），所以不能跟着气泡用白字 —— 用三级灰 */
+.chat-row--out .status--sent { background: transparent; color: var(--fluent-color-text-tertiary); }
+
+/* 窄屏：气泡再放宽一点，别让长消息被挤成一根竖条 */
+@media (max-width: 640px) {
+  .chat-main { max-width: 82%; }
+  .chat-avatar { width: 28px; height: 28px; }
+}
