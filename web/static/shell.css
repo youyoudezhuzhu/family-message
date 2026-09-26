@@ -269,7 +269,12 @@ html[data-shell-mode="client"] .app-shell { display: none; }
 
 /* 消息记录：从顶部往下排（弹窗是「一屏大字」的舞台，客户端是滚动的记录），
    比容器高时自然滚动；最新一条仍然是大字主条，跟弹窗一致。 */
-.client-stack { margin: 0 auto; }
+.client-stack {
+  margin: 0 auto;          /* 顶对齐：聊天记录从上面往下长，不居中 */
+  padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl);
+  gap: var(--spacing-lg);
+  max-width: none;         /* 聊天列表要占满可用宽度，左右才分得出阵营 */
+}
 
 /* 回复栏：只有「输入 + 提示」两行，没有「知道了」那一行 */
 .client-actions__row {

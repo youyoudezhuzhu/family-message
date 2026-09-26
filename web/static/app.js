@@ -915,71 +915,57 @@ async function sendMessage() {
   }
 }
 
-async function loadMessages() {
+/** 聊天界面的阅读顺序：**旧 → 新，最新的在最下面**。
+    /api/messages 给的是新 → 旧（接口没变），展示前统一翻过来。
+    群聊是聊天界面，新消息从下面长出来才符合直觉。 */
+function chatOrder(list) {
+  return (list || []).slice().sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
+}
+
+/** 滚到最新一条。消息页没显示时不动（群聊/首页渲染不该把页面拽走） */
+function scrollLogToEnd() {
+  const log = $('log');
+  if (!log) return;
+  const sec = log.closest('section');
+  if (!sec || sec.hidden) return;
+  const last = log.lastElementChild;
+  if (last) last.scrollIntoView({ block: 'end' });
+}
+
+async function loadMessages(opts) {
   state.messages = await api(`/api/messages?limit=${state.limit}`);
-  renderMessages();
+  renderMessages(!(opts && opts.keepScroll));
 }
 
 function upsertMessage(msg) {
   const i = state.messages.findIndex((m) => m.id === msg.id);
-  if (i >= 0) state.messages[i] = msg; else state.messages.unshift(msg);
-  renderMessages();
+  if (i >= 0) state.messages[i] = msg; else state.messages.push(msg);
+  renderMessages(true);
 }
 
-/** 一条消息的 DOM（列表页与首页「最近消息」共用） */
+/** 一条消息的 DOM —— 直接交给共用的群聊组件（static/chat.js）。
+    网页端「消息」页、首页「最近消息」、PC 端客户端窗口因此长得**完全一样**：
+    别人发的靠左，自己发的靠右。
+    靠右只认「昵称 == 我当前用的昵称」（群聊模型：空间里完全以昵称区分），
+    不看 device_id —— 设备不是身份。 */
 function buildMsgEl(m) {
-  const el = document.createElement('article');
-  el.className = 'msg';
-  // 颜色只看昵称，不看这条是从网页还是从设备来的
-  el.style.setProperty('--msg-nick', nickColor(m.sender_name));
-
-  const head = document.createElement('div');
-  head.className = 'msg__head';
-
-  const who = document.createElement('span');
-  who.className = 'msg__sender';
-  who.textContent = m.sender_name;
-  head.appendChild(who);
-
-  const time = document.createElement('span');
-  time.className = 'msg__time';
-  time.textContent = m.created_at;
-  head.appendChild(time);
-
-  const body = document.createElement('div');
-  body.className = 'msg__body';
-  body.textContent = m.content;
-
-  el.append(head, body);
-
-  // 群聊模型：**只有一种状态 —— 已发送**。
-  // 谁说的靠昵称区分，不靠「PC 回复」之类的来源徽标；
-  // 逐设备的 已送达 / 已显示 也全部去掉（服务端只对外暴露单一 status="sent"）。
-  const tags = document.createElement('div');
-  tags.className = 'msg__tags';
-  const tag = document.createElement('span');
-  tag.className = 'status ' + STATUS_SENT.cls;
-  tag.append(icon(STATUS_SENT.icon, 'icon icon--xs'),
-             Object.assign(document.createElement('span'), { textContent: STATUS_SENT.label }));
-  tags.appendChild(tag);
-  el.appendChild(tags);
-
-  return el;
+  return FMChat.row(m, { myName: currentSender(), status: STATUS_SENT });
 }
 
-function renderMessages() {
+function renderMessages(toEnd) {
   const box = $('log');
-  box.innerHTML = '';
+  box.textContent = '';
   $('log-empty').hidden = state.messages.length > 0;
-  state.messages.forEach((m) => box.appendChild(buildMsgEl(m)));
+  chatOrder(state.messages).forEach((m) => box.appendChild(buildMsgEl(m)));
   renderHomeRecent();
+  if (toEnd !== false) scrollLogToEnd();
 }
 
-/** 首页只放最近 3 条，完整列表在「消息」页 */
+/** 首页只放最近 3 条（同样按聊天顺序：旧→新），完整列表在「消息」页 */
 function renderHomeRecent() {
   const box = $('home-recent');
-  box.innerHTML = '';
-  const list = state.messages.slice(0, 3);
+  box.textContent = '';
+  const list = chatOrder(state.messages).slice(-3);
   $('home-recent-empty').hidden = list.length > 0;
   list.forEach((m) => box.appendChild(buildMsgEl(m)));
 }
@@ -1657,7 +1643,7 @@ $('btn-send').onclick = sendMessage;
 $('btn-refresh').onclick = () => {
   Promise.all([loadDevices(), loadMessages()]).then(() => snack('已刷新'));
 };
-$('btn-history').onclick = () => { state.limit += 30; loadMessages(); };
+$('btn-history').onclick = () => { state.limit += 30; loadMessages({ keepScroll: true }); };
 $('home-more').onclick = () => go('messages');
 
 /* 导航（左导航 + 底部导航共用同一套 data-page 按钮） */

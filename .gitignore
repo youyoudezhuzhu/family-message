@@ -27,3 +27,4 @@ Thumbs.db
 pc-agent/**/bin/
 pc-agent/**/obj/
 publish/
+FamilyAgent-win-x64.zip
