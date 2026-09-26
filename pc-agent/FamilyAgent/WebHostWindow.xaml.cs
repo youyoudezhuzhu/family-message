@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
-using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows;
@@ -12,14 +11,21 @@ using Microsoft.Web.WebView2.Core;
 namespace FamilyAgent;
 
 /// <summary>
-/// PC 端唯一窗口：一个 WebView2 宿主（壳）。**界面完全由网页端页面渲染**，
-/// 见 docs/PC-WEBVIEW2-REWRITE.md。
+/// PC 端唯一窗口：一个 WebView2 宿主（壳）。**界面是 exe 自带的本地页**
+/// （<c>shell/app.html</c>），见 docs/PC-LOCAL-UI.md。
+///
+/// ★ 与旧做法的根本区别：以前加载的是 NAS 的 index.html（完整网页控制台），
+///   靠 CSS 把控制台藏起来 —— 实测藏不掉，用户机器上一直显示带侧边栏的管理后台。
+///   现在界面就在本地，**物理上不存在控制台**；NAS 挂掉界面照常，只是收不到消息。
 ///
 /// 宿主职责（页面的东西一概不做）：
 /// - 窗口两种形态：Popup（全屏 / 无边框 / 置顶 / 不进任务栏）与
 ///   Window（标准窗口 / 可缩放 / 进任务栏 / 不置顶 / 居中，约 1000×760）
 /// - 初始化 WebView2（用户数据目录、虚拟域名映射、屏蔽浏览器默认行为）
-/// - 本地页面（boot / offline / 缺运行时的提示）与正式页面的加载与切换
+/// - 本地页面（boot / offline / app / 缺运行时的提示）的加载与切换
+/// - **形态只走桥**：ShowPopup / ShowClient / ShowSettings 只改 <see cref="JsBridge.Mode"/>
+///   并发 <c>host.mode</c>，**不重新导航** —— 形态与 URI 彻底解耦，那类
+///   「URL 没生效 → 界面不对」的 bug 从根上消失
 /// - 把页面帧交给 <see cref="Bridge"/>，把宿主能力经桥暴露出去
 ///
 /// 消息收发 / 截图 / 关机 / 会话状态 / 开机自启 / 解锁校验这些逻辑一行都没动，
@@ -31,6 +37,8 @@ public partial class WebHostWindow : Window
     /// 窗口的两种形态。**这是之前「设置对话框孤零零浮在整屏中央」的根因** ——
     /// 以前窗口永远是全屏无边框，设置只是叠在上面的一个弹层，
     /// 于是在 2560 宽的屏幕上就变成一个悬在正中的小方块，比例完全不对。
+    ///
+    /// ⚠ 这是**窗口**形态，跟页面视图（<see cref="_shellMode"/>）是两件事。
     /// </summary>
     public enum WindowMode
     {
@@ -47,10 +55,10 @@ public partial class WebHostWindow : Window
         None,
         /// <summary>本地 boot 页（首屏占位，不闪白）。</summary>
         Boot,
-        /// <summary>本地兜底页（没配置 / 连不上服务端）。</summary>
+        /// <summary>本地兜底页（**从未配置过服务端**时的诊断页）。</summary>
         Offline,
-        /// <summary>服务端的正式页面 —— 只有这个阶段才算「页面能看到消息」。</summary>
-        Server,
+        /// <summary>本机界面 app.html —— 唯一的正式页面，只有这个阶段才算「页面能看到消息」。</summary>
+        App,
         /// <summary>缺 WebView2 Runtime，退回 WPF 提示页。</summary>
         Hint,
     }
@@ -72,16 +80,16 @@ public partial class WebHostWindow : Window
     private bool _allowClose;        // 真的允许关窗（退出时）
     private bool _connected;
     private string _connectionDetail = "未连接";
-    private string _view = "";       // 控制台要打开的视图（网址参数，可选）
+    private string _runtimeVersion = "";   // WebView2 Runtime 版本（host.runtime 要报给设置视图）
 
     /// <summary>
-    /// 页面模式：popup（全屏强提醒）/ client（消息客户端窗口）/ console（完整网页控制台）。
+    /// 页面视图：client（消息界面）/ popup（全屏强提醒）/ settings（本机设置）。
     ///
     /// 和 <see cref="_mode"/>（窗口形态）是两件事，别混：
-    /// 窗口形态说的是「窗口长什么样」，页面模式说的是「里面加载哪套界面」。
-    /// 客户端窗口里也可能临时切到 console 看一眼设备/截图。
+    /// 窗口形态说的是「窗口长什么样」，页面视图说的是「页面里显示哪一块」。
+    /// 三个视图在**同一个文档**（app.html）里，切换只过桥（host.mode），不重新导航。
     /// </summary>
-    private string _shellMode = "popup";
+    private string _shellMode = "client";
 
     /// <summary>还没收到 web.ack 的消息 id（关窗/自动关闭时按「已读」回报）。</summary>
     private readonly List<long> _pending = new();
@@ -109,7 +117,7 @@ public partial class WebHostWindow : Window
         Bridge.ModeRequested += SetModeFromPage;
 
         // 初始形态先给弹窗（工作区大小，任务栏留给用户）；调用方随后用
-        // ShowPopup / ShowConsole 决定真正的形态。
+        // ShowPopup / ShowClient / ShowSettings 决定真正的形态。
         _topmostTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _topmostTimer.Tick += (_, _) =>
         {
@@ -131,7 +139,7 @@ public partial class WebHostWindow : Window
 
     // ---------------- 对外接口（App 只用这些）----------------
 
-    /// <summary>有消息要强提醒：切 Popup 形态 → 显示 → 保证页面已加载。</summary>
+    /// <summary>有消息要强提醒：切 popup 视图 + Popup 窗口形态 → 显示 → 保证本地页已加载。</summary>
     public void ShowPopup()
     {
         SetShellMode("popup");
@@ -141,63 +149,70 @@ public partial class WebHostWindow : Window
     }
 
     /// <summary>
-    /// 托盘打开对话（双击托盘 / 启动）：**消息客户端**形态 —— 只有消息记录 + 回复栏。
-    ///
-    /// 以前这里加载的是 console（完整网页控制台），结果 PC 上弹出了带侧边栏的
-    /// 管理后台，看着就像「打开了一个网页」。客户端窗口不该长成后台的样子。
+    /// 托盘打开对话（双击托盘 / 启动）：**消息界面** —— 只有消息记录 + 回复栏。
     /// </summary>
     public void ShowClient()
     {
-        _view = "";
         SetShellMode("client");
         ApplyWindowMode(WindowMode.Window);
         ShowWindow(alert: false);
         _ = EnsureLoadedAsync();
     }
 
-    /// <summary>托盘打开设置 / 点「控制台」：完整的网页端控制台。</summary>
-    public void ShowConsole(string view)
+    /// <summary>
+    /// 托盘「设置…」（页面顶栏齿轮走的是 <c>web.open_settings</c> → 同一个入口）：
+    /// **本机设置视图** —— 服务端地址 / 注册口令 / 回复昵称 / 开机自启 / 主题 / 版本信息。
+    ///
+    /// 以前这里是 "console"（完整的网页端控制台，带侧边栏那套）—— 那正是
+    /// 「PC 上弹出管理后台」的由来。现在设置只是本地页 app.html 的一个视图。
+    /// </summary>
+    public void ShowSettings()
     {
-        SetShellMode("console", view ?? "");
+        SetShellMode("settings");
         ApplyWindowMode(WindowMode.Window);
         ShowWindow(alert: false);
         _ = EnsureLoadedAsync();
     }
 
     /// <summary>
-    /// 切页面模式（可同时指定控制台的 view）。
+    /// 切页面视图。
     ///
-    /// 分两种情况，别一律重新导航：
-    ///   · 已经在正式页面上、只是换形态 → 用 <c>host.mode</c> 通知，**页面自己切视图**
-    ///     （重新导航会丢页面状态，还会闪白一下）
-    ///   · 还没加载过、或要换 view 参数（view 只存在于网址里）→ 必须重新导航
+    /// ★ **只改状态 + 发 host.mode，绝不重新导航**：三个视图都在同一个文档里，
+    ///   页面自己切。重新导航会丢页面状态、闪一下白；而在旧架构里「界面切没切对」
+    ///   还取决于 URL 拼得对不对 —— 那类 bug 现在从根上没有了。
     /// </summary>
-    private void SetShellMode(string mode, string? view = null)
+    private void SetShellMode(string mode)
     {
-        if (mode != "popup" && mode != "client" && mode != "console")
-            return;
-
-        var viewChanged = view is not null && view != _view;
-        if (_shellMode == mode && !viewChanged)
-            return;
-
-        _shellMode = mode;
-        Bridge.Mode = mode;          // 与桥里的字段保持同步
-        if (view is not null)
-            _view = view;
-        AgentLog.Write($"页面模式 → {mode}" + (view is null ? "" : $" view={view}"));
-
-        if (_stage == Stage.Server && !viewChanged)
+        if (mode != "popup" && mode != "client" && mode != "settings")
         {
-            Bridge.PostMode();
+            AgentLog.Write($"✗ 不认识的页面视图（{mode}，已忽略）");
             return;
         }
 
-        if (_stage == Stage.Server)
-            GoServer();              // 重新导航到带新 view 的地址
-        else
-            _ = EnsureLoadedAsync();
+        var changed = _shellMode != mode;
+        _shellMode = mode;
+        Bridge.Mode = mode;          // 与桥里的字段保持同步（host.hello / host.mode 都读它）
+        if (changed)
+            AgentLog.Write($"页面视图 → {mode}");
+
+        if (_stage == Stage.App)
+        {
+            Bridge.PostMode();
+            if (mode == "settings")
+                PushRuntime();       // 设置视图要读的运行时信息（版本 / 路径 / 自启…）
+            return;
+        }
+
+        _ = EnsureLoadedAsync();      // 还没加载过本地页 → 先把页面拉起来
     }
+
+    /// <summary>
+    /// 把设置视图要的运行时信息推给页面（进设置视图时 / 配置变化后主动推）。
+    ///
+    /// 页面上「版本号 + 当前形态 + 设备号 + 日志/配置路径」就是拿它填的 ——
+    /// 需求：界面上要能直接看到版本号，省得再出现「跑的是哪一版」的困惑。
+    /// </summary>
+    public void PushRuntime() => Bridge.PostRuntime(_runtimeVersion);
 
     /// <summary>连接状态变化 → 转给页面（顶栏状态点）。</summary>
     public void SetConnection(bool connected, string detail)
@@ -239,12 +254,39 @@ public partial class WebHostWindow : Window
         Bridge.PostScreenshot(requestId, dataUrl, error);
     }
 
-    /// <summary>服务端地址被兜底页改过了：丢掉当前页，重新探测并加载。</summary>
+    /// <summary>
+    /// 配置变了（兜底页保存了服务端地址 / 设置视图保存了配置）：按当前配置纠正界面所在阶段。
+    ///
+    /// 三种情况：
+    ///   · 已经在本机界面上 → 只推一次运行时信息（设置视图的只读项要跟着变），不导航
+    ///   · 配好了但还在兜底页/首屏 → 切到 app.html
+    ///   · 还是没配好 → 留在兜底页（别把用户刚填进去的内容冲掉）
+    /// </summary>
     public void ReloadAfterServerChange()
     {
-        _stage = Stage.None;
-        Bridge.PageReady = false;
-        _ = EnsureLoadedAsync();
+        if (App.Config is null || !App.Config.IsConfigured)
+        {
+            if (_stage != Stage.Offline)
+                GoOffline();
+            return;
+        }
+
+        if (_stage == Stage.App)
+        {
+            PushRuntime();
+            return;
+        }
+
+        if (_stage == Stage.Offline)
+        {
+            // 刚从「从未配置过」变成配好了（用户在兜底页填的地址）：落到**消息界面** ——
+            // 用户下一步是想看消息，不是继续看设置。视图状态直接置位，不再绕一圈
+            // SetShellMode 的「拉页面」分支（那会多推一次 host.mode）。
+            _shellMode = "client";
+            Bridge.Mode = "client";
+        }
+
+        GoApp();
     }
 
     /// <summary>强制关闭（程序退出时）。</summary>
@@ -269,38 +311,36 @@ public partial class WebHostWindow : Window
         RaiseDismissed();
     }
 
-    /// <summary>页面要求切形态（弹窗里点「打开设置」）。</summary>
+    /// <summary>页面要求切视图（弹窗里点「打开设置」/ 顶栏齿轮）。</summary>
     private void SetModeFromPage(string mode)
     {
         var m = (mode ?? "").Trim().ToLowerInvariant();
-        if (m != "popup" && m != "client" && m != "console")
+        if (m != "popup" && m != "client" && m != "settings")
         {
-            AgentLog.Write($"✗ 页面请求切到不认识的模式（{mode}，已忽略）");
+            AgentLog.Write($"✗ 页面请求切到不认识的视图（{mode}，已忽略）");
             return;
         }
 
-        // 窗口形态跟着页面模式走：popup 全屏置顶，client / console 用普通窗口
+        // 窗口形态跟着页面视图走：popup 全屏置顶，client / settings 用普通窗口
         ApplyWindowMode(m == "popup" ? WindowMode.Popup : WindowMode.Window);
         if (!IsVisible)
             ShowWindow(alert: false);
 
-        // ★ 这里**不重新导航**：页面自己已经换好界面了，再导航一次会把刚切好的
-        //   界面冲掉（并且闪一下白）。宿主发起的切换走 SetShellMode()，那条才导航。
+        // ★ 这里**也不重新导航**：页面自己已经换好界面了，宿主只对齐状态 + 回发 host.mode。
+        //   （重新导航会把刚切好的界面冲掉，并且闪一下白。）
         _shellMode = m;
         Bridge.Mode = m;
-        if (m != "console")
-            _view = "";
         Bridge.PostMode();
     }
 
     private void OnPageReady()
     {
-        // 本地 boot / offline 页也会发 web.ready，但那个文档马上就会被替换掉：
+        // 本地 boot / offline 页也会发 web.ready，但那些文档马上就会被替换掉：
         // 这时候**不能**把它当成「页面能看到消息」，否则消息会推进一个随即销毁的
         // 文档里丢掉（连带 popup_displayed 永远不回报）。
-        if (_stage != Stage.Server)
+        if (_stage != Stage.App)
         {
-            AgentLog.Write($"壳：本地页面就绪（阶段 {_stage}），等正式页面");
+            AgentLog.Write($"壳：本地页面就绪（阶段 {_stage}），等正式界面");
             return;
         }
 
@@ -309,6 +349,8 @@ public partial class WebHostWindow : Window
         Bridge.PostSession();
         Bridge.PostConnection(_connected, _connectionDetail);
         Bridge.PostMode();
+        if (_shellMode == "settings")
+            PushRuntime();          // 首屏就停在设置视图时，把它要的运行时信息一起给全
         FlushQueued();
     }
 
@@ -330,10 +372,12 @@ public partial class WebHostWindow : Window
             if (!await InitWebViewAsync())
                 return;
 
-            // 已经在正式页面上了：切形态用 host.mode 通知，别重新加载（会丢页面状态）
-            if (_stage == Stage.Server)
+            // 已经在本机界面上了：切视图用 host.mode 通知，别重新加载（会丢页面状态）
+            if (_stage == Stage.App)
             {
                 Bridge.PostMode();
+                if (_shellMode == "settings")
+                    PushRuntime();
                 return;
             }
 
@@ -343,6 +387,10 @@ public partial class WebHostWindow : Window
                 _stage = Stage.Boot;
             }
 
+            // ★ 界面就在本地，**不再导航到 NAS 网址、也不再探测服务端**（docs/PC-LOCAL-UI.md）：
+            //   · 配置过 → 直接进 app.html；连不连得上由顶栏状态点显示（host.connection），
+            //     NAS 挂掉界面照常，只是收不到消息
+            //   · 从没配过 → 兜底诊断页（那儿有填服务端地址 / 口令的入口）
             var cfg = App.Config;
             if (cfg is null || !cfg.IsConfigured)
             {
@@ -350,10 +398,7 @@ public partial class WebHostWindow : Window
                 return;
             }
 
-            if (await ProbeAsync(cfg.ServerUrl))
-                GoServer();
-            else
-                GoOffline();
+            GoApp();
         }
         catch (Exception ex)
         {
@@ -426,6 +471,7 @@ public partial class WebHostWindow : Window
             core.NewWindowRequested += OnNewWindowRequested;
 
             _webViewReady = true;
+            _runtimeVersion = runtime;      // host.runtime 要报给设置视图（界面上显示它）
             AgentLog.Write($"WebView2 就绪：runtime={runtime} 用户数据目录={dataDir} 本地页目录={ShellDir()}");
             return true;
         }
@@ -435,24 +481,42 @@ public partial class WebHostWindow : Window
         }
     }
 
-    private void GoServer()
+    /// <summary>
+    /// 加载本机界面 <c>app.html</c>（exe 自带，经虚拟域名
+    /// <c>https://familyagent.local/shell/</c> 读）。
+    ///
+    /// ★ 取代旧的 GoServer()：以前这里是导航到 NAS 的
+    ///   <c>index.html?shell=1&amp;mode=…</c>，那正是「PC 端界面依赖于网页端」的根源
+    ///   （控制台藏不掉、NAS 一挂就没界面），已彻底删掉。
+    /// </summary>
+    private void GoApp()
     {
-        var core = Web.CoreWebView2;
-        if (core is null)
+        if (_stage == Stage.App)
+        {
+            // 已经在本地面上了：只把状态刷一遍，不重新导航（会丢状态、闪白）
+            Bridge.PostMode();
+            if (_shellMode == "settings")
+                PushRuntime();
             return;
+        }
 
-        _stage = Stage.Server;
-        Bridge.PageReady = false;      // 正式页面自己的 web.ready 到达后才置位
-        var url = ServerPageUrl();
-        AgentLog.Write("壳：加载正式页面 " + url);
-        try { core.Navigate(url); }
-        catch (Exception ex) { AgentLog.Write("✗ 加载正式页面失败：" + ex.Message); }
+        _stage = Stage.App;
+        Bridge.PageReady = false;      // 等 app.html 自己的 web.ready 到达才置位
+        AgentLog.Write("壳：加载本机界面 app.html（exe 自带，不加载 NAS 网页）");
+        NavigateLocal("app.html");
     }
 
+    /// <summary>
+    /// 兜底诊断页 <c>offline.html</c>：**只在从未配置过服务端**时用
+    /// （那一页有填地址/口令的入口）。
+    ///
+    /// 配置过但连不上**不用**它 —— 界面照常进 app.html，顶栏自己显示「未连接」。
+    /// 否则 NAS 一挂 PC 端就没界面可用，那正是这次架构更改要根除的问题。
+    /// </summary>
     private void GoOffline()
     {
         _stage = Stage.Offline;
-        AgentLog.Write("壳：服务端不可达或还没配置 → 加载本地兜底页");
+        AgentLog.Write("壳：还没配置过服务端 → 加载本地兜底页 offline.html");
         NavigateLocal("offline.html");
     }
 
@@ -487,50 +551,6 @@ public partial class WebHostWindow : Window
     }
 
     private static string ShellDir() => System.IO.Path.Combine(AppContext.BaseDirectory, "shell");
-
-    private string ServerPageUrl()
-    {
-        var view = string.IsNullOrWhiteSpace(_view) ? "" : "&view=" + Uri.EscapeDataString(_view);
-        return $"{ServerBaseUrl(App.Config is null ? "" : App.Config.ServerUrl)}/?shell=1&mode={_shellMode}{view}";
-    }
-
-    /// <summary>
-    /// 把配置里的服务端地址规范成网页端根地址。
-    ///
-    /// ⚠ 与 App.ConsoleUrl 同一套规则（ws→http、wss→https、去掉结尾 /ws），
-    ///   两边不一致会变成「Agent 连得上、壳加载不出来」这种很难查的现象。
-    /// </summary>
-    private static string ServerBaseUrl(string? serverUrl)
-    {
-        var url = (serverUrl ?? "").Trim().TrimEnd('/');
-        if (url.StartsWith("ws://", StringComparison.OrdinalIgnoreCase))
-            url = "http://" + url[5..];
-        else if (url.StartsWith("wss://", StringComparison.OrdinalIgnoreCase))
-            url = "https://" + url[6..];
-        if (url.EndsWith("/ws"))
-            url = url[..^3];
-        return url;
-    }
-
-    private static async Task<bool> ProbeAsync(string? serverUrl)
-    {
-        var baseUrl = ServerBaseUrl(serverUrl);
-        if (baseUrl.Length == 0)
-            return false;
-
-        try
-        {
-            // 与设置页「测试连接」同一套判定：HTTP 通就算可达
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(6) };
-            var resp = await http.GetAsync(baseUrl + "/healthz");
-            return resp.IsSuccessStatusCode;
-        }
-        catch (Exception ex)
-        {
-            AgentLog.Write("壳：服务端探测失败：" + ex.Message);
-            return false;
-        }
-    }
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
@@ -592,7 +612,10 @@ public partial class WebHostWindow : Window
     {
         var wasVisible = IsVisible;
         _mode = mode;
-        Bridge.Mode = mode == WindowMode.Popup ? "popup" : "console";
+        // ⚠ 这里**不碰** Bridge.Mode：窗口形态（_mode）和页面视图（_shellMode）是两件事。
+        //    以前在这里顺手把 Bridge.Mode 设成 popup/console，结果「一改窗口形态，
+        //    页面视图就被跟着写坏」。视图只由 SetShellMode / SetModeFromPage 决定，
+        //    而这两条都只发 host.mode、不重新导航。
 
         try
         {

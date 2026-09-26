@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-view="client">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>家庭消息</title>
+<!-- ═══════════════════════════════════════════════════════════════════
+     PC 端**唯一界面**（随 exe 打包，一次页面三个视图）
+
+     架构见 docs/PC-LOCAL-UI.md：
+       · 本页**不加载 NAS 网页**，也不靠 URL 参数定形态 ——
+         起始视图只由桥消息 host.hello.mode 决定，之后由 host.mode 切。
+       · 数据全部来自宿主桥（window.chrome.webview.postMessage）：
+         页面先发 web.ready，宿主才回 host.hello / host.history / host.message。
+       · 三个视图：client（消息客户端）/ popup（全屏强提醒）/ settings（本机配置）
+         —— 同一个页面里切显示，不导航、不刷新。
+       · PC 端**没有设备页**（截图/关机/解锁只在 NAS 网页端）。
+
+     样式与群聊气泡与网页端**共用源文件**（构建时复制到本目录，所以这里写相对路径）：
+       tokens.css  ← web/static/tokens.css（Fluent 2 令牌，本页所有颜色都取自它）
+       pc.css      ← 本页布局
+       chat.js     ← web/static/chat.js（群聊气泡组件，两端同一份）
+       pc.js       ← 本页表现层
+     ═══════════════════════════════════════════════════════════════════ -->
+<link rel="stylesheet" href="tokens.css?v=0.13.0">
+<link rel="stylesheet" href="pc.css?v=0.13.0">
+</head>
+<body>
+
+<!-- ── Fluent System Icons（内联 sprite：几何数据取自网页端 index.html 的同一套符号）── -->
+<svg class="sprite" aria-hidden="true" focusable="false">
+<symbol id="i-chat-filled" viewBox="0 0 24 24"><path d="M12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22C10.3596 22 8.77516 21.6039 7.35578 20.8583L3.06538 21.9753C2.6111 22.0937 2.1469 21.8213 2.02858 21.367C1.99199 21.2266 1.99198 21.0791 2.02855 20.9386L3.1449 16.6502C2.3972 15.2294 2 13.6428 2 12C2 6.47715 6.47715 2 12 2ZM13.2517 13H8.75L8.64823 13.0068C8.28215 13.0565 8 13.3703 8 13.75C8 14.1297 8.28215 14.4435 8.64823 14.4932L8.75 14.5H13.2517L13.3535 14.4932C13.7196 14.4435 14.0017 14.1297 14.0017 13.75C14.0017 13.3703 13.7196 13.0565 13.3535 13.0068L13.2517 13ZM15.25 9.5H8.75L8.64823 9.50685C8.28215 9.55651 8 9.8703 8 10.25C8 10.6297 8.28215 10.9435 8.64823 10.9932L8.75 11H15.25L15.3518 10.9932C15.7178 10.9435 16 10.6297 16 10.25C16 9.8703 15.7178 9.55651 15.3518 9.50685L15.25 9.5Z"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22C10.3817 22 8.81782 21.6146 7.41286 20.888L3.58704 21.9553C2.92212 22.141 2.23258 21.7525 2.04691 21.0876C1.98546 20.8676 1.98549 20.6349 2.04695 20.4151L3.11461 16.5922C2.38637 15.186 2 13.6203 2 12C2 6.47715 6.47715 2 12 2ZM12 3.5C7.30558 3.5 3.5 7.30558 3.5 12C3.5 13.4696 3.87277 14.8834 4.57303 16.1375L4.72368 16.4072L3.61096 20.3914L7.59755 19.2792L7.86709 19.4295C9.12006 20.1281 10.5322 20.5 12 20.5C16.6944 20.5 20.5 16.6944 20.5 12C20.5 7.30558 16.6944 3.5 12 3.5ZM8.75 13H13.2483C13.6625 13 13.9983 13.3358 13.9983 13.75C13.9983 14.1297 13.7161 14.4435 13.35 14.4932L13.2483 14.5H8.75C8.33579 14.5 8 14.1642 8 13.75C8 13.3703 8.28215 13.0565 8.64823 13.0068L8.75 13H13.2483H8.75ZM8.75 9.5H15.2545C15.6687 9.5 16.0045 9.83579 16.0045 10.25C16.0045 10.6297 15.7223 10.9435 15.3563 10.9932L15.2545 11H8.75C8.33579 11 8 10.6642 8 10.25C8 9.8703 8.28215 9.55651 8.64823 9.50685L8.75 9.5H15.2545H8.75Z"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M12.0122 2.25C12.7462 2.25846 13.4773 2.34326 14.1937 2.50304C14.5064 2.57279 14.7403 2.83351 14.7758 3.15196L14.946 4.67881C15.0231 5.37986 15.615 5.91084 16.3206 5.91158C16.5103 5.91188 16.6979 5.87238 16.8732 5.79483L18.2738 5.17956C18.5651 5.05159 18.9055 5.12136 19.1229 5.35362C20.1351 6.43464 20.8889 7.73115 21.3277 9.14558C21.4223 9.45058 21.3134 9.78203 21.0564 9.9715L19.8149 10.8866C19.4607 11.1468 19.2516 11.56 19.2516 11.9995C19.2516 12.4389 19.4607 12.8521 19.8157 13.1129L21.0582 14.0283C21.3153 14.2177 21.4243 14.5492 21.3297 14.8543C20.8911 16.2685 20.1377 17.5649 19.1261 18.6461C18.9089 18.8783 18.5688 18.9483 18.2775 18.8206L16.8712 18.2045C16.4688 18.0284 16.0068 18.0542 15.6265 18.274C15.2463 18.4937 14.9933 18.8812 14.945 19.3177L14.7759 20.8444C14.741 21.1592 14.5122 21.4182 14.204 21.4915C12.7556 21.8361 11.2465 21.8361 9.79803 21.4915C9.48991 21.4182 9.26105 21.1592 9.22618 20.8444L9.05736 19.32C9.00777 18.8843 8.75434 18.498 8.37442 18.279C7.99451 18.06 7.5332 18.0343 7.1322 18.2094L5.72557 18.8256C5.43422 18.9533 5.09403 18.8833 4.87678 18.6509C3.86462 17.5685 3.11119 16.2705 2.6732 14.8548C2.57886 14.5499 2.68786 14.2186 2.94485 14.0293L4.18818 13.1133C4.54232 12.8531 4.75147 12.4399 4.75147 12.0005C4.75147 11.561 4.54232 11.1478 4.18771 10.8873L2.94516 9.97285C2.6878 9.78345 2.5787 9.45178 2.67337 9.14658C3.11212 7.73215 3.86594 6.43564 4.87813 5.35462C5.09559 5.12236 5.43594 5.05259 5.72724 5.18056L7.12762 5.79572C7.53056 5.97256 7.9938 5.94585 8.37577 5.72269C8.75609 5.50209 9.00929 5.11422 9.05817 4.67764L9.22824 3.15196C9.26376 2.83335 9.49786 2.57254 9.8108 2.50294C10.5281 2.34342 11.26 2.25865 12.0122 2.25ZM12.0124 3.7499C11.5583 3.75524 11.1056 3.79443 10.6578 3.86702L10.5489 4.84418C10.4471 5.75368 9.92003 6.56102 9.13042 7.01903C8.33597 7.48317 7.36736 7.53903 6.52458 7.16917L5.62629 6.77456C5.05436 7.46873 4.59914 8.25135 4.27852 9.09168L5.07632 9.67879C5.81513 10.2216 6.25147 11.0837 6.25147 12.0005C6.25147 12.9172 5.81513 13.7793 5.0771 14.3215L4.27805 14.9102C4.59839 15.752 5.05368 16.5361 5.626 17.2316L6.53113 16.8351C7.36923 16.4692 8.33124 16.5227 9.12353 16.9794C9.91581 17.4361 10.4443 18.2417 10.548 19.1526L10.657 20.1365C11.5466 20.2878 12.4555 20.2878 13.3451 20.1365L13.4541 19.1527C13.5549 18.2421 14.0828 17.4337 14.876 16.9753C15.6692 16.5168 16.6332 16.463 17.4728 16.8305L18.3772 17.2267C18.949 16.5323 19.4041 15.7495 19.7247 14.909L18.9267 14.3211C18.1879 13.7783 17.7516 12.9162 17.7516 11.9995C17.7516 11.0827 18.1879 10.2206 18.9258 9.67847L19.7227 9.09109C19.4021 8.25061 18.9468 7.46784 18.3748 6.77356L17.4783 7.16737C17.113 7.32901 16.7178 7.4122 16.3187 7.41158C14.849 7.41004 13.6155 6.30355 13.4551 4.84383L13.3462 3.8667C12.9007 3.7942 12.4526 3.75512 12.0124 3.7499ZM11.9997 8.24995C14.0708 8.24995 15.7497 9.92888 15.7497 12C15.7497 14.071 14.0708 15.75 11.9997 15.75C9.92863 15.75 8.2497 14.071 8.2497 12C8.2497 9.92888 9.92863 8.24995 11.9997 8.24995ZM11.9997 9.74995C10.7571 9.74995 9.7497 10.7573 9.7497 12C9.7497 13.2426 10.7571 14.25 11.9997 14.25C13.2423 14.25 14.2497 13.2426 14.2497 12C14.2497 10.7573 13.2423 9.74995 11.9997 9.74995Z"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M5.69362 11.9997L2.29933 3.2715C2.0631 2.66403 2.65544 2.08309 3.2414 2.28959L3.33375 2.32885L21.3337 11.3288C21.852 11.588 21.8844 12.2975 21.4309 12.6129L21.3337 12.6705L3.33375 21.6705C2.75077 21.962 2.11746 21.426 2.2688 20.8234L2.29933 20.7278L5.69362 11.9997L2.29933 3.2715L5.69362 11.9997ZM4.4021 4.54007L7.01109 11.2491L13.6387 11.2497C14.0184 11.2497 14.3322 11.5318 14.3818 11.8979L14.3887 11.9997C14.3887 12.3794 14.1065 12.6932 13.7404 12.7428L13.6387 12.7497L7.01109 12.7491L4.4021 19.4593L19.3213 11.9997L4.4021 4.54007Z"/></symbol>
+<symbol id="i-power" viewBox="0 0 24 24"><path d="M8.2042 4.82046C8.57962 4.64545 9.02584 4.80792 9.20085 5.18334C9.37586 5.55876 9.2134 6.00498 8.83797 6.18C6.21382 7.4033 4.5 10.0416 4.5 12.9914C4.5 17.1386 7.85759 20.5002 11.9989 20.5002C16.1403 20.5002 19.4979 17.1386 19.4979 12.9914C19.4979 10.0477 17.7912 7.41389 15.1753 6.18718C14.8002 6.01131 14.6388 5.56472 14.8147 5.1897C14.9905 4.81467 15.4371 4.65322 15.8121 4.82909C18.9502 6.30065 20.9979 9.46066 20.9979 12.9914C20.9979 17.9666 16.9691 22.0002 11.9989 22.0002C7.02876 22.0002 3 17.9666 3 12.9914C3 9.45334 5.05623 6.28796 8.2042 4.82046ZM11.9989 2.49609C12.3786 2.49609 12.6924 2.77825 12.7421 3.14432L12.7489 3.24609V10.746C12.7489 11.1602 12.4132 11.496 11.9989 11.496C11.6192 11.496 11.3055 11.2139 11.2558 10.8478L11.2489 10.746V3.24609C11.2489 2.83188 11.5847 2.49609 11.9989 2.49609Z"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M4.53033 12.9697C4.23744 12.6768 3.76256 12.6768 3.46967 12.9697C3.17678 13.2626 3.17678 13.7374 3.46967 14.0303L7.96967 18.5303C8.26256 18.8232 8.73744 18.8232 9.03033 18.5303L20.0303 7.53033C20.3232 7.23744 20.3232 6.76256 20.0303 6.46967C19.7374 6.17678 19.2626 6.17678 18.9697 6.46967L8.5 16.9393L4.53033 12.9697Z"/></symbol>
+<symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="M4.21967 8.46967C4.51256 8.17678 4.98744 8.17678 5.28033 8.46967L12 15.1893L18.7197 8.46967C19.0126 8.17678 19.4874 8.17678 19.7803 8.46967C20.0732 8.76256 20.0732 9.23744 19.7803 9.53033L12.5303 16.7803C12.2374 17.0732 11.7626 17.0732 11.4697 16.7803L4.21967 9.53033C3.92678 9.23744 3.92678 8.76256 4.21967 8.46967Z"/></symbol>
+<symbol id="i-arrow-right" viewBox="0 0 24 24"><path d="M13.2673 4.20889C12.9674 3.9232 12.4926 3.93475 12.2069 4.23467C11.9212 4.5346 11.9328 5.00933 12.2327 5.29502L18.4841 11.2496H3.75C3.33579 11.2496 3 11.5854 3 11.9996C3 12.4138 3.33579 12.7496 3.75 12.7496H18.4842L12.2327 18.7043C11.9328 18.99 11.9212 19.4648 12.2069 19.7647C12.4926 20.0646 12.9674 20.0762 13.2673 19.7905L20.6862 12.7238C20.8551 12.5629 20.9551 12.3576 20.9861 12.1443C20.9952 12.0975 21 12.0491 21 11.9996C21 11.9501 20.9952 11.9016 20.986 11.8547C20.955 11.6415 20.855 11.4364 20.6862 11.2756L13.2673 4.20889Z"/></symbol>
+<symbol id="i-history" viewBox="0 0 24 24"><path d="M12 4.5C16.1421 4.5 19.5 7.85786 19.5 12C19.5 16.1421 16.1421 19.5 12 19.5C7.85786 19.5 4.5 16.1421 4.5 12C4.5 11.6236 4.52772 11.2538 4.58123 10.8923C4.64845 10.4382 4.31609 10 3.85708 10C3.48623 10 3.161 10.2562 3.10471 10.6228C3.03576 11.0718 3 11.5317 3 12C3 16.9706 7.02944 21 12 21C16.9706 21 21 16.9706 21 12C21 7.02944 16.9706 3 12 3C9.69494 3 7.59227 3.86656 6 5.29168V4.25C6 3.83579 5.66421 3.5 5.25 3.5C4.83579 3.5 4.5 3.83579 4.5 4.25V7.25C4.5 7.66421 4.83579 8 5.25 8H8.25C8.66421 8 9 7.66421 9 7.25C9 6.83579 8.66421 6.5 8.25 6.5H6.90093C8.23907 5.25883 10.0309 4.5 12 4.5ZM12.5 7.75C12.5 7.33579 12.1642 7 11.75 7C11.3358 7 11 7.33579 11 7.75V12.25C11 12.6642 11.3358 13 11.75 13H14.75C15.1642 13 15.5 12.6642 15.5 12.25C15.5 11.8358 15.1642 11.5 14.75 11.5H12.5V7.75Z"/></symbol>
+<symbol id="i-warning" viewBox="0 0 24 24"><path d="M9.13848 3.70711C10.3664 1.43126 13.6315 1.43104 14.8592 3.70711L21.6024 16.209C22.7697 18.374 21.2016 21.0014 18.742 21.002H5.25469C2.79486 21.0017 1.22681 18.3742 2.39433 16.209L9.13848 3.70711ZM13.5389 4.41902C12.8779 3.1935 11.119 3.19371 10.4578 4.41902L3.71464 16.921C3.08599 18.0867 3.93027 19.5017 5.25469 19.502H18.742C20.0661 19.5014 20.9105 18.0866 20.2821 16.921L13.5389 4.41902ZM11.9998 15.0001C12.5521 15.0001 12.9998 15.4478 12.9998 16.0001C12.9998 16.5523 12.5521 17.0001 11.9998 17.0001C11.4477 16.9999 10.9999 16.5522 10.9998 16.0001C10.9998 15.4479 11.4476 15.0002 11.9998 15.0001ZM11.9998 7.50007C12.414 7.50007 12.7498 7.83586 12.7498 8.25007V12.7501C12.7498 13.1642 12.414 13.5001 11.9998 13.5001C11.5857 13.4999 11.2499 13.1642 11.2498 12.7501V8.25007C11.2498 7.83593 11.5857 7.5002 11.9998 7.50007Z"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><path d="M12.0016 1.99902C17.5253 1.99902 22.0031 6.47687 22.0031 12.0006C22.0031 17.5243 17.5253 22.0021 12.0016 22.0021C6.47785 22.0021 2 17.5243 2 12.0006C2 6.47687 6.47785 1.99902 12.0016 1.99902ZM12.0016 3.49902C7.30627 3.49902 3.5 7.3053 3.5 12.0006C3.5 16.6959 7.30627 20.5021 12.0016 20.5021C16.6968 20.5021 20.5031 16.6959 20.5031 12.0006C20.5031 7.3053 16.6968 3.49902 12.0016 3.49902ZM12 10.5C12.4142 10.5 12.75 10.8358 12.75 11.25V16.25C12.75 16.6642 12.4142 17 12 17C11.5858 17 11.25 16.6642 11.25 16.25V11.25C11.25 10.8358 11.5858 10.5 12 10.5ZM12 9C12.5523 9 13 8.55229 13 8C13 7.44772 12.5523 7 12 7C11.4477 7 11 7.44772 11 8C11 8.55229 11.4477 9 12 9Z"/></symbol>
+<symbol id="i-error" viewBox="0 0 24 24"><path d="M12 2C17.5228 2 22 6.47715 22 12C22 17.5228 17.5228 22 12 22C6.47715 22 2 17.5228 2 12C2 6.47715 6.47715 2 12 2ZM12 3.5C7.30558 3.5 3.5 7.30558 3.5 12C3.5 16.6944 7.30558 20.5 12 20.5C16.6944 20.5 20.5 16.6944 20.5 12C20.5 7.30558 16.6944 3.5 12 3.5ZM11.999 14.502C12.5504 14.5021 12.9971 14.9496 12.9971 15.501C12.997 16.0524 12.5504 16.4998 11.999 16.5C11.4475 16.5 11 16.0525 11 15.501C11 14.9494 11.4475 14.502 11.999 14.502ZM11.9941 7C12.3738 6.9997 12.6883 7.2815 12.7383 7.64746L12.7451 7.74902L12.749 12.251C12.7494 12.6652 12.4132 13.0016 11.999 13.002C11.6194 13.0021 11.3058 12.7195 11.2559 12.3535L11.249 12.252L11.2451 7.75098C11.2448 7.33687 11.5801 7.00051 11.9941 7Z"/></symbol>
+</svg>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     视图 1 · client —— 托盘打开的消息客户端：顶栏 + 群聊记录 + 回复栏
+     ══════════════════════════════════════════════════════════════════ -->
+<section class="view view--client" id="v-client" aria-label="消息客户端">
+  <header class="bar">
+    <span class="bar__brand">
+      <svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg>
+      <span class="bar__title">家庭消息</span>
+    </span>
+    <span class="bar__sub" id="client-device"></span>
+    <span class="bar__spacer"></span>
+    <span class="bar__conn" id="client-conn">
+      <span class="presence presence--offline" id="client-conn-dot" aria-hidden="true"></span>
+      <span id="client-conn-text">未连接宿主</span>
+    </span>
+    <span class="chip chip--ver" id="client-ver" title="PC 端版本">—</span>
+    <button class="icon-btn" id="btn-open-settings" type="button"
+            title="本机设置" aria-label="本机设置">
+      <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
+    </button>
+  </header>
+
+  <div class="stage" id="client-stage">
+    <div class="chat-list" id="client-list"></div>
+    <div class="empty" id="client-empty" hidden>
+      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
+      <div class="empty__title">还没有消息</div>
+      <div class="empty__hint">家里人发来的消息会出现在这里，也能直接在下面回复。</div>
+    </div>
+  </div>
+
+  <footer class="actions">
+    <div class="reply">
+      <span class="select">
+        <select class="select__el" id="client-sender" aria-label="以谁的名义回复"></select>
+        <svg class="icon icon--xs select__chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </span>
+      <input class="input reply__input" id="client-text" type="text" autocomplete="off"
+             placeholder="写点什么，回车发送…" aria-label="回复内容">
+      <button class="btn btn--primary" id="client-send" type="button">
+        <svg class="icon icon--sm" aria-hidden="true"><use href="#i-send"/></svg>
+        <span>发送</span>
+      </button>
+    </div>
+    <div class="hint" id="client-hint" role="status" aria-live="polite"></div>
+  </footer>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     视图 2 · popup —— 全屏强提醒：最大字号的最新消息 + 弱化的历史 + 回复栏
+     ══════════════════════════════════════════════════════════════════ -->
+<section class="view view--popup" id="v-popup" hidden aria-label="新消息提醒">
+  <header class="bar">
+    <span class="bar__brand">
+      <svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg>
+      <span class="bar__title">家庭消息</span>
+      <span class="bar__tag">新消息</span>
+    </span>
+    <span class="bar__sub" id="popup-device"></span>
+    <span class="bar__spacer"></span>
+    <span class="bar__conn" id="popup-conn">
+      <span class="presence presence--offline" id="popup-conn-dot" aria-hidden="true"></span>
+      <span id="popup-conn-text">未连接宿主</span>
+    </span>
+    <span class="chip chip--ver" id="popup-ver">—</span>
+  </header>
+
+  <div class="stage stage--popup" id="popup-stage">
+    <div class="chat-list chat-list--popup" id="popup-list"></div>
+    <div class="empty" id="popup-empty" hidden>
+      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-history"/></svg>
+      <div class="empty__title">这条消息已经收走了</div>
+      <div class="empty__hint">可能是别的设备先点了「知道了」。</div>
+    </div>
+  </div>
+
+  <footer class="actions actions--popup">
+    <div class="reply">
+      <span class="select">
+        <select class="select__el" id="popup-sender" aria-label="以谁的名义回复"></select>
+        <svg class="icon icon--xs select__chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+      </span>
+      <input class="input reply__input" id="popup-text" type="text" autocomplete="off"
+             placeholder="写点什么，回车发送…" aria-label="回复内容">
+      <button class="btn btn--primary" id="popup-send" type="button">
+        <svg class="icon icon--sm" aria-hidden="true"><use href="#i-send"/></svg>
+        <span>发送</span>
+      </button>
+    </div>
+    <div class="actions__row">
+      <span class="hint" id="popup-hint" role="status" aria-live="polite"></span>
+      <button class="btn btn--primary btn--lg" id="popup-ok" type="button">
+        <svg class="icon icon--sm" aria-hidden="true"><use href="#i-check"/></svg>
+        <span>知道了</span>
+      </button>
+    </div>
+  </footer>
+</section>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     视图 3 · settings —— 本机配置（这台电脑自己的设置，不是服务端全局设置）
+     ══════════════════════════════════════════════════════════════════ -->
+<section class="view view--settings" id="v-settings" hidden aria-label="本机设置">
+  <header class="bar">
+    <button class="icon-btn" id="settings-back" type="button" title="返回" aria-label="返回">
+      <svg class="icon icon--back" aria-hidden="true"><use href="#i-arrow-right"/></svg>
+    </button>
+    <span class="bar__title" style="margin-left:8px">本机设置</span>
+    <span class="bar__sub">只影响这台电脑</span>
+    <span class="bar__spacer"></span>
+    <span class="chip chip--ver" id="settings-ver">—</span>
+  </header>
+
+  <div class="stage stage--settings">
+    <div class="stack">
+
+      <!-- 连接 -->
+      <div class="card">
+        <h2 class="card__title">连接</h2>
+        <p class="card__sub">NAS 上那个控制台的地址与设备注册口令。</p>
+
+        <div class="form-row">
+          <label class="field-label" for="set-server">服务端地址</label>
+          <input class="input" id="set-server" type="url" inputmode="url" spellcheck="false"
+                 autocomplete="off" placeholder="http://192.168.31.50:18801">
+          <span class="field-support">含端口；局域网内用 <code>http://</code> 就行。</span>
+        </div>
+
+        <div class="form-row">
+          <label class="field-label" for="set-token">设备注册口令</label>
+          <div class="field-inline">
+            <input class="input" id="set-token" type="password" spellcheck="false"
+                   autocomplete="off" placeholder="服务端 config.yaml 里的 device.enroll_token">
+            <span class="chip" id="set-token-state">未知</span>
+          </div>
+          <span class="field-support">留空表示服务端允许内网任意设备自动注册。</span>
+        </div>
+      </div>
+
+      <!-- 本机 -->
+      <div class="card">
+        <h2 class="card__title">本机</h2>
+        <p class="card__sub">回复时用的昵称、开机行为与主题。</p>
+
+        <div class="form-row">
+          <label class="field-label" for="set-reply-name">回复昵称</label>
+          <input class="input" id="set-reply-name" type="text" autocomplete="off"
+                 list="set-reply-names" placeholder="爸爸">
+          <datalist id="set-reply-names"></datalist>
+          <span class="field-support">群聊里认昵称不认设备：昵称就是这条消息在家人眼里的署名。</span>
+        </div>
+
+        <div class="form-row">
+          <label class="field-label" for="set-autostart">开机自启</label>
+          <label class="check">
+            <input type="checkbox" id="set-autostart">
+            <span>开机后自动运行，静默待在托盘里</span>
+          </label>
+        </div>
+
+        <div class="form-row">
+          <label class="field-label" for="set-theme">主题</label>
+          <span class="select">
+            <select class="select__el" id="set-theme">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+            <svg class="icon icon--xs select__chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
+          </span>
+        </div>
+      </div>
+
+      <!-- 版本与运行信息 -->
+      <div class="card">
+        <h2 class="card__title">版本与运行信息</h2>
+        <p class="card__sub">跟图上、日志里对不上的时候看这里。</p>
+        <dl class="kv">
+          <div class="kv__row"><dt>PC 端版本</dt><dd id="info-version">—</dd></div>
+          <div class="kv__row"><dt>界面形态</dt><dd id="info-mode">—</dd></div>
+          <div class="kv__row"><dt>WebView2 运行时</dt><dd id="info-runtime">—</dd></div>
+          <div class="kv__row"><dt>系统</dt><dd id="info-platform">—</dd></div>
+          <div class="kv__row"><dt>本机名称</dt><dd id="info-device">—</dd></div>
+          <div class="kv__row"><dt>本机 ID</dt><dd id="info-device-id">—</dd></div>
+          <div class="kv__row"><dt>服务端</dt><dd id="info-server">—</dd></div>
+        </dl>
+      </div>
+
+      <!-- 文件位置 -->
+      <div class="card">
+        <h2 class="card__title">日志与配置</h2>
+        <dl class="kv">
+          <div class="kv__row"><dt>日志</dt><dd class="mono" id="info-log">—</dd></div>
+          <div class="kv__row"><dt>配置</dt><dd class="mono" id="info-config">—</dd></div>
+        </dl>
+      </div>
+
+      <div class="actions__row actions__row--form">
+        <span class="hint" id="settings-hint" role="status" aria-live="polite"></span>
+        <button class="btn btn--secondary" id="btn-quit" type="button">
+          <svg class="icon icon--sm" aria-hidden="true"><use href="#i-power"/></svg>
+          <span>退出程序</span>
+        </button>
+        <button class="btn btn--primary" id="settings-save" type="button">
+          <svg class="icon icon--sm" aria-hidden="true"><use href="#i-check"/></svg>
+          <span>保存</span>
+        </button>
+      </div>
+
+      <p class="foot">
+        保存后由程序本体去连接（<code>web.save_config</code>）；界面本身不连服务端。
+      </p>
+    </div>
+  </div>
+</section>
+
+<script src="chat.js?v=0.13.0"></script>
+<script src="pc.js?v=0.13.0"></script>
+</body>
+</html>

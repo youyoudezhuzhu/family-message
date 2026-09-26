@@ -1,0 +1,368 @@
+/* ═══════════════════════════════════════════════════════════════
+   PC 端本地界面 —— 样式（配合 shell/app.html）
+   ───────────────────────────────────────────────────────────────
+   设计语言：Fluent 2 / Windows 11（与网页端同一套）。
+   规则：**所有颜色、圆角、字号、间距都取 tokens.css 的令牌**，
+        这里不写死任何颜色值，也不自算颜色。
+        （唯二例外是两处「材质/阴影」都用的令牌变量，没有一个裸色值。）
+
+   与网页端的关系：共用源文件（chat.js / tokens.css），但**互不依赖**。
+   第 3 节「群聊气泡」是与 web/static/style.css 里同名规则的**同值副本** ——
+   因为 PC 端只带 shell/ 这几个文件，物理上加载不到 style.css。
+   改气泡外观请同时改两处（或直接把这段抽成共享文件）。
+
+   禁：Material、Emoji 图标、border-radius:9999px（真圆只用 --radius-circle，
+       且只给头像/状态点这类圆点用）。图标一律内联 SVG（Fluent）。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 0. 基础 ───────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--fluent-color-background);
+  color: var(--fluent-color-text);
+  font: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+[hidden] { display: none !important; }
+
+.sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+.icon { width: 20px; height: 20px; fill: currentColor; display: block; flex: 0 0 auto; }
+.icon--sm { width: 16px; height: 16px; }
+.icon--xs { width: 12px; height: 12px; }
+.icon--lg { width: 32px; height: 32px; }
+.icon--back { transform: scaleX(-1); }          /* arrow-right 翻过来当「返回」 */
+
+:focus-visible { outline: 2px solid var(--fluent-color-primary); outline-offset: 2px; }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--fluent-scroll-thumb); border-radius: var(--radius-small);
+  border: 2px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--fluent-scroll-thumb-hover); background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ── 1. 三个视图（一个页面，切显示不导航）──────────────────────
+     起始视图由桥的 host.hello.mode 决定，pc.js 只写 html[data-view]。 */
+.view {
+  position: fixed; inset: 0;
+  display: none; flex-direction: column;
+  background: var(--fluent-color-background);
+  color: var(--fluent-color-text);
+  animation: view-in var(--duration-gentle) var(--curve-decelerate);
+}
+@keyframes view-in { from { opacity: 0; } to { opacity: 1; } }
+html[data-view="client"] #v-client,
+html[data-view="popup"] #v-popup,
+html[data-view="settings"] #v-settings { display: flex; }
+
+/* ── 2. 顶栏 / 通用控件 ─────────────────────────────────────── */
+.bar {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  height: var(--titlebar-height);
+  padding: 0 var(--spacing-md) 0 var(--spacing-lg);
+  background: var(--fluent-color-mica);
+  -webkit-backdrop-filter: blur(30px) saturate(180%);
+  backdrop-filter: blur(30px) saturate(180%);
+  border-bottom: 1px solid var(--fluent-color-border-subtle);
+}
+.bar__brand { display: inline-flex; align-items: center; gap: var(--spacing-sm); color: var(--fluent-color-primary); }
+.bar__title { font: var(--font-body-strong); color: var(--fluent-color-text); white-space: nowrap; }
+.bar__tag {
+  padding: 1px var(--spacing-sm);
+  border-radius: var(--radius-small);
+  background: var(--fluent-color-primary-tint);
+  color: var(--fluent-color-primary);
+  font: var(--font-caption); font-weight: 600; white-space: nowrap;
+}
+.bar__sub {
+  font: var(--font-caption); color: var(--fluent-color-text-tertiary);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
+}
+.bar__sub:empty { display: none; }
+.bar__spacer { flex: 1; min-width: 0; }
+.bar__conn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font: var(--font-caption); color: var(--fluent-color-text-secondary); white-space: nowrap;
+}
+
+.presence { width: 8px; height: 8px; flex: 0 0 8px; border-radius: var(--radius-circle); }
+.presence--online { background: var(--fluent-color-success); }
+.presence--offline { background: var(--fluent-color-text-tertiary); }
+.presence--connecting { background: var(--fluent-color-warning); }
+
+.chip {
+  display: inline-flex; align-items: center; gap: var(--spacing-xs);
+  padding: 2px var(--spacing-sm);
+  border-radius: var(--radius-small);
+  background: var(--fluent-color-surface-tertiary);
+  border: 1px solid var(--fluent-color-border-subtle);
+  color: var(--fluent-color-text-secondary);
+  font: var(--font-caption); white-space: nowrap;
+}
+.chip--ver {
+  background: transparent; border-color: transparent;
+  font-family: var(--fluent-font-mono); color: var(--fluent-color-text-tertiary);
+}
+.chip.is-ok { background: var(--fluent-color-success-tint); border-color: transparent; color: var(--fluent-color-success); }
+.chip.is-warn { background: var(--fluent-color-warning-tint); border-color: transparent; color: var(--fluent-color-warning); }
+
+.icon-btn {
+  width: 32px; height: 32px; flex: 0 0 32px;
+  display: grid; place-items: center;
+  border: 1px solid transparent; border-radius: var(--radius-medium);
+  background: transparent; color: var(--fluent-color-text);
+  cursor: pointer; padding: 0;
+}
+.icon-btn:hover { background: var(--fluent-fill-subtle-hover); }
+.icon-btn:active { background: var(--fluent-fill-subtle-pressed); }
+
+.btn {
+  height: 36px; padding: 0 var(--spacing-lg);
+  display: inline-flex; align-items: center; gap: var(--spacing-sm);
+  border: 1px solid transparent; border-radius: var(--radius-medium);
+  font: var(--font-button); cursor: pointer; white-space: nowrap;
+  background: transparent; color: var(--fluent-color-text);
+}
+.btn--lg { height: 44px; padding: 0 var(--spacing-2xl); }
+.btn--primary { background: var(--fluent-color-primary-fill); color: var(--fluent-color-on-primary); }
+.btn--primary:hover:not(:disabled) { background: var(--fluent-color-primary-hover); }
+.btn--primary:active:not(:disabled) { background: var(--fluent-color-primary-pressed); }
+.btn--secondary { border-color: var(--fluent-color-border); color: var(--fluent-color-text); }
+.btn--secondary:hover:not(:disabled) { background: var(--fluent-fill-control-hover); }
+.btn:disabled { color: var(--fluent-color-text-disabled); cursor: not-allowed; }
+
+.input {
+  width: 100%; height: 34px; padding: 0 var(--spacing-md);
+  background: var(--fluent-fill-control); color: var(--fluent-color-text);
+  border: 1px solid var(--fluent-color-border);
+  border-bottom-color: var(--fluent-color-border-strong);
+  border-radius: var(--radius-medium);
+  font: var(--font-body); outline: none;
+}
+.input::placeholder { color: var(--fluent-color-text-tertiary); }
+.input:hover { background: var(--fluent-fill-control-hover); }
+.input:focus { border-color: var(--fluent-color-primary); border-bottom-width: 2px; }
+
+.select { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.select__el {
+  width: 100%; height: 34px; padding: 0 var(--spacing-2xl) 0 var(--spacing-md);
+  appearance: none; -webkit-appearance: none;
+  background: var(--fluent-fill-control); color: var(--fluent-color-text);
+  border: 1px solid var(--fluent-color-border);
+  border-bottom-color: var(--fluent-color-border-strong);
+  border-radius: var(--radius-medium);
+  font: var(--font-body); cursor: pointer; outline: none;
+}
+.select__el:hover { background: var(--fluent-fill-control-hover); }
+.select__el:focus { border-color: var(--fluent-color-primary); border-bottom-width: 2px; }
+.select__chevron { position: absolute; right: var(--spacing-md); pointer-events: none; color: var(--fluent-color-text-secondary); }
+
+/* ── 3. 群聊气泡（web/static/chat.js 的 DOM + 与 style.css 同值的规则）──
+     左右分阵营只认 chat.js 传进来的 myName：别人发的靠左，自己发的靠右。 */
+.chat-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }
+
+.chat-row { display: flex; align-items: flex-start; gap: var(--spacing-sm); }
+.chat-row--out { flex-direction: row-reverse; }
+
+.chat-avatar {
+  flex: 0 0 auto;
+  width: 32px; height: 32px;
+  border-radius: var(--radius-circle);
+  background: var(--chat-nick, var(--fluent-color-surface-tertiary));
+  /* 唯一一处非令牌色：头像底色是浅彩（昵称色），两种主题下都得用深字 ——
+     与 style.css 里 .chat-avatar 的值一模一样，改就两端一起改 */
+  color: rgba(0, 0, 0, 0.7);
+  display: grid; place-items: center;
+  font: var(--font-caption); font-weight: 600;
+  user-select: none;
+}
+
+.chat-main {
+  display: flex; flex-direction: column; gap: var(--spacing-xs);
+  min-width: 0;
+  max-width: min(72%, 560px);
+}
+.chat-row--out .chat-main { align-items: flex-end; }
+
+.chat-meta { display: flex; align-items: baseline; gap: var(--spacing-sm); }
+.chat-row--out .chat-meta { flex-direction: row-reverse; }
+.chat-name { font: var(--font-caption); font-weight: 600; color: var(--fluent-color-text-secondary); }
+.chat-time { font: var(--font-caption); color: var(--fluent-color-text-tertiary); white-space: nowrap; }
+
+.chat-bubble {
+  padding: var(--spacing-sm) var(--spacing-md);
+  border-radius: var(--radius-large);
+  background: var(--fluent-color-surface-secondary);
+  border: 1px solid var(--fluent-color-border-subtle);
+  color: var(--fluent-color-text);
+  font: var(--font-body);
+  white-space: pre-wrap; word-break: break-word;
+}
+.chat-row--out .chat-bubble {
+  background: var(--fluent-color-primary-fill);
+  border-color: transparent;
+  color: var(--fluent-color-on-primary);
+}
+
+.chat-tags { display: flex; gap: var(--spacing-xs); }
+.chat-row--out .status--sent { background: transparent; color: var(--fluent-color-text-tertiary); }
+.status {
+  display: inline-flex; align-items: center; gap: var(--spacing-xs);
+  padding: 1px var(--spacing-sm);
+  border-radius: var(--radius-small);
+  background: var(--fluent-color-surface-tertiary);
+  color: var(--fluent-color-text-secondary);
+  font: var(--font-caption); white-space: nowrap;
+}
+
+/* ── 4. 舞台 / 空态 / 操作区 ───────────────────────────────── */
+.stage {
+  flex: 1 1 auto; min-height: 0;
+  display: flex; flex-direction: column;
+  overflow-y: auto; overflow-x: hidden;
+  padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl);
+}
+.stage .chat-list { flex: 0 0 auto; }
+
+/* 宽窗口下把记录与回复栏收在 --content-max 内居中：
+   否则两侧阵营会隔着整整一屏，读起来要来回扫。 */
+#client-list,
+#v-client .actions > .reply,
+#v-client .actions > .hint {
+  width: 100%; max-width: var(--content-max);
+  margin-left: auto; margin-right: auto;
+}
+
+.empty {
+  margin: auto; padding: var(--spacing-2xl);
+  display: flex; flex-direction: column; align-items: center; gap: var(--spacing-sm);
+  text-align: center; color: var(--fluent-color-text-tertiary);
+}
+.empty__title { font: var(--font-subtitle); color: var(--fluent-color-text); }
+.empty__hint { font: var(--font-caption); max-width: 34ch; line-height: 1.7; }
+
+.actions {
+  flex: 0 0 auto;
+  display: flex; flex-direction: column; gap: var(--spacing-sm);
+  padding: var(--spacing-md) var(--spacing-xl) var(--spacing-lg);
+  background: var(--fluent-color-surface-secondary);
+  border-top: 1px solid var(--fluent-color-border-subtle);
+}
+.reply { display: flex; align-items: center; gap: var(--spacing-sm); }
+.reply .select { flex: 0 0 132px; }
+.reply__input { flex: 1 1 auto; min-width: 0; }
+.actions__row { display: flex; align-items: center; gap: var(--spacing-lg); min-height: 16px; }
+
+.hint {
+  flex: 1; min-width: 0; min-height: 16px;
+  display: inline-flex; align-items: center; gap: var(--spacing-xs);
+  font: var(--font-caption); color: var(--fluent-color-text-secondary);
+}
+.hint.is-ok { color: var(--fluent-color-success); }
+.hint.is-error { color: var(--fluent-color-error); }
+.hint:empty { min-height: 16px; }
+
+/* ── 5. 全屏强提醒（popup）─────────────────────────────────────
+     最新一条 = 最大字号的视觉焦点（chat.js 渲染的气泡，只放大）；
+     更早的弱化成单行字幕，只做上下文，不跟主条抢注意力。 */
+.stage--popup { padding: var(--spacing-xl) var(--spacing-2xl); }
+.chat-list--popup {
+  margin: auto;                 /* margin:auto 而不是 justify-content:center：
+                                   内容比容器高时不会被裁掉顶部 */
+  width: 100%; max-width: var(--content-max);
+  gap: var(--spacing-md);
+}
+
+.chat-row--prev { opacity: .66; }
+.chat-row--prev .chat-avatar { width: 24px; height: 24px; }
+.chat-row--prev .chat-main { max-width: 100%; }
+.chat-row--prev .chat-bubble {
+  background: none; border: none; padding: 0;
+  color: var(--fluent-color-text-secondary);
+  font: var(--font-caption);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+.chat-row--lead .chat-main { max-width: min(88%, 900px); gap: var(--spacing-sm); }
+.chat-row--lead .chat-bubble {
+  /* 正文是这一屏的主角：随屏宽放大，但不超过 44px，一行别太长 */
+  font: 600 clamp(26px, 3.4vw, 44px)/1.32 var(--fluent-font-family);
+  padding: var(--spacing-lg) var(--spacing-xl);
+  max-width: 21em;
+}
+.chat-row--lead.is-new { animation: lead-in var(--duration-slow) var(--curve-decelerate); }
+@keyframes lead-in {
+  from { opacity: 0; transform: translateY(14px) scale(.985); }
+  to { opacity: 1; transform: none; }
+}
+.actions--popup { padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl); }
+
+/* ── 6. 本机设置（settings）────────────────────────────────── */
+.stage--settings { padding: var(--spacing-xl); }
+.stack {
+  width: 100%; max-width: var(--content-max); margin: 0 auto;
+  display: flex; flex-direction: column; gap: var(--spacing-lg);
+}
+.card {
+  display: flex; flex-direction: column; gap: var(--spacing-md);
+  padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-xl);
+  background: var(--fluent-color-surface);
+  border: 1px solid var(--fluent-card-stroke);
+  border-radius: var(--radius-xlarge);
+  box-shadow: var(--shadow-card);
+}
+.card__title { margin: 0; font: var(--font-subtitle); }
+.card__sub { margin: 0; font: var(--font-caption); color: var(--fluent-color-text-tertiary); line-height: 1.6; }
+
+.form-row { display: flex; flex-direction: column; gap: var(--spacing-xs); }
+.field-label { font: var(--font-caption); font-weight: 600; color: var(--fluent-color-text-secondary); }
+.field-support { font: var(--font-caption); color: var(--fluent-color-text-tertiary); line-height: 1.6; }
+.field-support code, .foot code { font-family: var(--fluent-font-mono); }
+.field-inline { display: flex; align-items: center; gap: var(--spacing-sm); }
+.field-inline .input { flex: 1 1 auto; min-width: 0; }
+
+.check { display: inline-flex; align-items: center; gap: var(--spacing-sm); font: var(--font-body); cursor: pointer; }
+.check input {
+  width: 18px; height: 18px; flex: 0 0 18px; margin: 0;
+  accent-color: var(--fluent-color-primary-fill); cursor: pointer;
+}
+
+.kv { margin: 0; display: flex; flex-direction: column; }
+.kv__row {
+  display: flex; gap: var(--spacing-lg);
+  padding: var(--spacing-sm) 0;
+  border-bottom: 1px solid var(--fluent-color-border-subtle);
+}
+.kv__row:last-child { border-bottom: 0; padding-bottom: 0; }
+.kv dt { flex: 0 0 150px; font: var(--font-caption); color: var(--fluent-color-text-secondary); }
+.kv dd { margin: 0; flex: 1 1 auto; min-width: 0; font: var(--font-body); word-break: break-all; }
+.kv dd.mono { font-family: var(--fluent-font-mono); font-size: var(--font-size-caption); line-height: 1.7; }
+
+.actions__row--form { justify-content: flex-end; padding-top: var(--spacing-xs); }
+.foot { margin: 0; font: var(--font-caption); color: var(--fluent-color-text-tertiary); text-align: right; }
+
+/* ── 7. 窄屏 / 矮屏（PC 窗口会被拖小）──────────────────────── */
+@media (max-width: 900px) {
+  .bar { padding: 0 var(--spacing-sm) 0 var(--spacing-md); }
+  .stage, .stage--popup, .stage--settings { padding: var(--spacing-lg); }
+  .actions, .actions--popup { padding: var(--spacing-md) var(--spacing-lg) var(--spacing-lg); }
+  .chat-main { max-width: 82%; }
+  .chat-avatar { width: 28px; height: 28px; }
+}
+@media (max-width: 620px) {
+  .bar__conn { display: none; }
+  .reply { flex-wrap: wrap; }
+  .reply .select { flex: 1 1 100%; }
+  .kv__row { flex-direction: column; gap: var(--spacing-xs); }
+  .kv dt { flex: 0 0 auto; }
+  .actions__row { flex-direction: column-reverse; align-items: stretch; }
+  .actions__row .btn { justify-content: center; }
+}
+@media (max-height: 620px) {
+  .chat-row--lead .chat-bubble { font-size: clamp(22px, 2.6vw, 30px); padding: var(--spacing-md) var(--spacing-lg); }
+  .chat-row--prev { display: none; }        /* 矮屏优先保住主条 */
+}
