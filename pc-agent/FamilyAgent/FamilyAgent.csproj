@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.12.4</Version>
+    <Version>0.13.0</Version>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
@@ -36,11 +36,37 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- 本地兜底页（boot.html 首屏 / offline.html 连不上服务端 / 缺运行时的提示）随 exe 发布：
-         源文件由网页端那边维护（web/shell/），这里只负责复制到输出的 shell/ 下。
+    <!-- PC 端界面**随 exe 发布**（不再加载 NAS 网页）—— 见 docs/PC-LOCAL-UI.md。
          壳从 <exe 目录>/shell/ 通过虚拟域名 https://familyagent.local/shell/ 读它们。
-         文件暂时不存在时通配符展开为空，不算错误 —— 壳会退化成「只加载正式页面」。 -->
+
+         源文件都由网页端那边一处维护（web/），这里只负责复制到输出的 shell/ 下：
+           app.html       唯一界面（client / popup / settings 三个视图）
+           pc.css         界面样式（令牌来自 tokens.css）
+           pc.js          界面表现层（视图切换 / 设置表单 / 桥消息分流）
+           boot.html      首屏占位（不闪白）  offline.html  连不上服务端的诊断页
+
+         共用的两个源文件（与网页端**同一份**，所以群聊气泡两端长得一样；
+         但互不依赖 —— 网页端改了要重新编译 PC 端才生效）：
+           web/static/chat.js    → shell/chat.js
+           web/static/tokens.css → shell/tokens.css
+         用 Link 压平到 shell/ 根下，别在包里多一层 static/。
+
+         ⚠ 通配符展开不到文件时为空，**不算错误**（界面文件由网页端那边先落地，
+         PC 端后补也不至于让云编译直接挂掉）；但这两个共用源文件是真实存在的，
+         所以直接用字面路径引用，缺了它就该在编译期炸出来。 -->
     <Content Include="..\..\web\shell\**\*.html" Link="shell\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\web\shell\**\*.css" Link="shell\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\web\shell\**\*.js" Link="shell\%(RecursiveDir)%(Filename)%(Extension)">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\web\static\chat.js" Link="shell\chat.js">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="..\..\web\static\tokens.css" Link="shell\tokens.css">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>

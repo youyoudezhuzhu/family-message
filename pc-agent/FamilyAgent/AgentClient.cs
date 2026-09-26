@@ -16,7 +16,7 @@ namespace FamilyAgent;
 /// </summary>
 public sealed class AgentClient
 {
-    private const string AgentVersion = "cs-0.12.4";
+    private const string AgentVersion = "cs-0.13.0";
 
     /// <summary>对外暴露的版本号，启动日志和排查时用。</summary>
     public static string ReportedVersion => AgentVersion;

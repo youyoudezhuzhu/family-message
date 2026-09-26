@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -137,7 +138,7 @@ public partial class App : Application
         // --tray：开机自启时静默进托盘；手动启动则直接打开界面
         var silent = HasArg(e.Args, "--tray");
         if (!Config.IsConfigured)
-            ShowSettings();          // 还没配置过 → 直接进控制台
+            ShowSettings();          // 还没配置过 → 开窗口进设置（未配置时宿主显示的是兜底页）
         else if (!silent)
             ShowConversation();      // 打开就是消息界面，设置在右上角
     }
@@ -242,9 +243,180 @@ public partial class App : Application
         host.Bridge.ScreenshotRequested += OnLocalScreenshotRequested;
         host.Bridge.ActionRequested += OnLocalActionRequested;
         host.Bridge.ServerChanged += OnServerSettingsChanged;
+        host.Bridge.ConfigSaveRequested += OnSaveConfigRequested;
+        host.Bridge.SettingsRequested += ShowSettings;
         host.Bridge.QuitRequested += ExitApp;
 
         return host;
+    }
+
+    /// <summary>
+    /// 页面在设置视图里点了「保存」（<c>web.save_config</c>）—— 本机设置的唯一写入点。
+    ///
+    /// 规矩（docs/PC-LOCAL-UI.md）：
+    ///   · **只处理传了的字段**：没传 = 不改（不是改成空）
+    ///   · 落盘走 <see cref="AgentConfig.Save"/>
+    ///   · 改了服务端地址 / 口令 → 重连（<c>Client.Restart</c>）
+    ///   · 改了开机自启 → <c>AutoStart.Apply</c>（可能要弹一次 UAC），
+    ///     **失败要如实写进 detail**，不许回一个漂亮的 ok
+    ///   · 最后一定回 <c>host.config_saved</c>，页面等着它给提示
+    /// </summary>
+    private void OnSaveConfigRequested(ConfigPatch patch)
+    {
+        if (patch is null || patch.IsEmpty)
+        {
+            _host?.Bridge.PostConfigSaved(false, "没有要保存的设置项");
+            return;
+        }
+
+        var notes = new List<string>();
+        var ok = true;
+        var reconnect = false;
+
+        // ① 服务端地址（http/ws 都收，落盘前统一去掉结尾斜杠）
+        if (patch.ServerUrl is not null)
+        {
+            var clean = patch.ServerUrl.Trim().TrimEnd('/');
+            if (clean.Length == 0)
+            {
+                ok = false;
+                notes.Add("服务端地址不能为空");
+            }
+            else if (!string.Equals(clean, Config.ServerUrl, StringComparison.OrdinalIgnoreCase))
+            {
+                Config.ServerUrl = clean;
+                reconnect = true;
+                notes.Add("服务端地址已保存，正在重连");
+            }
+            else
+            {
+                notes.Add("服务端地址没变");
+            }
+        }
+
+        // ② 注册口令：界面留空 = 没填，不当成"清空口令"
+        if (patch.EnrollToken is not null)
+        {
+            var token = patch.EnrollToken.Trim();
+            if (token.Length == 0)
+            {
+                notes.Add("注册口令留空，未修改");
+            }
+            else if (!string.Equals(token, Config.EnrollToken, StringComparison.Ordinal))
+            {
+                Config.EnrollToken = token;
+                reconnect = true;      // 口令变了要重新注册
+                notes.Add("注册口令已保存");
+            }
+            else
+            {
+                notes.Add("注册口令没变");
+            }
+        }
+
+        // ③ 回复昵称：页面是自由输入，不在本地列表里就加进去
+        if (patch.ReplyName is not null)
+        {
+            var name = patch.ReplyName.Trim();
+            if (name.Length == 0)
+            {
+                notes.Add("回复昵称留空，未修改");
+            }
+            else
+            {
+                var names = Config.ReplyNames ?? new List<string>();
+                if (!names.Contains(name))
+                    names.Add(name);
+                Config.ReplyNames = names;
+                Config.ReplyName = name;
+                notes.Add($"回复昵称已保存：{name}");
+            }
+        }
+
+        // ④ 明暗模式：只认 system / light / dark，别的直接拒绝（别把配置写脏）
+        if (patch.ThemeMode is not null)
+        {
+            var theme = patch.ThemeMode.Trim().ToLowerInvariant();
+            if (theme != "system" && theme != "light" && theme != "dark")
+            {
+                ok = false;
+                notes.Add($"明暗模式不认识：{patch.ThemeMode}");
+            }
+            else
+            {
+                Config.ThemeMode = theme;
+                notes.Add($"主题已保存：{theme}");
+            }
+        }
+
+        // ⑤ 开机自启：真去注册/删除，回报**实际**落地情况（可能弹一次 UAC）
+        if (patch.AutoStart.HasValue)
+        {
+            var wantAuto = patch.AutoStart.Value;
+            Config.AutoStart = wantAuto;
+            AutoStart.Status actual;
+            try
+            {
+                actual = AutoStart.Apply(wantAuto, allowElevation: wantAuto);
+            }
+            catch (Exception ex)
+            {
+                AgentLog.Write("!! 应用开机自启失败：" + ex.Message);
+                actual = AutoStart.Query();
+                ok = false;
+                notes.Add("开机自启设置失败：" + ex.Message);
+            }
+
+            if (wantAuto && !actual.Any)
+            {
+                ok = false;
+                notes.Add("开机自启没能注册（建 SYSTEM 计划任务需要管理员权限，" +
+                          "提权也没成功）；登录时仍会启动，但「只开机未登录」覆盖不到");
+            }
+            else if (!wantAuto && actual.Any)
+            {
+                ok = false;
+                notes.Add($"自启项没删干净（当前：{actual.Describe()}）");
+            }
+            else
+            {
+                notes.Add(wantAuto ? $"开机自启已启用：{actual.Describe()}" : "开机自启已关闭");
+            }
+        }
+
+        Config.Normalize();
+
+        try
+        {
+            Config.Save();
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("!! 保存配置失败：" + ex);
+            _host?.Bridge.PostConfigSaved(false, "写入配置文件失败：" + ex.Message);
+            return;
+        }
+
+        // 主题同步给 WPF 一侧（缺 WebView2 Runtime 时的本地提示页按它上色；
+        // 页面自己的明暗由页面跟系统走，不靠这里）
+        try
+        {
+            var app = Application.Current;
+            if (app is not null)
+                app.ThemeMode = ToFluent(Config.ThemeMode);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("应用主题失败（保存本身已成功）：" + ex.Message);
+        }
+
+        if (reconnect)
+            Client.Restart();
+
+        AgentLog.Write($"设置已保存：server={Config.ServerUrl} name={Config.ReplyName} "
+                     + $"theme={Config.ThemeMode} autostart={Config.AutoStart} 重连={reconnect}");
+        _host?.Bridge.PostConfigSaved(ok, string.Join("；", notes));
+        _host?.ReloadAfterServerChange();   // 配置变了 → 界面阶段跟着纠正（不导航则只刷新信息）
     }
 
     /// <summary>
@@ -352,6 +524,7 @@ public partial class App : Application
         if (clean.Length == 0)
         {
             _host?.Bridge.PostActionResult("set_server", false, "服务端地址不能为空");
+            _host?.Bridge.PostConfigSaved(false, "服务端地址不能为空");
             return;
         }
 
@@ -362,7 +535,10 @@ public partial class App : Application
 
         SaveAndReconnect();
         AgentLog.Write($"兜底页保存配置：server={Config.ServerUrl} device={Config.DeviceId}");
+        // 两条回执都发：host.action_result 是兜底页一直在用的老帧，
+        // host.config_saved 是新增的统一回执（docs/PC-LOCAL-UI.md）——「只加不删」。
         _host?.Bridge.PostActionResult("set_server", true, "已保存，正在连接…");
+        _host?.Bridge.PostConfigSaved(true, "服务端地址已保存，正在重连");
         _host?.ReloadAfterServerChange();
     }
 
@@ -670,9 +846,10 @@ public partial class App : Application
         if (host is null) return;
         try
         {
-            // 从托盘打开 → **消息客户端**形态：只有消息记录 + 回复栏。
-            // 不能用 ShowConsole("conversation") —— 那会把带侧边栏的网页管理后台
-            // 整个搬到 PC 上，看着就像「打开了一个网页」。控制台另有入口。
+            // 从托盘打开 → **消息界面**（本地页 app.html 的 client 视图）：
+            // 只有消息记录 + 回复栏。以前这里是网页端的 console 视图，
+            // 结果把带侧边栏的管理后台整个搬到 PC 上，看着就像「打开了一个网页」。
+            // 现在界面是 exe 自带的，物理上没有控制台；网页控制台另有托盘入口。
             host.ShowClient();
             AgentLog.Write($"托盘打开会话：窗口已显示 visible={host.IsVisible} "
                            + $"state={host.WindowState} size={host.Width}x{host.Height} "
@@ -714,11 +891,18 @@ public partial class App : Application
         return url;
     }
 
+    /// <summary>
+    /// 打开**本机设置视图**（托盘「设置…」、启动时还没配置过、页面顶栏齿轮走
+    /// <c>web.open_settings</c> 也汇到这儿）。
+    ///
+    /// 设置是本地页 app.html 的一个视图：宿主只切视图 + 发 host.mode，
+    /// 不再去加载网页端那个带侧边栏的管理后台（那正是「PC 上弹出后台」的来源）。
+    /// </summary>
     private void ShowSettings()
     {
         var host = EnsureHost();
         if (host is null) return;
-        try { host.ShowConsole("settings"); }
+        try { host.ShowSettings(); }
         catch (Exception ex)
         {
             AgentLog.Write("!! 打开设置失败：" + ex);
