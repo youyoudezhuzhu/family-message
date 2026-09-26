@@ -21,7 +21,6 @@ public partial class App : Application
     /// </summary>
     public static bool IsHeadless { get; private set; }
 
-    private Mutex? _singleInstance;
     private WinForms.NotifyIcon? _tray;
     private WebHostWindow? _host;
     private string? _pendingReplyClientId;
@@ -50,18 +49,7 @@ public partial class App : Application
         };
         AgentLog.Write($"=== 进程启动 pid={Environment.ProcessId} exe={Environment.ProcessPath} ===");
 
-        // 单实例：重复启动（开机自启 + 手动双击）时直接退出
-        _singleInstance = new Mutex(true, @"Global\FamilyAgent.SingleInstance", out var isNew);
-        if (!isNew)
-        {
-            AgentLog.Write("已有实例在运行，本进程退出");
-            Shutdown();
-            return;
-        }
-
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
-        SessionEnding += (_, _) => IsSystemShuttingDown = true;
-        Exit += (_, _) => Cleanup();
 
         AgentLog.Rotate();
 
@@ -74,6 +62,56 @@ public partial class App : Application
         // --headless：开机后、还没人登录时由计划任务拉起。会话 0 没有桌面，
         // 不能建窗口也不能建托盘图标，所以只维持连接。
         IsHeadless = HasArg(e.Args, "--headless");
+
+        // ── 单实例：第二个实例不再静默退出 ──────────────────────────────
+        // ★ 这里原来是 `new Mutex(true, @"Global\FamilyAgent.SingleInstance", ...)`，
+        //   两个毛病：
+        //   ① 创建/打开 Global\ 命名对象要 SeCreateGlobalPrivilege，普通用户账号没有，
+        //      日志里出现过 `UnauthorizedAccessException: Access to the path
+        //      'Global\FamilyAgent.SingleInstance' is denied` —— 直接崩在启动；
+        //   ② 判到「已有实例」就悄无声息地退出。用户机器上放着好几份 exe 时，
+        //      双击新版不但没反应，屏幕上还是旧界面 → 用户以为压根没重新编译。
+        //   现在改成文件式（SingleInstance.cs，跟 Presence.cs 同一套思路）：
+        //   第二个实例请正在跑的那个把窗口拉到前面，版本不一致时由它弹托盘气泡说清楚。
+        //
+        // ★ headless（登录前）实例**不参与**单实例占用：它跟登录后的交互式实例
+        //   本来就要共存（谁连接由 Presence 交接）。要是 headless 也占锁，开机后
+        //   第一个起来的它就会把界面永远挡在门外 —— 那是比本 bug 更糟的事。
+        //
+        // ⚠ 必须在 --config / --headless 解析**之后**：仲裁文件放在配置文件旁边，
+        //   路径由 --config 决定（SYSTEM 身份的登录前实例读的是用户那份配置）。
+        if (!IsHeadless)
+        {
+            var running = SingleInstance.Running();
+            if (running is not null)
+            {
+                AgentLog.Write($"已有实例在运行（pid={running.Pid} {running.Version}）"
+                             + "→ 请求它把窗口拉到前面");
+
+                // ★ 版本不一样 = 屏幕上那个**不是**你刚双击的这份 exe。
+                //   只写请求还不够：正在跑的那份如果还是旧版（没有 show.request
+                //   轮询这段代码），它根本不会理这个请求，用户看到的仍是「双击没反应」。
+                //   所以由本进程在退出前当面说清楚，不用等对方配合。
+                var mismatch = !string.IsNullOrWhiteSpace(running.Version)
+                               && !string.Equals(running.Version,
+                                                 AgentClient.ReportedVersion,
+                                                 StringComparison.Ordinal);
+
+                SingleInstance.RequestShow(AgentClient.ReportedVersion);
+
+                if (mismatch)
+                    WarnVersionMismatch(running);
+
+                Shutdown(); return;
+            }
+            SingleInstance.Claim();
+        }
+
+        // ★ 退出清理的订阅**放在单实例判定之后**：第二个实例在上面就 return 了，
+        //   不能让它跑一遍 Cleanup —— 那会连累正在跑的那个（Cleanup 里会清掉
+        //   交互式实例的心跳，headless 实例会误判「人走了」又抢回连接）。
+        SessionEnding += (_, _) => IsSystemShuttingDown = true;
+        Exit += (_, _) => Cleanup();
 
         Config = AgentConfig.Load();
 
@@ -135,6 +173,10 @@ public partial class App : Application
 
         SetupTray();
 
+        // 第二个实例的「把窗口拉到前面」请求（文件式，每 1 秒看一眼）——
+        // 只有交互式实例才有窗口，headless 那条路径上面已经 return 了
+        StartShowRequestWatcher();
+
         // --tray：开机自启时静默进托盘；手动启动则直接打开界面
         var silent = HasArg(e.Args, "--tray");
         if (!Config.IsConfigured)
@@ -153,6 +195,33 @@ public partial class App : Application
         "dark" => ThemeMode.Dark,
         _ => ThemeMode.System,
     };
+
+    /// <summary>
+    /// 第二个实例：发现「正在跑的是另一个版本」时的当面提示（模态，用户一定能看到）。
+    ///
+    /// 为什么不只靠对方弹托盘气泡：对方完全可能是**旧版**，压根没有 show.request
+    /// 这段逻辑 —— 只写请求等于继续让用户看到「双击没反应」，那正是要根治的毛病。
+    /// 所以本进程自己弹一个，不看对方脸色。
+    /// </summary>
+    private static void WarnVersionMismatch(SingleInstance.InstanceInfo running)
+    {
+        try
+        {
+            WinForms.MessageBox.Show(
+                "家庭消息已经在运行，但并不是你刚启动的这个版本：\n\n"
+                + $"　正在运行：{running.Version}（进程 {running.Pid}）\n"
+                + $"　你刚启动：{AgentClient.ReportedVersion}\n\n"
+                + "已经请它把窗口拉到前面。如果屏幕上出现的还是老界面，\n"
+                + "说明占着位置的是旧版：请在托盘图标上右键 →「退出」，\n"
+                + "然后重新运行你刚双击的那个 exe。",
+                "家庭消息 · 版本不一致",
+                WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("提示两版并存失败（不影响退出）：" + ex.Message);
+        }
+    }
 
     /// <summary>取 <c>--key value</c> 形式的参数值；没有就返回 null。</summary>
     private static string? ArgValue(string[] args, string name)
@@ -223,6 +292,10 @@ public partial class App : Application
     {
         var host = new WebHostWindow();
 
+        // 标题带上设备名和版本号（常驻可见）：用户机器上可能同时放着好几份 exe，
+        // 「屏幕上跑的是哪一版」以前只能靠猜 —— 那正是「你根本没编译」误会的土壤。
+        host.Title = WindowTitle();
+
         // 页面回报「这条消息真的画到屏幕上了」→ 才回报 popup_displayed。
         // （不能提前回报：页面一次渲染都没发生就回报，是谎报。）
         host.MessageAcked += id =>
@@ -248,6 +321,102 @@ public partial class App : Application
         host.Bridge.QuitRequested += ExitApp;
 
         return host;
+    }
+
+    /// <summary>
+    /// 窗口标题：<c>家庭消息 · 设备名（版本号）</c>。
+    ///
+    /// 版本号常驻写在这里是有原因的：用户机器上可能同时放着好几份 exe
+    /// （旧的在桌面、新的在别的目录），而「屏幕上跑的是哪一版」以前完全看不出来。
+    /// 版本号一律取 <see cref="AgentClient.ReportedVersion"/>，**不另写死字符串**。
+    /// </summary>
+    private static string WindowTitle()
+    {
+        var version = AgentClient.ReportedVersion;
+        var device = Config?.DeviceName;
+        return string.IsNullOrWhiteSpace(device)
+            ? $"家庭消息（{version}）"
+            : $"家庭消息 · {device}（{version}）";
+    }
+
+    // ---------------- 第二个实例的请求：把窗口拉到前面 ----------------
+
+    /// <summary>
+    /// 每 1 秒看一眼 show.request（第二个实例写的），有请求就把窗口拉到前面。
+    ///
+    /// 为什么要在这边轮询：新实例只能写文件，拉窗口必须由**真正拥有窗口**的进程做；
+    /// 而且两边版本可能不一样，得由这边把「你双击的是新版，但屏幕上这个是旧版」
+    /// 当面说清楚（托盘气泡），不能让用户继续以为「新版没生效」。
+    /// </summary>
+    private void StartShowRequestWatcher()
+    {
+        _ = Task.Run(async () =>
+        {
+            while (!IsSystemShuttingDown)
+            {
+                try
+                {
+                    var remote = SingleInstance.TakeShowRequest();
+                    if (remote is not null)
+                    {
+                        var mine = AgentClient.ReportedVersion;
+                        // 版本读不出来（空）就不当成「不一致」——不能因此虚报一个气泡
+                        var mismatch = !string.IsNullOrWhiteSpace(remote)
+                                       && !string.Equals(remote, mine, StringComparison.Ordinal);
+                        AgentLog.Write($"收到「把窗口拉到前面」请求"
+                                     + $"（请求方 {remote}，本实例 {mine}）");
+                        if (mismatch)
+                            AgentLog.Write("!! 两个实例版本不一致：屏幕上正在跑的这个不是最新那份 exe");
+                        Dispatcher.Invoke(() => BringWindowToFront(mismatch ? remote : null));
+                    }
+                }
+                catch (Exception ex)
+                {
+                    AgentLog.Write("show.request 轮询异常（继续）：" + ex.Message);
+                }
+
+                try { await Task.Delay(TimeSpan.FromSeconds(1)); }
+                catch { return; }
+            }
+        });
+    }
+
+    /// <summary>
+    /// 把（必要时先建出来的）窗口显示成消息界面并拉到前面。
+    /// <paramref name="otherVersion"/> 非空 = 请求方版本与本实例不一致 → 额外弹托盘气泡。
+    /// </summary>
+    private void BringWindowToFront(string? otherVersion)
+    {
+        var host = EnsureHost();
+        if (host is null) return;
+
+        try
+        {
+            host.ShowClient();                    // 客户端形态（消息界面）
+            if (host.WindowState == WindowState.Minimized)
+                host.WindowState = WindowState.Normal;
+            host.Activate();
+            AgentLog.Write($"窗口已拉到前面 visible={host.IsVisible} state={host.WindowState}");
+
+            if (otherVersion is not null)
+            {
+                try
+                {
+                    _tray?.ShowBalloonTip(8000, "家庭消息",
+                        $"检测到新版 {otherVersion} 已启动，但正在运行的是 "
+                        + $"{AgentClient.ReportedVersion}。\n请退出后重新运行新版 exe。",
+                        WinForms.ToolTipIcon.Warning);
+                }
+                catch
+                {
+                    // 气泡提示失败不影响拉窗口
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("!! 把窗口拉到前面失败：" + ex);
+        }
     }
 
     /// <summary>
@@ -943,5 +1112,9 @@ public partial class App : Application
             _tray.Dispose();
             _tray = null;
         }
+
+        // 清掉单实例锁（pid 不是自己就留着，别把别人的锁删了）。
+        // 删不掉也无所谓 —— 下次启动靠 pid 判活绕过。
+        SingleInstance.Release();
     }
 }
