@@ -129,3 +129,47 @@ web/static/tokens.css   ← 同上
 - WebSocket 协议、设备注册、心跳、离线补投、截图/关机/解锁链路
 - `web/static/shell.js` / `shell.css`：**标记为废弃但保留**（网页端的壳模式不再被使用，
   先不删，等 PC 端稳定运行一版后再清理）
+
+
+---
+
+## 附：v0.13.0 白屏事故（必记）
+
+**症状**：PC 端打开后**纯白，什么都没有**，日志里也没有任何线索。
+
+**真因**：`NavigateLocal()` 拼 URL 时多了一层 `/shell/`。
+
+```csharp
+// 映射的根目录就是 ShellDir()（<exe>\shell）
+core.SetVirtualHostNameToFolderMapping(LocalHostName, ShellDir(), ...);
+
+core.Navigate($"{LocalOrigin}/shell/{file}");   // ✗ 解析成 <exe>\shell\shell\app.html → 404
+core.Navigate($"{LocalOrigin}/{file}");          // ✅
+```
+
+这行是**早期**写的 —— 那时映射根目录是 exe 目录，`/shell/xxx` 是对的；
+后来根目录改成 `ShellDir()` 却没同步改这行。
+
+**两条永久性防线**（已加进代码）：
+
+1. **`NavigationCompleted` 里判断失败必须落日志**，并带上 `HttpStatusCode` ——
+   404 会直接显示成 `✗ 页面加载失败：...（HTTP 404）url=...`。
+   白屏那种「什么都没说」的状态，比 bug 本身更难查。
+2. 本地页的 URL 一律 `{LocalOrigin}/{file}`，**不带任何目录前缀**。
+
+## 附：跨平台演进方向（辉哥 2026-09-26 定）
+
+目标：将来能跑到 **Linux / 安卓**，宿主框架换成跨平台方案（如 Avalonia）。
+
+**这正好是本地页面方案的价值所在**：界面是纯 HTML/CSS/JS，在 Linux 的 WebKitGTK、
+安卓的 WebView 里都能原样跑；换宿主只需重写「宿主层」，界面整块留下。
+
+要为此保持的分层（后续重构方向，不是现在就要做）：
+
+```
+Core/          通讯、配置、会话状态、截图、电源 —— 零 UI 依赖，可直接移植
+UI/            宿主窗口 + WebView 承载 + 桥 —— 换平台时重写这一层
+web/shell/     界面本体（HTML/CSS/JS）—— 跨平台原样复用
+```
+
+新增功能时注意：**能放 Core 就别放 UI**，能做成桥消息就别写进宿主的 C#。
