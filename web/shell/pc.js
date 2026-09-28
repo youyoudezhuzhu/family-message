@@ -217,6 +217,7 @@
     var list = (d && Array.isArray(d.messages)) ? d.messages
              : (Array.isArray(d) ? d : null);
     if (!list) return;
+    markHistoryAt();          /* ★ 只记 title：host.history 不能冒充「实时帧」 */
     S.list = list.slice();
     renderClient();
     scrollClientToBottom();
@@ -327,6 +328,28 @@
     var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
          + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  /* ── 顶栏诊断标记：#client-last-recv ──────────────────────────
+     宿主 → 页面有两条推送路径：host.message（实时）和 host.history（重开窗口全量重拉）。
+     这个标记**只由 host.message 更新**，用来区分：
+       · 标记还写着「尚未收到推送」→ 帧根本没到页面（宿主/传输层）
+       · 标记有时间戳但列表没动 → 帧到了、但渲染没跟上
+     host.history 只写 title（「最后历史：HH:MM:SS」），不动正文。 */
+  function clockNow() {
+    var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  function markRecv() {
+    var el = $('client-last-recv');
+    if (el) el.textContent = '最后收到 ' + clockNow();
+  }
+
+  /** host.history 不改正文，只在 title 里留个痕 —— 两条路径不能混为一谈 */
+  function markHistoryAt() {
+    var el = $('client-last-recv');
+    if (el) el.title = '最后历史：' + clockNow();
   }
 
   /**
@@ -523,7 +546,7 @@
   var HANDLERS = {
     'host.hello': onHello,
     'host.mode': function (d) { setView(d.mode); },
-    'host.message': function (d) { onMessage(d.message || d); },
+    'host.message': function (d) { markRecv(); onMessage(d.message || d); },
     'host.history': onHistory,
     'host.reply_ack': onReplyAck,
     'host.connection': onConnection,

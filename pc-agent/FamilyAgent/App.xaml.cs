@@ -4,6 +4,13 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Diagnostics;
+using FamilyAgent.Core.Events;
+using FamilyAgent.Core.Protocol;
+using FamilyAgent.Core.Protocol.Frames;
+using FamilyAgent.Core.Transport;
+using FamilyAgent.Platform;
 using Drawing = System.Drawing;
 using WinForms = System.Windows.Forms;
 
@@ -12,7 +19,15 @@ namespace FamilyAgent;
 public partial class App : Application
 {
     public static AgentConfig Config { get; private set; } = null!;
-    public static AgentClient Client { get; private set; } = null!;
+
+    /// <summary>
+    /// 到服务端的那条连接（Core 的连接编排，见 docs/CORE-REFACTOR-PLAN.md §3.2）。
+    ///
+    /// 名字从 <c>Client</c> 改成 <c>Core</c> 是刻意的：Phase 1 之后它不再只是
+    /// 「一个客户端类」，而是 Core 层的入口（连接 / 心跳 / 协议 / 发送队列 / 能力上报）。
+    /// 宿主侧的回调体保持不变，只换订阅的事件类型。
+    /// </summary>
+    public static ConnectionManager Core { get; private set; } = null!;
     public static bool IsSystemShuttingDown { get; private set; }
 
     /// <summary>
@@ -94,10 +109,10 @@ public partial class App : Application
                 //   所以由本进程在退出前当面说清楚，不用等对方配合。
                 var mismatch = !string.IsNullOrWhiteSpace(running.Version)
                                && !string.Equals(running.Version,
-                                                 AgentClient.ReportedVersion,
+                                                 ProtocolVersion.AgentVersion,
                                                  StringComparison.Ordinal);
 
-                SingleInstance.RequestShow(AgentClient.ReportedVersion);
+                SingleInstance.RequestShow(ProtocolVersion.AgentVersion);
 
                 if (mismatch)
                     WarnVersionMismatch(running);
@@ -133,18 +148,20 @@ public partial class App : Application
         }
 
         AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} "
-                       + $"theme={Config.ThemeMode} agent={AgentClient.ReportedVersion} ===");
-        Client = new AgentClient(Config);
-        Client.ConnectionChanged += OnConnectionChanged;
-        Client.MessageReceived += OnMessageReceived;
-        Client.ScreenshotRequested += OnScreenshotRequested;
-        Client.ReplyAcked += OnReplyAcked;
-        Client.HistoryReceived += OnHistoryReceived;
-        Client.ShutdownRequested += OnShutdownRequested;
-        Client.UnlockRequested += OnUnlockRequested;
+                       + $"theme={Config.ThemeMode} agent={ProtocolVersion.AgentVersion} ===");
+        // UI 静态依赖（App.IsHeadless / SessionState.Current）在 Phase 1 收进 IPlatformInfo，
+        // Windows 侧实现只做包装（Platform/WindowsPlatformInfo.cs），行为不变（§Phase 1-3）
+        Core = new ConnectionManager(Config, new WindowsPlatformInfo());
+        Core.ConnectionStateChanged += OnConnectionChanged;
+        Core.MessageReceived += OnMessageReceived;
+        Core.ScreenshotRequested += OnScreenshotRequested;
+        Core.ReplyAcked += OnReplyAcked;
+        Core.HistoryReceived += OnHistoryReceived;
+        Core.ShutdownRequested += OnShutdownRequested;
+        Core.UnlockRequested += OnUnlockRequested;
 
         // ── Windows 会话状态上报（远程解锁 Phase 1）──────────────────────
-        // 在这里（Client 已建好、连接还没开始）启动最合适：第一次心跳就能带
+        // 在这里（Core 已建好、连接还没开始）启动最合适：第一次心跳就能带
         // 上正确的状态。先 Start() 再订阅 —— Start() 里的首次检测会在默认值
         // 变化时抛通知，让它落在没有订阅者的空窗里，省一次无意义的上报。
         SessionState.Start();
@@ -153,7 +170,7 @@ public partial class App : Application
         // 启动时不提权：SYSTEM 计划任务若已注册过就直接跳过，
         // 否则每次开机都会弹一次 UAC（用户最烦这个）。
         AutoStart.Apply(Config.AutoStart, allowElevation: false);
-        Client.Start();
+        Core.Start();
 
         if (IsHeadless)
         {
@@ -161,7 +178,7 @@ public partial class App : Application
             // 这里只做「让设备在线」，等有人登录后由交互式实例接手。
             AgentLog.Write("以 headless 模式运行（登录前）：不显示界面，只维持设备在线；"
                          + "有人登录后自动让位给交互式实例");
-            Presence.StartSupervisor(Client);
+            Presence.StartSupervisor(Core);
             return;
         }
 
@@ -210,7 +227,7 @@ public partial class App : Application
             WinForms.MessageBox.Show(
                 "家庭消息已经在运行，但并不是你刚启动的这个版本：\n\n"
                 + $"　正在运行：{running.Version}（进程 {running.Pid}）\n"
-                + $"　你刚启动：{AgentClient.ReportedVersion}\n\n"
+                + $"　你刚启动：{ProtocolVersion.AgentVersion}\n\n"
                 + "已经请它把窗口拉到前面。如果屏幕上出现的还是老界面，\n"
                 + "说明占着位置的是旧版：请在托盘图标上右键 →「退出」，\n"
                 + "然后重新运行你刚双击的那个 exe。",
@@ -300,14 +317,14 @@ public partial class App : Application
         // （不能提前回报：页面一次渲染都没发生就回报，是谎报。）
         host.MessageAcked += id =>
         {
-            try { Client.Ack(id, "popup_displayed"); }
+            try { Core.Ack(id, "popup_displayed"); }
             catch (Exception ex) { AgentLog.Write("回报 popup_displayed 失败：" + ex.Message); }
         };
 
         // 关窗 / 自动关闭 / Alt+F4（含页面点「知道了」）→ 这些未读按「已读」回报
         host.Dismissed += id =>
         {
-            try { Client.Ack(id, "read"); }
+            try { Core.Ack(id, "read"); }
             catch (Exception ex) { AgentLog.Write("回报已读失败：" + ex.Message); }
         };
 
@@ -328,11 +345,11 @@ public partial class App : Application
     ///
     /// 版本号常驻写在这里是有原因的：用户机器上可能同时放着好几份 exe
     /// （旧的在桌面、新的在别的目录），而「屏幕上跑的是哪一版」以前完全看不出来。
-    /// 版本号一律取 <see cref="AgentClient.ReportedVersion"/>，**不另写死字符串**。
+    /// 版本号一律取 <see cref="ProtocolVersion.AgentVersion"/>，**不另写死字符串**。
     /// </summary>
     private static string WindowTitle()
     {
-        var version = AgentClient.ReportedVersion;
+        var version = ProtocolVersion.AgentVersion;
         var device = Config?.DeviceName;
         return string.IsNullOrWhiteSpace(device)
             ? $"家庭消息（{version}）"
@@ -359,7 +376,7 @@ public partial class App : Application
                     var remote = SingleInstance.TakeShowRequest();
                     if (remote is not null)
                     {
-                        var mine = AgentClient.ReportedVersion;
+                        var mine = ProtocolVersion.AgentVersion;
                         // 版本读不出来（空）就不当成「不一致」——不能因此虚报一个气泡
                         var mismatch = !string.IsNullOrWhiteSpace(remote)
                                        && !string.Equals(remote, mine, StringComparison.Ordinal);
@@ -404,7 +421,7 @@ public partial class App : Application
                 {
                     _tray?.ShowBalloonTip(8000, "家庭消息",
                         $"检测到新版 {otherVersion} 已启动，但正在运行的是 "
-                        + $"{AgentClient.ReportedVersion}。\n请退出后重新运行新版 exe。",
+                        + $"{ProtocolVersion.AgentVersion}。\n请退出后重新运行新版 exe。",
                         WinForms.ToolTipIcon.Warning);
                 }
                 catch
@@ -425,7 +442,7 @@ public partial class App : Application
     /// 规矩（docs/PC-LOCAL-UI.md）：
     ///   · **只处理传了的字段**：没传 = 不改（不是改成空）
     ///   · 落盘走 <see cref="AgentConfig.Save"/>
-    ///   · 改了服务端地址 / 口令 → 重连（<c>Client.Restart</c>）
+    ///   · 改了服务端地址 / 口令 → 重连（<c>Core.Restart</c>）
     ///   · 改了开机自启 → <c>AutoStart.Apply</c>（可能要弹一次 UAC），
     ///     **失败要如实写进 detail**，不许回一个漂亮的 ok
     ///   · 最后一定回 <c>host.config_saved</c>，页面等着它给提示
@@ -580,7 +597,7 @@ public partial class App : Application
         }
 
         if (reconnect)
-            Client.Restart();
+            Core.Restart();
 
         AgentLog.Write($"设置已保存：server={Config.ServerUrl} name={Config.ReplyName} "
                      + $"theme={Config.ThemeMode} autostart={Config.AutoStart} 重连={reconnect}");
@@ -611,7 +628,7 @@ public partial class App : Application
 
         // 不再预判连接状态：直接尝试发送，发不出去会自动入队，重连后补发。
         // （之前 `if (!Connected) 报失败` 会把能发的回复也拦下来。）
-        var dispatched = Client.Reply(who, content, clientId);
+        var dispatched = Core.Reply(who, content, clientId);
         if (!dispatched)
         {
             _host?.Bridge.PostReplyAck(clientId, "queued", 0,
@@ -625,7 +642,7 @@ public partial class App : Application
             await Task.Delay(TimeSpan.FromSeconds(12));
             if (_pendingReplyClientId == clientId)
             {
-                AgentLog.Write($"✗ 回复 12 秒内未收到 reply_ack（连接状态：{Client.DescribeConnection()}）");
+                AgentLog.Write($"✗ 回复 12 秒内未收到 reply_ack（连接状态：{Core.DescribeConnection()}）");
                 Dispatcher.Invoke(() => _host?.Bridge.PostReplyAck(clientId, "queued", 0,
                     "服务器 12 秒内没有回执，已排队，恢复后自动发送"));
             }
@@ -721,20 +738,28 @@ public partial class App : Application
     {
         Config.Save();
         AutoStart.Apply(Config.AutoStart, allowElevation: true);
-        Client.Restart();
+        Core.Restart();
     }
 
     // ---------------- 服务端事件 ----------------
 
-    private void OnConnectionChanged(bool connected, string message)
+    /// <summary>
+    /// 连接状态变化。Phase 1 后订阅的是 Core 的强类型事件
+    /// （<see cref="ConnectionStateChangedArgs"/>，取代原来的 <c>ConnectionChanged(bool, string)</c>）：
+    /// 回调体逐字保留，只把两个入参从事件参数里取出来（<c>Connected</c> / <c>Detail</c>）。
+    /// </summary>
+    private void OnConnectionChanged(ConnectionStateChangedArgs e)
     {
+        var connected = e.Connected;
+        var message = e.Detail;
+
         AgentLog.Write(connected ? "== 已连接 ==" : $"== 断开：{message} ==");
 
         // 刚连上就上报一次会话状态：服务端要靠它判断远程解锁是否可用，
         // 等第一个 15 秒周期心跳太慢（等效于「hello 阶段就带上状态」）。
         if (connected)
         {
-            try { Client.ReportSessionState(); }
+            try { Core.ReportSessionState(); }
             catch (Exception ex) { AgentLog.Write("上线时上报会话状态失败：" + ex.Message); }
         }
 
@@ -746,25 +771,39 @@ public partial class App : Application
         });
     }
 
-    private void OnMessageReceived(JsonElement el)
+    /// <summary>
+    /// 收到新消息（Core 的强类型 <see cref="MessageFrame"/>，取代原来的裸 <c>JsonElement</c>）。
+    ///
+    /// ⚠ 回调体**逐字保留**：下面这行 <c>var el = frame.Raw;</c> 是 Phase 1 的过渡桥，
+    ///   让这段（以及页面投递那段）一个字符都不用改 —— Phase 1 的验收前提是行为完全等价
+    ///   （§8.1：不得把重构当调试手段）。
+    ///   注意 <c>messageId = el.GetInt64()</c> 这行读的是**整个帧**而不是 <c>idEl</c>
+    ///   （既有笔误，见 docs/BUG-PC-REALTIME.md 的嫌疑点），本次搬家**刻意不动它**：
+    ///   修它属于行为变更，要单独一轮、单独验证。
+    /// </summary>
+    private void OnMessageReceived(MessageFrame frame)
     {
+        var el = frame.Raw;      // 推给页面时仍用原始帧（字段原样透传，含 history）
+
         Dispatcher.Invoke(() =>
         {
-            long messageId = 0;
-            if (el.TryGetProperty("message_id", out var idEl) && idEl.ValueKind == JsonValueKind.Number)
-                messageId = el.GetInt64();
-
-            var autoClose = el.TryGetProperty("auto_close_seconds", out var aEl)
-                            && aEl.ValueKind == JsonValueKind.Number
-                ? aEl.GetInt32()
-                : 0;
+            // ★ 原来这里是：
+            //     if (el.TryGetProperty("message_id", out var idEl) && …) messageId = el.GetInt64();
+            //   笔误 —— 取出来的是 idEl，却对**整个帧对象 el** 调 GetInt64()。
+            //   对 Object 调 GetInt64() 会抛 InvalidOperationException，而这段在回调**最前面**
+            //   （连 headless 分支都在它后面），于是**每收到一条消息这里就炸**：
+            //   异常从 WS 接收循环冒出去，连接看着还在、实际已经不再收消息 ——
+            //   表现就是日志里没有 ← message、重开窗口走 HTTP 历史才看得到。
+            //   现在直接读强类型字段，这个坑连同它的表现一起消失。
+            var messageId = frame.MessageId;
+            var autoClose = frame.AutoCloseSeconds ?? 0;
 
             if (IsHeadless)
             {
                 // 登录前没有交互式桌面，弹窗显示不出来。如实回报「已送达」——
                 // 谎报 popup_displayed 会让网页端显示一个根本不存在过的状态。
                 AgentLog.Write($"headless：收到消息 {messageId}，无人登录无法显示弹窗，回报 delivered");
-                Client.Ack(messageId, "delivered");
+                Core.Ack(messageId, "delivered");
                 return;
             }
 
@@ -779,18 +818,22 @@ public partial class App : Application
         });
     }
 
-    private void OnReplyAcked(JsonElement el)
+    /// <summary>
+    /// 本机回复被服务端受理（Core 的强类型 <see cref="ReplyAckFrame"/>，取代原来的裸 <c>JsonElement</c>）。
+    ///
+    /// ⚠ 回调体**逐字保留**：只把原来对 JsonElement 的三次 <c>TryGetProperty</c>
+    ///   换成读 DTO 的属性 —— <c>Status</c> / <c>ClientId</c> / <c>MessageId</c>
+    ///   就是同一批值（缺字段 / 类型不对时的缺省值由 FrameCodec 给出，见 ReplyAckFrame.cs）。
+    /// </summary>
+    private void OnReplyAcked(ReplyAckFrame frame)
     {
         Dispatcher.Invoke(() =>
         {
             _pendingReplyClientId = null;
 
-            var status = el.TryGetProperty("status", out var sEl) ? sEl.GetString() ?? "" : "";
-            var clientId = el.TryGetProperty("client_id", out var cEl) ? cEl.GetString() ?? "" : "";
-            long messageId = el.TryGetProperty("message_id", out var mEl)
-                             && mEl.ValueKind == JsonValueKind.Number
-                ? mEl.GetInt64()
-                : 0;
+            var status = frame.Status;
+            var clientId = frame.ClientId;
+            long messageId = frame.MessageId ?? 0;
 
             var bridge = _host?.Bridge;
             if (bridge is null) return;
@@ -805,28 +848,37 @@ public partial class App : Application
         });
     }
 
-    private void OnHistoryReceived(JsonElement el)
+    /// <summary>
+    /// 主动拉的历史到达（Core 的强类型 <see cref="HistoryFrame"/>，取代原来的裸 <c>JsonElement</c>）。
+    ///
+    /// ⚠ 回调体**逐字保留**：只把「取 messages 数组」换成 DTO 上的同一个属性
+    ///   （<c>Messages</c> 就是那一段原文；缺字段时 FrameCodec 给的是未定义值，
+    ///   与原 <c>TryGetProperty</c> 判据一样落不进数组分支）。
+    /// </summary>
+    private void OnHistoryReceived(HistoryFrame frame)
     {
         Dispatcher.Invoke(() =>
         {
             // 壳模式下页面不连 /ws/web，服务端发来的历史直接转给页面渲染
             // （页面自己也能走 HTTP 拉，这条是省一次往返的新增帧）。
-            if (el.TryGetProperty("messages", out var arr) && arr.ValueKind == JsonValueKind.Array)
-                _host?.PushHistory(arr);
+            if (frame.Messages.ValueKind == JsonValueKind.Array)
+                _host?.PushHistory(frame.Messages);
         });
     }
 
     /// <summary>headless（会话 0）下没桌面可截，统一用这句中文原因回过去。</summary>
     private const string HeadlessScreenshotReason = "电脑已开机但尚无人登录，当前没有可截取的桌面";
 
-    private void OnScreenshotRequested(string requestId)
+    private void OnScreenshotRequested(ScreenshotRequestFrame frame)
     {
+        var requestId = frame.RequestId;
+
         if (IsHeadless)
         {
             // 会话 0 没有桌面，截出来只会是黑屏。直接说明原因，
             // 比回一张黑图让用户以为电脑坏了要好。
             AgentLog.Write("headless：尚无人登录，无法截图");
-            _ = Client.SendScreenshotAsync(requestId, null, 0, 0, HeadlessScreenshotReason);
+            _ = Core.SendScreenshotAsync(requestId, null, 0, 0, HeadlessScreenshotReason);
             return;
         }
 
@@ -836,7 +888,7 @@ public partial class App : Application
             var error = ScreenCapture.LastError;
 
             // ① 回给服务端（网页端其他会话靠它看到图）
-            await Client.SendScreenshotAsync(requestId, base64, width, height, error);
+            await Core.SendScreenshotAsync(requestId, base64, width, height, error);
 
             // ② 顺手推给本地页面：壳模式下页面不连 /ws/web，收不到服务端的截图广播，
             //    只回服务端的话「查看桌面」在那台电脑自己的界面上会一直转圈。
@@ -848,8 +900,13 @@ public partial class App : Application
     /// 网页端点了「关机」：本机执行。给一个托盘气泡提示，并留出几秒取消时间。
     /// 这是设备管理能力 —— PC Agent 是受 Server 信任的家庭设备 Agent，不再二次确认。
     /// </summary>
-    private void OnShutdownRequested(int delaySeconds)
+    private void OnShutdownRequested(ShutdownCommandFrame frame)
     {
+        // 帧里没带 delay_seconds（或不是数字）时用本机默认值 —— 原实现里这一句
+        // 就在 AgentClient 的 shutdown 分支里；Core 不认识本机默认值，所以按
+        // ShutdownCommandFrame.cs 的约定把它留在宿主。
+        var delaySeconds = frame.DelaySeconds ?? PowerControl.DefaultDelaySeconds;
+
         // 托盘气泡是 WinForms 组件，统一回到 UI 线程再动它
         Dispatcher.Invoke(() => ExecuteShutdown(delaySeconds));
     }
@@ -876,7 +933,7 @@ public partial class App : Application
             }
 
             PowerControl.Shutdown(delaySeconds);
-            Client.SendOrQueue(new
+            Core.SendOrQueue(new
             {
                 type = "event",
                 kind = "shutdown",
@@ -888,7 +945,7 @@ public partial class App : Application
         catch (Exception ex)
         {
             AgentLog.Write("执行关机失败：" + ex.Message);
-            Client.SendOrQueue(new
+            Core.SendOrQueue(new
             {
                 type = "event",
                 kind = "shutdown_failed",
@@ -908,9 +965,12 @@ public partial class App : Application
     ///
     /// 没有界面操作，所以不需要切 Dispatcher；headless 实例同样能应答。
     /// </summary>
-    private void OnUnlockRequested(JsonElement el)
+    private void OnUnlockRequested(UnlockRequestFrame frame)
     {
-        var reply = UnlockGuard.Evaluate(el, Config.DeviceId);
+        // 请求体里的 target / action / expires_at / nonce 等字段的校验属既有 UnlockGuard
+        // （宿主，见 §8.12 的归属待拍板），Phase 1 不做搬运 —— 照 UnlockRequestFrame.cs
+        // 的约定继续读 CoreFrame.Raw 走原来那套逻辑。
+        var reply = UnlockGuard.Evaluate(frame.Raw, Config.DeviceId);
         if (reply is null)
         {
             // 连 request_id 都没有的帧：没法应答，也没有 id 可以记进重放缓存
@@ -918,7 +978,7 @@ public partial class App : Application
             return;
         }
 
-        Client.UnlockResult(reply.RequestId, reply.Status, reply.Reason);
+        Core.UnlockResult(reply.RequestId, reply.Status, reply.Reason);
     }
 
     /// <summary>
@@ -930,7 +990,7 @@ public partial class App : Application
     {
         try
         {
-            Client.ReportSessionState();
+            Core.ReportSessionState();
             AgentLog.Write($"会话状态已上报：{state}");
         }
         catch (Exception ex)
@@ -993,7 +1053,7 @@ public partial class App : Application
         var menu = new WinForms.ContextMenuStrip();
         menu.Items.Add("打开对话窗口", null, (_, _) => ShowConversation());
         menu.Items.Add("设置…", null, (_, _) => ShowSettings());
-        menu.Items.Add("重新连接", null, (_, _) => Client.Restart());
+        menu.Items.Add("重新连接", null, (_, _) => Core.Restart());
         menu.Items.Add("打开控制台", null, (_, _) => OpenConsole());
         menu.Items.Add(new WinForms.ToolStripSeparator());
         // 放在托盘里而不是只放设置页：窗口一旦打不开，设置页就进不去，
@@ -1029,7 +1089,7 @@ public partial class App : Application
             AgentLog.Write("!! 显示界面失败：" + ex);
             ReportOnce("显示界面失败", ex);
         }
-        Client.RequestHistory(50);
+        Core.RequestHistory(50);
     }
 
     private void OpenConsole()
@@ -1104,7 +1164,7 @@ public partial class App : Application
             Presence.ClearHeartbeat();
         }
 
-        try { Client?.Stop(); } catch { }
+        try { Core?.Stop(); } catch { }
         try { _host?.ForceClose(); } catch { }
         if (_tray is not null)
         {

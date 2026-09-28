@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
+using FamilyAgent.Core.Diagnostics;
 using Microsoft.Win32;
 
 namespace FamilyAgent;

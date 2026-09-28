@@ -9,7 +9,14 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.13.3</Version>
+    <Version>0.14.0</Version>
+
+    <!-- WFO0003：WinForms 分析器建议改用 Application.SetHighDpiMode 取代 app.manifest 里的
+         DPI 声明 —— 那是 WinForms 应用的写法。本项目是 WPF（只借了 WinForms 的 NotifyIcon），
+         WPF 必须在 app.manifest 里声明 PerMonitorV2，否则整张位图被放大、界面发糊
+         （v0.8.3 专门修过这个）。该建议对本项目不适用，显式抑制以保持编译输出干净：
+         以后新出现的警告都是真问题，不会被这条噪音淹没。 -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
@@ -28,11 +35,18 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- 界面不再是 WPF 手绘：整个窗口就是这一块 WebView2，加载服务端的网页端页面
+    <!-- 界面不再是 WPF 手绘：整个窗口就是这一块 WebView2，加载 exe 自带的本地页面
          （壳模式，见 docs/PC-WEBVIEW2-REWRITE.md）。
          ★ 版本固定，不用 `*` 浮动版本：云编译的产物要可复现。
          Windows 11 自带 WebView2 Runtime；Windows 10 缺运行时由壳自检并给出官方下载链接。 -->
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4191.47" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core（net9.0，不带 -windows）：连接 / 传输 / 协议解析 / 设备状态全在那边，
+         宿主只留窗口、托盘、桥与平台能力实现（docs/CORE-REFACTOR-PLAN.md §3.1）。
+         它能在 Linux 上编译与跑单测（CI 的 core-tests job），所以分层是否成立是可验证的。 -->
+    <ProjectReference Include="..\FamilyAgent.Core\FamilyAgent.Core.csproj" />
   </ItemGroup>
 
   <ItemGroup>

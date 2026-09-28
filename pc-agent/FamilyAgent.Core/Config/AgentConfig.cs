@@ -4,11 +4,19 @@ using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace FamilyAgent;
+namespace FamilyAgent.Core.Config;
 
 /// <summary>
 /// Agent 本地配置。存在 %APPDATA%\FamilyAgent\config.json，
 /// 首次运行时通过设置窗口填写，之后不再需要人工干预。
+///
+/// 位置：Phase 1 从 <c>pc-agent/FamilyAgent/Config.cs</c> 搬进来（见
+/// docs/CORE-REFACTOR-PLAN.md §4 的迁移映射表）。它不碰任何 UI 类型，
+/// 只被「连接要用哪些参数」和「设置界面要读写哪些字段」用到，
+/// 所以放在 Core 里由两边共用。
+///
+/// ⚠ <c>ThemeId</c>/<c>ThemeMode</c> 只存值，不做任何渲染 —— 界面在页面上，
+///   色调由页面的 <c>prefers-color-scheme</c> 决定（§8.14-⑨ 的拍板：算平台无关）。
 /// </summary>
 public sealed class AgentConfig
 {
@@ -126,7 +134,7 @@ public sealed class AgentConfig
         for (var i = 0; i < ReplyNames.Count; i++)
             ReplyNames[i] = ReplyNames[i].Trim();
 
-        // 配色 id / 明暗模式现在由网页端页面决定（壳模式下界面在 WebView2 里渲染），
+        // 配色 id / 明暗模式现在由页面决定（壳模式下界面在页面里渲染），
         // 这里只做「别是空的」兜底：手改坏了配置也不至于起不来。
         if (string.IsNullOrWhiteSpace(ThemeId))
             ThemeId = "indigo";

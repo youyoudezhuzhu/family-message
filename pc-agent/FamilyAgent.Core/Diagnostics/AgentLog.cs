@@ -1,13 +1,17 @@
 using System;
 using System.IO;
 
-namespace FamilyAgent;
+namespace FamilyAgent.Core.Diagnostics;
 
 /// <summary>
 /// Agent 本地日志。放在 %APPDATA%\FamilyAgent\agent.log。
 ///
 /// 存在的意义：v0.2.0 之前所有发送失败都被静默吞掉，出了问题完全无从下手。
 /// 现在每条收发（只记类型，不记内容/图片）和每个异常都会留痕。
+///
+/// 位置：Phase 1 从 <c>pc-agent/FamilyAgent/AgentLog.cs</c> 原样搬进 Core
+/// （见 docs/CORE-REFACTOR-PLAN.md §4）—— 连接、收发、重连的现场日志都产生在 Core 里，
+/// 日志本身不碰 UI。宿主侧（托盘、窗口、自启）继续用同一个实现写同一个文件。
 /// </summary>
 public static class AgentLog
 {

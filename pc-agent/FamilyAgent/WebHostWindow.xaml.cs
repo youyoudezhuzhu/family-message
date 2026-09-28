@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Navigation;
 using System.Windows.Threading;
+using FamilyAgent.Core.Diagnostics;
 using Microsoft.Web.WebView2.Core;
 
 namespace FamilyAgent;

@@ -107,6 +107,12 @@ html[data-view="settings"] #v-settings { display: flex; }
   background: transparent; border-color: transparent;
   font-family: var(--fluent-font-mono); color: var(--fluent-color-text-tertiary);
 }
+/* 诊断用：顶栏「最后一次收到 host.message 的时刻」。
+   低调的小字，和 chip--ver 同一档视觉重量，不抢眼。 */
+.chip--recv {
+  background: transparent; border-color: transparent;
+  font: var(--font-caption); color: var(--fluent-color-text-tertiary);
+}
 .chip.is-ok { background: var(--fluent-color-success-tint); border-color: transparent; color: var(--fluent-color-success); }
 .chip.is-warn { background: var(--fluent-color-warning-tint); border-color: transparent; color: var(--fluent-color-warning); }
 
@@ -355,6 +361,7 @@ html[data-view="settings"] #v-settings { display: flex; }
 }
 @media (max-width: 620px) {
   .bar__conn { display: none; }
+  .chip--recv { display: none; }        /* 窄屏先让位给标题与版本号 */
   .reply { flex-wrap: wrap; }
   .reply .select { flex: 1 1 100%; }
   .kv__row { flex-direction: column; gap: var(--spacing-xs); }

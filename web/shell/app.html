@@ -23,8 +23,8 @@
        chat.js     ← web/static/chat.js（群聊气泡组件，两端同一份）
        pc.js       ← 本页表现层
      ═══════════════════════════════════════════════════════════════════ -->
-<link rel="stylesheet" href="tokens.css?v=0.13.3">
-<link rel="stylesheet" href="pc.css?v=0.13.3">
+<link rel="stylesheet" href="tokens.css?v=0.14.0">
+<link rel="stylesheet" href="pc.css?v=0.14.0">
 </head>
 <body>
 
@@ -60,6 +60,7 @@
       <span id="client-conn-text">未连接宿主</span>
     </span>
     <span class="chip chip--ver" id="client-ver" title="PC 端版本">—</span>
+    <span class="chip chip--recv" id="client-last-recv" title="最后历史：—">尚未收到推送</span>
     <button class="icon-btn" id="btn-open-settings" type="button"
             title="本机设置" aria-label="本机设置">
       <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
@@ -260,7 +261,7 @@
   </div>
 </section>
 
-<script src="chat.js?v=0.13.3"></script>
-<script src="pc.js?v=0.13.3"></script>
+<script src="chat.js?v=0.14.0"></script>
+<script src="pc.js?v=0.14.0"></script>
 </body>
 </html>

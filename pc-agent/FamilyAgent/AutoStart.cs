@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Principal;
 using System.Text;
+using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Diagnostics;
 using Microsoft.Win32;
 
 namespace FamilyAgent;

@@ -1,9 +1,10 @@
 using System;
+using System.Text.Json;
 
-namespace FamilyAgent;
+namespace FamilyAgent.Core.Protocol;
 
 /// <summary>弹窗右侧历史对话里的一条。</summary>
-public sealed class HistoryItem
+public sealed class HistoryEntry
 {
     public long MessageId { get; init; }
     public string SenderName { get; init; } = "";
@@ -17,14 +18,14 @@ public sealed class HistoryItem
     public string Header =>
         SenderName + (string.IsNullOrEmpty(Time) ? "" : " · " + Time);
 
-    public static HistoryItem FromJson(System.Text.Json.JsonElement el, long currentId)
+    public static HistoryEntry FromJson(JsonElement el, long currentId)
     {
         var id = el.TryGetProperty("message_id", out var idEl) && idEl.ValueKind ==
-                 System.Text.Json.JsonValueKind.Number
+                 JsonValueKind.Number
             ? idEl.GetInt64()
             : 0;
         var created = el.TryGetProperty("created_at", out var t) ? t.GetString() ?? "" : "";
-        return new HistoryItem
+        return new HistoryEntry
         {
             MessageId = id,
             SenderName = el.TryGetProperty("sender_name", out var s) ? s.GetString() ?? "" : "",
@@ -35,7 +36,7 @@ public sealed class HistoryItem
         };
     }
 
-    public static HistoryItem Sent(string senderName, string content, DateTime at) => new()
+    public static HistoryEntry Sent(string senderName, string content, DateTime at) => new()
     {
         SenderName = senderName,
         Content = content,

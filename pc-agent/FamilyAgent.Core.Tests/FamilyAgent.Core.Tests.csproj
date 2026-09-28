@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Core 的单测。**必须能在 Linux 上跑**（docs/CORE-REFACTOR-PLAN.md §8.8 / Phase 1-5）：
+       它是「Core 真的不依赖 UI」这个结论唯一能被机器验证的方式 ——
+       开发机（NAS）与 ubuntu CI 上都没有 WPF/WebView2 可以跑。
+       版本号写死，云编译要可复现。 -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>FamilyAgent.Core.Tests</AssemblyName>
+    <RootNamespace>FamilyAgent.Core.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FamilyAgent.Core\FamilyAgent.Core.csproj" />
+  </ItemGroup>
+
+</Project>

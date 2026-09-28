@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 连接 / 传输 / 协议解析 / 设备状态 —— **平台无关**（net9.0，不带 -windows）。
+       见 docs/CORE-REFACTOR-PLAN.md §3.1：本工程禁止出现任何 UI / 浏览器宿主依赖，
+       该判据由 tools/check_agent_refs.py 的「Core 不得依赖 UI」一项机械检查（CI 上跑）。
+       Windows 侧（WPF 壳）在 ../FamilyAgent 里引用本工程。 -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>FamilyAgent.Core</AssemblyName>
+    <RootNamespace>FamilyAgent.Core</RootNamespace>
+    <Version>0.13.4</Version>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+</Project>

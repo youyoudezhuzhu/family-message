@@ -21,6 +21,7 @@ from __future__ import annotations
 import functools
 import http.server
 import json
+import re
 import sys
 import threading
 from pathlib import Path
@@ -133,7 +134,7 @@ CONVO = [
     msg(105, "妈妈", "家里酱油也没了，一起买", "18:48"),
 ]
 
-SHOT_DARK = {"mode": "popup", "hello": {"mode": "popup", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+SHOT_DARK = {"mode": "popup", "hello": {"mode": "popup", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
              "server": "http://192.168.1.50:18801", "theme_mode": "dark", "device_id": "pc_shufang",
              "device_name": "书房电脑", "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "爸爸",
              "enroll_configured": True, "autostart": True}}
@@ -282,7 +283,7 @@ def assert_sides(c: Case, cfg, expected_msgs):
 def case_client_light(browser, base):
     print("\n════ 用例 1：client · 有历史消息 · 浅色 ════")
     cfg = {"mode": "client", "history": CONVO,
-           "hello": {"mode": "client", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "client", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "http://192.168.1.50:18801", "theme_mode": "light",
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "爸爸",
@@ -294,7 +295,7 @@ def case_client_light(browser, base):
     print("\n[client-light] 界面要素")
     check(c.page.inner_text("#client-conn-text") == "已连接", "顶栏显示连接状态", c.page.inner_text("#client-conn-text"))
     check(c.page.inner_text("#client-device") == "· 书房电脑", "顶栏显示本机名", c.page.inner_text("#client-device"))
-    check(c.page.inner_text("#client-ver") == "cs-0.13.0", "顶栏显示版本号", c.page.inner_text("#client-ver"))
+    check(c.page.inner_text("#client-ver") == "cs-0.13.4", "顶栏显示版本号", c.page.inner_text("#client-ver"))
     check(c.page.get_attribute("html", "data-mode") == "light", "浅色主题生效")
     check(not c.page.is_hidden("#client-list"), "消息列表可见")
     check(c.page.is_hidden("#client-empty"), "有消息时不显示空态")
@@ -350,7 +351,7 @@ def case_client_light(browser, base):
 def case_client_dark(browser, base):
     print("\n════ 用例 2：client · 有历史消息 · 深色 ════")
     cfg = {"mode": "client", "history": CONVO,
-           "hello": {"mode": "client", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "client", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "http://192.168.1.50:18801", "theme_mode": "dark",
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈"], "reply_name": "爸爸",
@@ -377,7 +378,7 @@ def case_client_empty(browser, base):
     print("\n════ 用例 3：client · 空会话 ════")
     cfg = {"mode": "client", "history": [],
            "conn_detail": "连接断开，重连中…", "connected": False,
-           "hello": {"mode": "client", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "client", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "http://192.168.1.50:18801", "theme_mode": "light",
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸"], "reply_name": "爸爸",
@@ -454,7 +455,7 @@ def case_popup_single(browser, base):
 def case_popup_history(browser, base):
     print("\n════ 用例 5：popup · 多条消息（历史弱化）════")
     cfg = {"mode": "popup", "history": CONVO,
-           "hello": {"mode": "popup", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "popup", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "http://192.168.1.50:18801", "theme_mode": "light",
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "爸爸",
@@ -488,13 +489,13 @@ def case_popup_history(browser, base):
 def case_settings(browser, base):
     print("\n════ 用例 6：settings · 已配置（浅色）════")
     cfg = {"mode": "settings", "history": CONVO,
-           "runtime": {"version": "cs-0.13.0", "runtime": "153.0.4234.48", "platform": "Windows 10.0.26100",
+           "runtime": {"version": "cs-0.13.4", "runtime": "153.0.4234.48", "platform": "Windows 10.0.26100",
                        "device_id": "pc_shufang", "device_name": "书房电脑",
                        "server": "http://192.168.1.50:18801", "enroll_configured": True, "autostart": True,
                        "theme_mode": "light",
                        "log_path": r"C:\Users\<用户名>\AppData\Roaming\FamilyAgent\app.log",
                        "config_path": r"C:\Users\<用户名>\AppData\Roaming\FamilyAgent\config.json"},
-           "hello": {"mode": "settings", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "settings", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "http://192.168.1.50:18801", "theme_mode": "light",
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "爸爸",
@@ -532,7 +533,7 @@ def case_settings(browser, base):
         log: document.querySelector('#info-log').textContent,
         cfg: document.querySelector('#info-config').textContent,
     })""")
-    check(info["version"] == "cs-0.13.0", "显示版本号", json.dumps(info, ensure_ascii=False))
+    check(info["version"] == "cs-0.13.4", "显示版本号", json.dumps(info, ensure_ascii=False))
     check(info["mode"] == "本机设置", "显示当前形态", info["mode"])
     check(info["runtime"] == "153.0.4234.48", "显示 WebView2 运行版本", info["runtime"])
     check(info["id"] == "pc_shufang" and info["device"] == "书房电脑", "显示本机 ID/名称", json.dumps(info, ensure_ascii=False))
@@ -576,7 +577,7 @@ def case_settings(browser, base):
 def case_settings_unconfigured(browser, base):
     print("\n════ 用例 7：settings · 未配置（深色）════")
     cfg = {"mode": "settings",
-           "hello": {"mode": "settings", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "settings", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "", "theme_mode": "dark", "device_id": "pc_unknown",
                      "device_name": "这台电脑", "reply_names": [], "reply_name": "",
                      "enroll_configured": False, "autostart": False}}
@@ -606,7 +607,7 @@ def case_settings_unconfigured(browser, base):
 def case_runtime_push(browser, base):
     print("\n════ 用例 8：运行中收到 host.mode / host.message / host.runtime ════")
     cfg = {"mode": "client", "history": CONVO[:2],
-           "hello": {"mode": "client", "version": "cs-0.13.0", "platform": "Windows 10.0.26100",
+           "hello": {"mode": "client", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
                      "server": "http://192.168.1.50:18801", "theme_mode": "light",
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈"], "reply_name": "爸爸",
@@ -614,7 +615,7 @@ def case_runtime_push(browser, base):
     c = Case(browser, base, cfg, name="runtime").wait()
     # 新消息 → 出现在客户端列表末尾（自己刚回的靠右）
     c.page.evaluate("""() => window.__pushMessage({id:777, message_id:777, sender_name:'爸爸',
-        content:'我出发了', created_at:'19:02', device_id:'pc_shufang', status:'sent'})""")
+        content:'我出发了', created_at:'2026-09-28 19:02:00', device_id:'pc_shufang', status:'sent'})""")
     c.wait(150)
     tail = c.page.evaluate("""() => {
         const rows = document.querySelectorAll('#client-list .chat-row');
@@ -652,6 +653,90 @@ def case_runtime_push(browser, base):
     c.close()
 
 
+def case_diag_recv(browser, base):
+    print("\n════ 用例 9：顶栏诊断标记「最后收到推送」════")
+    print("   目的：区分「帧根本没到页面」和「帧到了但渲染没跟上」——")
+    print("         host.message 更新正文，host.history 只写 title，两条路径不许混。")
+    cfg = {"mode": "client", "history": CONVO[:2],
+           "hello": {"mode": "client", "version": "cs-0.13.4", "platform": "Windows 10.0.26100",
+                     "server": "http://192.168.1.50:18801", "theme_mode": "light",
+                     "device_id": "pc_shufang", "device_name": "书房电脑",
+                     "reply_names": ["爸爸", "妈妈"], "reply_name": "爸爸",
+                     "enroll_configured": True, "autostart": True}}
+    c = Case(browser, base, cfg, name="diag-recv").wait()
+
+    recv = c.page.inner_text("#client-last-recv")
+    check(c.page.is_hidden("#client-ver") is False and c.page.query_selector("#client-last-recv") is not None,
+          "client 顶栏存在诊断标记 #client-last-recv")
+    check(recv == "尚未收到推送",
+          "初始文案 = 尚未收到推送（host.hello + host.history 都没碰正文）", recv)
+    title0 = c.page.get_attribute("#client-last-recv", "title") or ""
+    check(title0.startswith("最后历史：") and len(title0) == len("最后历史：HH:MM:SS"),
+          "host.history 只留下 title（最后历史：HH:MM:SS），不改正文", title0)
+
+    # 样式：和 #client-ver 同一档低调小字，颜色取自 tokens.css
+    sty = c.page.evaluate("""() => {
+        const el = document.querySelector('#client-last-recv');
+        const ver = document.querySelector('#client-ver');
+        const cs = getComputedStyle(document.documentElement);
+        const probe = document.createElement('div');
+        probe.style.color = cs.getPropertyValue('--fluent-color-text-tertiary').trim();
+        document.body.appendChild(probe);
+        const expected = getComputedStyle(probe).color;
+        probe.remove();
+        const a = getComputedStyle(el), b = getComputedStyle(ver);
+        return { actual: a.color, expected, size: a.fontSize, verSize: b.fontSize,
+                 weight: a.fontWeight, bg: a.backgroundColor };
+    }""")
+    check(sty["actual"] == sty["expected"],
+          "标记颜色 = 令牌 --fluent-color-text-tertiary（没有自算颜色）", json.dumps(sty))
+    check(sty["size"] == sty["verSize"] and sty["weight"] == "400",
+          "标记字号/字重与 #client-ver 同档（低调小字，不抢眼）", json.dumps(sty))
+    check(sty["bg"] in ("rgba(0, 0, 0, 0)", "transparent"),
+          "标记没有底色/边框，视觉重量低于普通 chip", json.dumps(sty))
+
+    # ① 收到一次 host.message → 正文变成含时间戳的文字
+    c.page.evaluate("""() => window.__pushMessage({id:901, message_id:901, sender_name:'妈妈',
+        content:'饭好了，下来吃', created_at:'2026-09-28 19:10:00', device_id:'pc_dev', status:'sent'})""")
+    c.wait(150)
+    recv1 = c.page.inner_text("#client-last-recv")
+    check(bool(re.match(r"^最后收到 \d{2}:\d{2}:\d{2}$", recv1)),
+          "收到 host.message → 标记变成「最后收到 HH:MM:SS」", recv1)
+    check(c.page.get_attribute("#client-last-recv", "title") == title0,
+          "host.message 不动 title（两条路径各记各的）",
+          str(c.page.get_attribute("#client-last-recv", "title")))
+    check(c.page.evaluate("document.querySelectorAll('#client-list .chat-row').length") == 3,
+          "该帧确实画上了屏（列表 2 → 3 条）")
+
+    # ② 再收一次 host.message → 正文必须再更新（不是只更新一次就冻住）
+    c.wait(1100)                                    # 跨过一秒，时间戳才看得出来变了
+    c.page.evaluate("""() => window.__pushMessage({id:902, message_id:902, sender_name:'妈妈',
+        content:'快点，凉了', created_at:'2026-09-28 19:11:00', device_id:'pc_dev', status:'sent'})""")
+    c.wait(150)
+    recv2 = c.page.inner_text("#client-last-recv")
+    check(bool(re.match(r"^最后收到 \d{2}:\d{2}:\d{2}$", recv2)) and recv2 != recv1,
+          "第二次 host.message 又一次刷新标记（不是只动一次）", f"{recv1} → {recv2}")
+
+    # ③ 注入一次 host.history → 正文必须原封不动
+    c.page.evaluate("""() => window.__dispatch({type:'host.history', messages:[
+        {id:911, message_id:911, sender_name:'妈妈', content:'历史第一条', created_at:'2026-09-28 10:00:00', device_id:'pc_dev', status:'sent'},
+        {id:912, message_id:912, sender_name:'爸爸', content:'历史第二条', created_at:'2026-09-28 10:01:00', device_id:'pc_dev', status:'sent'}
+    ]})""")
+    c.wait(200)
+    recv3 = c.page.inner_text("#client-last-recv")
+    check(recv3 == recv2,
+          "★ host.history 不改标记正文（否则区分不出「帧没到」和「渲染没跟上」）",
+          f"{recv2} → {recv3}")
+    check((c.page.get_attribute("#client-last-recv", "title") or "") != title0,
+          "但 host.history 更新了 title", str(c.page.get_attribute("#client-last-recv", "title")))
+    check(c.page.evaluate("document.querySelectorAll('#client-list .chat-row').length") == 2,
+          "host.history 照常重画列表（2 条）—— 只有标记被刻意漏掉")
+
+    check(c.errors == [], "控制台零报错", "; ".join(c.errors[:3]))
+    c.shot("pc-diag-recv.png")
+    c.close()
+
+
 def main():
     shell_dir = pack_shell.pack(quiet=True)
     print(f"组装目录：{shell_dir}")
@@ -670,6 +755,7 @@ def main():
                 case_settings(browser, base)
                 case_settings_unconfigured(browser, base)
                 case_runtime_push(browser, base)
+                case_diag_recv(browser, base)
             finally:
                 browser.close()
     finally:

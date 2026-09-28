@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Diagnostics;
+using FamilyAgent.Core.Protocol;
 
 namespace FamilyAgent;
 
@@ -54,7 +57,7 @@ public sealed class JsBridge
         {
             type = "host.hello",
             mode = Mode,
-            version = AgentClient.ReportedVersion,
+            version = ProtocolVersion.AgentVersion,
             platform = "Windows " + Environment.OSVersion.Version,
             server = cfg is null ? "" : cfg.ServerUrl,
             theme_mode = cfg is null || string.IsNullOrWhiteSpace(cfg.ThemeMode) ? "system" : cfg.ThemeMode,
@@ -133,7 +136,7 @@ public sealed class JsBridge
     /// <summary>
     /// 本机是否具备「真正解锁」的能力。
     ///
-    /// ⚠ Phase 1 与 AgentClient.ReportUnlockCapability 一致：凭据存储和
+    /// ⚠ Phase 1 与 Core 的 <c>DeviceCapabilities.ReportUnlockCapability</c> 一致：凭据存储和
     /// Credential Provider 都还没做，这里必须是 false —— 报了就是谎报，页面会给出
     /// 一个点了必然失败的按钮。Phase 2 落地后两处一起改成 true。
     /// </summary>
@@ -182,7 +185,7 @@ public sealed class JsBridge
         {
             type = "host.runtime",
             mode = Mode,          // 当前形态（client / popup / settings），界面上要显示它
-            version = AgentClient.ReportedVersion,
+            version = ProtocolVersion.AgentVersion,
             runtime = runtimeVersion ?? "",   // WebView2 Runtime 版本
             platform = "Windows" + " " + Environment.OSVersion.Version,   // 页面「平台」一行读它
             device_id = cfg is null ? "" : cfg.DeviceId,

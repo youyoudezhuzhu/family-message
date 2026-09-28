@@ -3,6 +3,9 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Diagnostics;
+using FamilyAgent.Core.Protocol;
 
 namespace FamilyAgent;
 
@@ -28,7 +31,7 @@ namespace FamilyAgent;
 /// 两个实例都算得出来同一个位置，跨会话也一样）：
 ///   instance.lock  {"pid":123,"version":"(版本号)","started":"ISO8601"}
 ///   show.request   {"version":"(版本号)","at":"ISO8601","pid":456}
-/// 版本号一律取 <see cref="AgentClient.ReportedVersion"/>，这里**不写死任何版本字符串**。
+/// 版本号一律取 <see cref="ProtocolVersion.AgentVersion"/>，这里**不写死任何版本字符串**。
 ///
 /// 所有文件读写都 try/catch 包住（磁盘满 / 权限 / 文件被占都可能），失败一律
 /// 记一笔日志后当作「没有这回事」，**绝不能把程序带崩**。
@@ -100,7 +103,7 @@ public static class SingleInstance
         var json = JsonSerializer.Serialize(new
         {
             pid = Environment.ProcessId,
-            version = AgentClient.ReportedVersion,
+            version = ProtocolVersion.AgentVersion,
             started = DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture),
         });
         WriteText(LockPath, json, "写 instance.lock 失败");

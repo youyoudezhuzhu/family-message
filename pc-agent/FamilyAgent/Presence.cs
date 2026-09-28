@@ -2,6 +2,9 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Diagnostics;
+using FamilyAgent.Core.Transport;
 
 namespace FamilyAgent;
 
@@ -91,8 +94,12 @@ public static class Presence
 
     /// <summary>
     /// 只在 <c>--headless</c> 下调用。维护「有人登录就让位、没人登录就接管」。
+    ///
+    /// 参数从 <c>AgentClient</c> 换成 Core 的 <c>ConnectionManager</c>：让位/接管靠的
+    /// 还是 <c>Stop()</c> / <c>Start()</c> 两个动作，语义与搬迁前逐字相同
+    /// （「连接所有权由平台层决定」—— Core 不内置单实例语义，见 §8.9）。
     /// </summary>
-    public static void StartSupervisor(AgentClient client)
+    public static void StartSupervisor(ConnectionManager core)
     {
         _ = Task.Run(async () =>
         {
@@ -108,7 +115,7 @@ public static class Presence
                     if (interactiveAlive && !yielded)
                     {
                         AgentLog.Write("检测到交互式实例在运行 → 让位（断开连接，避免两个实例抢同一个设备）");
-                        client.Stop();
+                        core.Stop();
                         // 给旧连接一点时间真正收尾，避免和紧接着的重连打架
                         await Task.Delay(TimeSpan.FromSeconds(2));
                         yielded = true;
@@ -116,7 +123,7 @@ public static class Presence
                     else if (!interactiveAlive && yielded)
                     {
                         AgentLog.Write("交互式实例已退出 → 接管（重新连上服务端）");
-                        client.Start();
+                        core.Start();
                         yielded = false;
                     }
 

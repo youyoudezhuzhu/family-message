@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.13.3">
-<link rel="stylesheet" href="static/style.css?v=0.13.3">
-<link rel="stylesheet" href="static/shell.css?v=0.13.3">
+<link rel="stylesheet" href="static/tokens.css?v=0.14.0">
+<link rel="stylesheet" href="static/style.css?v=0.14.0">
+<link rel="stylesheet" href="static/shell.css?v=0.14.0">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -190,7 +190,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
   <!-- ══ 主内容区 ═══════════════════════════════════════════════ -->
   <main class="main" id="main">
 
-    <!-- ── 首页：问候 + 在线设备 + 发送消息 + 最近消息 ────────── -->
+    <!-- ── 首页：问候 + 在线设备 + 最近消息 + 发送消息（输入框在底部）── -->
     <section class="page" id="page-home">
       <div class="page__head">
         <h2 class="page__title" id="home-greeting">你好</h2>
@@ -207,6 +207,20 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-desktop"/></svg>
           <span class="empty__title">还没有设备</span>
           <span class="empty__hint">在 Windows PC 上运行 Family Agent，填好服务端地址与设备注册口令，它就会出现在这里。</span>
+        </div>
+      </section>
+
+      <!-- 消息记录在前、发送框在后：像聊天应用一样从上往下读，输入框在底部 -->
+      <section class="section" aria-labelledby="t-recent">
+        <div class="section__head">
+          <h3 class="section__title" id="t-recent">最近消息</h3>
+          <button class="btn btn--subtle" id="home-more">查看全部</button>
+        </div>
+        <div class="chat-list chat-list--compact" id="home-recent"></div>
+        <div class="empty" id="home-recent-empty">
+          <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
+          <span class="empty__title">还没有消息</span>
+          <span class="empty__hint">在下面写一条，发进家庭群聊，所有设备都能看到。</span>
         </div>
       </section>
 
@@ -240,19 +254,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
           </button>
         </div>
         <span class="compose__hint" id="send-hint" role="status" aria-live="polite"></span>
-      </section>
-
-      <section class="section" aria-labelledby="t-recent">
-        <div class="section__head">
-          <h3 class="section__title" id="t-recent">最近消息</h3>
-          <button class="btn btn--subtle" id="home-more">查看全部</button>
-        </div>
-        <div class="chat-list chat-list--compact" id="home-recent"></div>
-        <div class="empty" id="home-recent-empty">
-          <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
-          <span class="empty__title">还没有消息</span>
-          <span class="empty__hint">在上面写一条，发进家庭群聊，所有设备都能看到。</span>
-        </div>
       </section>
     </section>
 
@@ -586,8 +587,8 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 </div>
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<script src="static/chat.js?v=0.13.3"></script>
-<script src="static/shell.js?v=0.13.3"></script>
-<script src="static/app.js?v=0.13.3"></script>
+<script src="static/chat.js?v=0.14.0"></script>
+<script src="static/shell.js?v=0.14.0"></script>
+<script src="static/app.js?v=0.14.0"></script>
 </body>
 </html>
