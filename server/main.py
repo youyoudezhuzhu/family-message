@@ -763,6 +763,11 @@ async def ws_device(websocket: WebSocket, device_id: str):
 
     await websocket.accept()
     await HUB.bind_device(device_id, websocket)
+    # 连接台账：同一 device_id 的两个实例（开机自启的 headless / 登录后的交互式）
+    # 靠 name= 区分，conn= 与 [WS][MESSAGE] 日志里的 conn=/active= 对得上号。
+    print(f"[WS][CONN] device={device_id} conn={HUB.conn_id(websocket)} "
+          f"name={name} agent={agent_version or '-'} ip={ip} "
+          f"connections={HUB.conn_count(device_id)}", flush=True)
     row = dev_svc.set_online(device_id, ip=ip, agent_version=agent_version)
     if _apply_reported_state(device_id, {"windows_state": reported_state,
                                          "capabilities": reported_caps}):

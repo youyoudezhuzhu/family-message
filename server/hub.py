@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import uuid
 from typing import Any, Optional
 
@@ -29,34 +30,141 @@ class DeviceHub:
         self._lock = asyncio.Lock()
         self._sweeper: Optional[asyncio.Task] = None
 
+        # ── 连接台账（**只用于观测/日志**，不参与任何投递或踢人决策）──────
+        # 同一 device_id 上可能先后/同时挂着多条连接（开机自启的 headless 与
+        # 登录后的交互式就是这种情况），光看 device_id 分不出「这句话到底
+        # 写到了哪条 WebSocket 上」。给每条连接发一个短号，日志里就能对上号：
+        #   conn_ids     id(ws)      -> 连接短号 c0007
+        #   conn_device  连接短号     -> device_id
+        #   device_conns device_id   -> {连接短号}（当前**登记在册**的所有连接，
+        #                              正常只有 1 条；对踢瞬间会短暂出现 2 条）
+        self._conn_seq = itertools.count(1)
+        self.conn_ids: dict[int, str] = {}
+        self.conn_device: dict[str, str] = {}
+        self.device_conns: dict[str, set[str]] = {}
+
+    # ---------------- 连接台账（观测用） ----------------
+
+    def conn_id(self, ws: Optional[WebSocket]) -> str:
+        """取某条 WebSocket 的连接短号；没登记过返回 c----。"""
+        if ws is None:
+            return "c----"
+        return self.conn_ids.get(id(ws), "c----")
+
+    def conn_count(self, device_id: str) -> int:
+        """该 device_id 当前登记在册的连接数（>1 说明有两条连接叠着）。"""
+        return len(self.device_conns.get(device_id) or ())
+
+    def _conn_register(self, device_id: str, ws: WebSocket) -> str:
+        cid = f"c{next(self._conn_seq):04d}"
+        self.conn_ids[id(ws)] = cid
+        self.conn_device[cid] = device_id
+        self.device_conns.setdefault(device_id, set()).add(cid)
+        return cid
+
+    def _conn_unregister(self, device_id: str, ws: WebSocket) -> str:
+        cid = self.conn_ids.pop(id(ws), "c----")
+        self.conn_device.pop(cid, None)
+        conns = self.device_conns.get(device_id)
+        if conns is not None:
+            conns.discard(cid)
+            if not conns:
+                self.device_conns.pop(device_id, None)
+        return cid
+
     # ---------------- 设备连接 ----------------
 
     async def bind_device(self, device_id: str, ws: WebSocket) -> None:
+        cid = self._conn_register(device_id, ws)
         async with self._lock:
             old = self.devices.get(device_id)
             self.devices[device_id] = ws
         if old is not None and old is not ws:
+            old_cid = self.conn_id(old)
+            # 这一行是「对踢」现场的第一现场证据：谁顶掉了谁、当时叠了几条。
+            print(
+                f"[WS][BIND] device={device_id} conn={cid} replaced={old_cid} "
+                f"connections={self.conn_count(device_id)}",
+                flush=True,
+            )
             try:
                 await old.close(code=4000, reason="replaced by new connection")
             except Exception:
                 pass
+        else:
+            print(
+                f"[WS][BIND] device={device_id} conn={cid} replaced=- "
+                f"connections={self.conn_count(device_id)}",
+                flush=True,
+            )
 
     async def unbind_device(self, device_id: str, ws: WebSocket) -> None:
+        was_active = False
         async with self._lock:
             if self.devices.get(device_id) is ws:
                 self.devices.pop(device_id, None)
+                was_active = True
+        cid = self._conn_unregister(device_id, ws)
+        print(
+            f"[WS][UNBIND] device={device_id} conn={cid} "
+            f"was_active={'true' if was_active else 'false'} "
+            f"connections={self.conn_count(device_id)}",
+            flush=True,
+        )
 
     def is_online(self, device_id: str) -> bool:
         return device_id in self.devices
 
+    # ---------------- 实时推送日志 ----------------
+
+    def _msg_log(self, device_id: str, payload: dict, stage: str,
+                 ws: Optional[WebSocket] = None, error: str = "") -> None:
+        """一条投递一行日志，回答「到底有没有真的写进那条 WebSocket」。
+
+        stage 四态（三种结果 + 一个开始点，严格可分）：
+          start   —— 准备写（online/connections 是写之前的快照）
+          queued  —— 该设备**没有任何在线连接**，这一帧没有落点（交离线补投）
+          success —— send_json 真的返回了（字节已交给事件循环写出去）
+          failed  —— 有连接但写失败，error= 里是异常
+
+        conn=   这一帧实际写到（或打算写到）的连接短号
+        active= 此刻 hub 里持有的连接短号
+        两者不相等 ⇒ 写的时候它已经不是 active 了（对踢现场）。
+        另外 type= 标明帧类型：心跳/ack 这类高频帧只在 queued/failed 时留痕，
+        不逐条刷屏；带 message_id 的消息帧才逐条留 start/success。
+        """
+        active_ws = self.devices.get(device_id)
+        extra = f" type={payload.get('type')}"
+        if payload.get("redelivered"):
+            extra += " redelivered=true"
+        err = f" error={error}" if error else ""
+        print(
+            f"[WS][MESSAGE] message_id={payload.get('message_id')} target={device_id} "
+            f"online={'true' if active_ws is not None else 'false'} "
+            f"connections={self.conn_count(device_id)} "
+            f"conn={self.conn_id(ws if ws is not None else active_ws)} "
+            f"active={self.conn_id(active_ws)} send={stage}{extra}{err}",
+            flush=True,
+        )
+
     async def send_to_device(self, device_id: str, payload: dict) -> bool:
         ws = self.devices.get(device_id)
+        # 带 message_id 的是「真的在发消息」，逐条留痕；其余（heartbeat_ack 等）
+        # 只在没连接/写失败时留一行，避免刷屏。
+        traced = "message_id" in payload
+        if traced:
+            self._msg_log(device_id, payload, "start")
         if ws is None:
+            self._msg_log(device_id, payload, "queued")
             return False
         try:
             await ws.send_json(payload)
+            if traced:
+                self._msg_log(device_id, payload, "success", ws=ws)
             return True
-        except Exception:
+        except Exception as e:
+            self._msg_log(device_id, payload, "failed", ws=ws,
+                          error=f"{type(e).__name__}: {e}")
             await self.unbind_device(device_id, ws)
             return False
 
