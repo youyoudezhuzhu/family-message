@@ -694,17 +694,29 @@ public partial class WebHostWindow : Window
 
     private void ShowWindow(bool alert)
     {
-        if (!IsVisible)
+        // ★ 提示音不能只在「首次显示」时响 —— 窗口开着的时候来消息更要提醒。
+        if (alert)
         {
-            if (alert)
-            {
-                try { System.Media.SystemSounds.Exclamation.Play(); }
-                catch { /* 提示音失败不影响显示 */ }
-            }
-            Show();
-            Topmost = _mode == WindowMode.Popup;
+            try { System.Media.SystemSounds.Exclamation.Play(); }
+            catch { /* 提示音失败不影响显示 */ }
         }
+
+        if (!IsVisible)
+            Show();
+
+        // ★ 最小化了要还原：光 Activate() 是叫不醒最小化窗口的。
+        if (WindowState == WindowState.Minimized)
+            WindowState = WindowState.Normal;
+
+        // ★ Topmost 每次都按当前形态重设。
+        //   原来只在首次 Show() 里设一次，于是 popup → window → popup 走一圈之后
+        //   它就再也没对上过——全屏强提醒不再置顶，用户以为「消息没来」。
+        var wantTopmost = _mode == WindowMode.Popup;
+        if (Topmost != wantTopmost)
+            Topmost = wantTopmost;
+
         Activate();
+        try { Focus(); } catch { /* 偶发失败，不影响 */ }
     }
 
     private void OnWindowLoaded(object sender, RoutedEventArgs e)

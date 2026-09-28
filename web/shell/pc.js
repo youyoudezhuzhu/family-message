@@ -322,6 +322,37 @@
     setTimeout(function () { try { input.focus(); } catch (_) {} }, 60);
   }
 
+  /** 本地时间戳，格式与服务端一致（YYYY-MM-DD HH:MM:SS），避免气泡上两种写法并存 */
+  function nowStamp() {
+    var d = new Date(), p = function (n) { return (n < 10 ? '0' : '') + n; };
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+         + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+
+  /**
+   * 自己刚发的消息**立刻上屏**。
+   *
+   * 群聊模型下服务端会「排除发起者自己」（不该自己发的话弹自己的窗），
+   * 所以这一条**必须由本地补** —— 否则 PC 端永远看不到自己刚说的话，
+   * 只有重开界面走一次历史才发现「哦，发出去了」。
+   */
+  function appendOwnMessage(mid, text) {
+    if (!text) return;
+    var m = {
+      id: mid || 0, message_id: mid || 0,
+      sender_name: S.myName || '', content: text,
+      created_at: nowStamp(), status: 'sent',
+    };
+    var dup = mid && S.list.some(function (x) { return idOf(x) === mid; });
+    if (!dup) {
+      S.list.push(m);
+      renderClient();
+      scrollClientToBottom();
+    }
+    pushPopup(m);
+    if (S.view === 'popup') renderPopup();
+  }
+
   function onReplyAck(d) {
     if (!d || !d.client_id) return;
     if (!S.pending || S.pending.client_id !== d.client_id) return;   // 不是这一次的
@@ -332,9 +363,11 @@
     if (mid) S.ownIds[mid] = 1;
     if (d.status === 'ok') {
       clearSentInput(sent);
+      appendOwnMessage(mid, sent);          // ★ 自己发的立刻上屏
       setHintAll('已回复', 'ok');
     } else if (d.status === 'queued') {
       clearSentInput(sent);
+      appendOwnMessage(mid, sent);          // ★ 排队也要上屏（连上后会补发）
       setHintAll(d.detail || '已排队，连上服务端后自动补发', 'ok');
     } else {
       setHintAll(d.detail || '发送失败，可以再试一次', 'error');
