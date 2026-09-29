@@ -657,6 +657,10 @@ def require(perm):
     已并入「build-windows-agent」workflow。
   ⚠ 安全细节：`LogonUser` 的失败用例**只用不存在的账户名** —— 拿真实账户名试错口令会累加
   系统/域的登录失败计数，可能把账户锁在外面。
+  📌 **CI 纠正了一条我写错的判据**（值得记）：解密时传 `CRYPTPROTECT_LOCAL_MACHINE` 是
+  「去哪个密钥库找密钥」，**不是作用域校验** —— 同一账户下两种作用域的密文都解得开；
+  差别只在**跨账户**（CurrentUser 的密文别的账户解不开）。结论：不能指望"作用域隔离"
+  来分开 Service 与交互进程，**文件 ACL 是必需的第二道门**（`CredentialFileAcl`）。
 
 - **待做（按 §16.2 清单顺序）**：
   1. ~~Windows 侧 `DpapiSecretProtector`~~ ✅（第 2 步）

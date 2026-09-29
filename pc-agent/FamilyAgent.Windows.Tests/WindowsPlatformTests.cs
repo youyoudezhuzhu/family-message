@@ -113,16 +113,27 @@ public sealed class WindowsPlatformTests
     }
 
     [Fact]
-    public void 保险箱_CurrentUser作用域存的不该被LocalMachine解开()
+    public void DPAPI_同一账户下两种作用域的密文都能解开()
     {
         if (NotWindows()) return;
-        var path = TempCredentialPath();
-        new CredentialVault(path, DpapiSecretProtector.ForCurrentUser(), Entropy())
-            .Store(Environment.UserName, "only-me", "t");
 
-        // 同一个用户用 LocalMachine 作用域去解 CurrentUser 的密文 → 解不开（作用域不同）
-        var other = new CredentialVault(path, DpapiSecretProtector.ForLocalMachine(), Entropy());
-        Assert.Null(other.Load());
+        // ⚠ 这条判据是**被 CI 纠正过**的（2026-09-29，windows-latest 实测）：
+        //   原来我按直觉写「CurrentUser 存的密文，用 LocalMachine 标志解不开」—— 实测**错**。
+        //   解密时那个 CRYPTPROTECT_LOCAL_MACHINE 标志是「去哪个密钥库找解密密钥」，
+        //   不是「校验这段密文的作用域」；**同一个账户**下两种作用域的密文都解得开。
+        //   真正的差别只在**跨账户**时显现（CurrentUser 的密文，别的账户解不开；
+        //   LocalMachine 的密文，本机任何账户都能解）—— 那需要一台有两账户的机器，
+        //   CI 里只有一个 runneradmin，验不了，所以本测试只把「同账户都能解」钉住，
+        //   跨账户那条留给真机验收（§16.4 第 1 条）。
+        var userScope = DpapiSecretProtector.ForCurrentUser();
+        var machineScope = DpapiSecretProtector.ForLocalMachine();
+
+        var byUser = userScope.Protect(Encoding.UTF8.GetBytes("user-scope"), Entropy());
+        var byMachine = machineScope.Protect(Encoding.UTF8.GetBytes("machine-scope"), Entropy());
+
+        // 同账户：交叉解也解得开
+        Assert.Equal("user-scope", Encoding.UTF8.GetString(machineScope.Unprotect(byUser, Entropy())));
+        Assert.Equal("machine-scope", Encoding.UTF8.GetString(userScope.Unprotect(byMachine, Entropy())));
     }
 
     // ── 文件 ACL ────────────────────────────────────────────────────
@@ -197,15 +208,18 @@ public sealed class WindowsPlatformTests
         var vault = new CredentialVault(path, DpapiSecretProtector.ForLocalMachine(), Entropy());
         vault.Store("fm-no-such-user", "whatever", "t");
 
-        var reason = "";
-        var gate = new UnlockGate(vault, new LogonUserVerifier(), audit: l => reason = l);
+        var lines = new System.Collections.Generic.List<string>();
+        var gate = new UnlockGate(vault, new LogonUserVerifier(), audit: lines.Add);
         var bogusUser = "fm-no-such-user-" + Guid.NewGuid().ToString("N");
 
         Assert.Equal(UnlockCheckResult.BadCredential, gate.Check(bogusUser, "w1"));
         Assert.Equal(UnlockCheckResult.BadCredential, gate.Check(bogusUser, "w2"));
         Assert.Equal(UnlockCheckResult.BadCredential, gate.Check(bogusUser, "w3"));
         Assert.Equal(UnlockCheckResult.LockedOut, gate.Check(bogusUser, "w4"));
-        Assert.Contains("locked_out", reason);
-        Assert.Contains("bad_credential", reason);
+        // ⚠ 审计是**逐行回调**的（这条也是被 CI 纠正过的：原来用一个变量接，
+        //   只剩最后一行，断言第二类行必然失败）。
+        Assert.Contains(lines, l => l.Contains("bad_credential"));
+        Assert.Contains(lines, l => l.Contains("locked_out"));
+        Assert.DoesNotContain(lines, l => l.Contains("w1") || l.Contains("whatever"));
     }
 }

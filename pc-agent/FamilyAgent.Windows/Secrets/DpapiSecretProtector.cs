@@ -21,6 +21,12 @@ namespace FamilyAgent.Windows.Secrets;
 ///
 /// 附加熵（entropy）：App 专属常量，防止同机上别的程序拿 DPAPI 顺手解开我们的密文。
 /// **改熵 = 已存凭据全部失效**（读不出 → 按"没配凭据"处理，让用户重新输入）。
+///
+/// ⚠ 实测纠正（2026-09-29，windows-latest CI）：解密时传的 <c>CRYPTPROTECT_LOCAL_MACHINE</c>
+///   标志是"**去哪个密钥库找解密密钥**"，**不是**"校验这段密文的作用域"—— 同一个账户下，
+///   两种作用域产生的密文都解得开。真正的差别只在**跨账户**时显现：
+///   CurrentUser 的密文别的账户解不开；LocalMachine 的密文本机任何账户都能解。
+///   所以"只靠作用域隔离 Service 与交互进程"是不成立的 → 必须配文件 ACL（见 CredentialFileAcl）。
 /// </summary>
 public sealed class DpapiSecretProtector : ISecretProtector
 {
