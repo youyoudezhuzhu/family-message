@@ -47,6 +47,10 @@
          宿主只留窗口、托盘、桥与平台能力实现（docs/CORE-REFACTOR-PLAN.md §3.1）。
          它能在 Linux 上编译与跑单测（CI 的 core-tests job），所以分层是否成立是可验证的。 -->
     <ProjectReference Include="..\FamilyAgent.Core\FamilyAgent.Core.csproj" />
+    <!-- Windows 平台能力（远程解锁 Phase 2）：DPAPI / 文件 ACL / LogonUser。
+         单独一个工程是为了让**真机判据能进 CI**（windows-latest），见
+         .github/workflows/build-windows-agent.yml 的「Windows 平台能力测试」。 -->
+    <ProjectReference Include="..\FamilyAgent.Windows\FamilyAgent.Windows.csproj" />
   </ItemGroup>
 
   <ItemGroup>

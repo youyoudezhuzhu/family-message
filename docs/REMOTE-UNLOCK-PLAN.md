@@ -662,11 +662,34 @@ def require(perm):
   差别只在**跨账户**（CurrentUser 的密文别的账户解不开）。结论：不能指望"作用域隔离"
   来分开 Service 与交互进程，**文件 ACL 是必需的第二道门**（`CredentialFileAcl`）。
 
+- **2026-09-29 · 第 4–6 步完成 ✅**（凭据门面 + 能力上报 + 设置页卡片）：
+  - `FamilyAgent/Platform/UnlockCredentials.cs`（宿主门面）：DPAPI 保险箱 + 校验闸门 + 审计
+    （`%APPDATA%\FamilyAgent\unlock-audit.log`）；凭据文件 `%ProgramData%\FamilyAgent\credential.json`
+    （LocalMachine 作用域 + ACL 限 SYSTEM/Administrators/当前用户）。**先校验再落盘** ——
+    口令不对不保存、如实回复，绝不让"有凭据"变成假的能力上报。门面**没有任何**把口令往外给的方法。
+  - `WindowsUnlockGuard`：协议校验（既有，未动）→ 凭据就绪判断 → 回 `armed/ok`
+    （凭据就绪，等 P3 施加解锁）或 `failed/no_credential`。协议词汇表**零新增**（`armed` 的既有
+    定义正是"校验通过、等待"）。
+  - `DeviceCapabilities`：`unlock` 改为**条件上报** —— 注册了实现 **且** `Ready` **且** 非会话 0；
+    `JsBridge.CanUnlock` 同源读 `UnlockCredentials.Ready`（一个说能一个说不能就会出现死按钮）。
+    那条写死的 `ReportUnlockCapability = false` 开关删掉了（注释里"等凭据落地再把这里改成 true"
+    的 TODO 正式兑现）。
+  - 设置页新增「远程解锁凭据」卡（`web/shell/app.html` + `pc.js` + `pc.css`）：状态 chip
+    （未配置 / 已配置+校验时间 / 冷却中）、用户名、口令（不回显、成功后立刻清空）、
+    保存并校验 / 测试凭据 / 清除凭据三个按钮、以及**把边界写在卡片上**（这一版只做到
+    "凭据就绪 + 请求可达"，真正解锁要等 Credential Provider）。
+  - 门禁：Core **165/165**、PC 界面套件 **168/168**（新增 9 条判据：状态渲染、按钮接线、
+    空口令不提交、口令随消息交给宿主、回执后清空口令框、点击不抛异常）、编译 0/0。
+
+- **还没做的**：`FamilyAgent.Service` 宿主与命名管道（§16.2 清单第 3 项）—— 这一步只为
+  "登录前也持有凭据 + Service 重启用标准恢复策略"，**不影响上面这套的可用性**（当前由
+  交互进程持有凭据，LocalMachine 作用域 + ACL 已经让未来的 Service 能读到同一份文件）。
+
 - **待做（按 §16.2 清单顺序）**：
   1. ~~Windows 侧 `DpapiSecretProtector`~~ ✅（第 2 步）
   2. ~~`LogonUser` 校验实现~~ ✅（第 3 步）
-  3. Service 宿主（安装/卸载/恢复策略）+ 命名管道（ACL 限当前交互用户）
-  4. 设置页「凭据」卡（输入 / 测试 / 清除 + 冷却提示）
-  5. `capabilities` 上报 `unlock` + `docs/PROTOCOL.md` 那行 ❌ → ✅
+  3. Service 宿主（安装/卸载/恢复策略）+ 命名管道（ACL 限当前交互用户）← **唯一剩下的**
+  4. ~~设置页「凭据」卡（输入 / 测试 / 清除 + 冷却提示）~~ ✅（第 4–6 步）
+  5. ~~`capabilities` 上报 `unlock` + `docs/PROTOCOL.md` 那行 ❌ → ✅~~ ✅（第 4–6 步）
   6. 真机验收：按 §16.4 的 5 条判据逐条过（其中第 3 条可扩 `tools/test_unlock.py` 自动化）
 

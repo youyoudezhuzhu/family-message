@@ -221,6 +221,47 @@
         </div>
       </div>
 
+      <!-- ══ 远程解锁凭据（Phase 2）═════════════════════════════════════════
+           在本机安全保存 Windows 账户口令（DPAPI 加密 + 文件 ACL，只留在本机），
+           网页端发起远程解锁时本机回 armed（凭据就绪）。
+           ⚠ 真正把锁解开要等 Phase 3 的 Credential Provider —— 这一版不假装能解锁，
+             所以卡片里把边界写清楚，别让人以为存了口令就能远程开机解锁。
+           规格：docs/REMOTE-UNLOCK-PLAN.md §16。 -->
+      <div class="card" id="unlock-card">
+        <h2 class="card__title">远程解锁凭据</h2>
+        <p class="card__sub">在这台电脑上安全保存 Windows 账户口令，供网页端发起远程解锁时使用。
+          口令经系统 DPAPI 加密后只留在本机，不会发给服务端。</p>
+
+        <div class="unlock-state">
+          <span class="chip" id="unlock-state">未知</span>
+          <span class="unlock-state__text" id="unlock-state-text">正在读取…</span>
+        </div>
+
+        <div class="form-row">
+          <label class="field-label" for="set-unlock-user">用户名</label>
+          <input class="input" id="set-unlock-user" type="text" autocomplete="username"
+                 spellcheck="false" placeholder="本机账户写 机器名\用户名，也可以只写用户名">
+        </div>
+
+        <div class="form-row">
+          <label class="field-label" for="set-unlock-pass">口令</label>
+          <input class="input" id="set-unlock-pass" type="password" autocomplete="current-password"
+                 placeholder="Windows 登录口令">
+          <span class="field-support">已经存过的话，留空表示不改动。</span>
+        </div>
+
+        <div class="bar">
+          <button class="btn btn--primary btn--sm" id="unlock-save" type="button">保存并校验</button>
+          <button class="btn btn--secondary btn--sm" id="unlock-test" type="button">测试凭据</button>
+          <button class="btn btn--secondary btn--sm" id="unlock-clear" type="button">清除凭据</button>
+        </div>
+
+        <p class="hint" id="unlock-hint"></p>
+        <p class="field-support">保存时会用 Windows 的<strong>验证型登录</strong>检查一次（不会顶掉你当前的桌面），
+          校验通过才落盘。存好之后网页端的解锁按钮才会亮起 —— 但这一版只做到「凭据就绪 +
+          请求可达」，真正把锁解开要等后续的 Credential Provider 阶段。</p>
+      </div>
+
       <!-- ══ 共享昵称（NAS 全局）═════════════════════════════════════════════
            只在本机连上服务端、且服务端启用了共享昵称（host.nickname.available）时显示。
            规格：docs/NICKNAME-SYSTEM-PLAN.md §3.3 / §5.2 / §7 Phase 4。

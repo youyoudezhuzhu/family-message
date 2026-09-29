@@ -291,10 +291,15 @@ created → server_received → device_received → popup_displayed → read
 | `message` | 能收消息并显示 | ✅ | ✅ |
 | `screenshot` | 能截图并回 `screenshot_response` | ✅（`WindowsScreenshotProvider`） | 需 `MediaProjection`；授权失败回 `error` |
 | `shutdown` | 能执行 `shutdown` 指令 | ✅（`WindowsPowerProvider`）；**会话 0（headless）不上报** | ❌ 不上报 |
-| `unlock` | 能参与远程解锁 | ❌ **本阶段不上报**（凭据存储未做） | ❌ 不上报 |
+| `unlock` | 能参与远程解锁 | ⚠️ **视凭据而定**：本机存好解锁凭据且校验通过才上报（Phase 2 起） | ❌ 不上报 |
 
 - 取值来自**单一常量表**（`DeviceCapabilities`），`hello` 查询参数与心跳帧同源；
 - 会话 0（开机无人登录）时**不上报 `shutdown`**，也不上报解锁（没有桌面可弹窗）；
+- `unlock` 是**条件能力**（Phase 2 起）：只有本机**存好解锁凭据且校验通过**时才上报
+  （`IUnlockGuard.Ready`）——"有实现"与"能用"是两件事，凭据没配就上报等于给网页端一个
+  点了必然失败的按钮。用户在 PC 设置页存/清凭据后，下次心跳/重连即生效。
+  收到解锁请求时本机回 `armed/ok`（凭据就绪，等 Credential Provider 真正施加解锁）
+  或 `failed/no_credential`（没配凭据 / 处于失败冷却中）；**真正解锁要等 Phase 3**。
 - 客户端收到**不支持**的命令必须回终态错误（`event{kind=shutdown_failed}` /
   `screenshot_response{error}`），**不允许超时静默**。
 

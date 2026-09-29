@@ -135,13 +135,70 @@ public sealed class JsBridge
         });
 
     /// <summary>
-    /// 本机是否具备「真正解锁」的能力。
+    /// 设置页的凭据操作：<c>status</c> 只读状态；<c>save</c> 先校验再落盘；
+    /// <c>test</c> 只校验不落盘；<c>clear</c> 删凭据。结果一律回 <c>host.unlock_credential</c>。
     ///
-    /// ⚠ Phase 1 与 Core 的 <c>DeviceCapabilities.ReportUnlockCapability</c> 一致：凭据存储和
-    /// Credential Provider 都还没做，这里必须是 false —— 报了就是谎报，页面会给出
-    /// 一个点了必然失败的按钮。Phase 2 落地后两处一起改成 true。
+    /// ⚠ 口令只在这一个方法栈里存在：不写日志、不进审计、不回显（回给页面的只有状态事实）。
     /// </summary>
-    private static bool CanUnlock => false;
+    private void HandleUnlockCredential(string action, JsonElement root)
+    {
+        var creds = Platform.UnlockCredentials.Current;
+        var user = GetString(root, "user") ?? "";
+        var secret = GetString(root, "secret") ?? "";
+
+        var ok = true;
+        var detail = "";
+        switch (action)
+        {
+            case "status":
+                break;
+            case "save":
+                (ok, detail) = creds.Save(user, secret);
+                break;
+            case "test":
+                (ok, detail) = creds.Test(user, secret);
+                break;
+            case "clear":
+                ok = creds.Clear();
+                detail = ok ? "已清除凭据。" : "本机本来就没有凭据。";
+                break;
+            default:
+                ok = false;
+                detail = "未知的凭据操作：" + action;
+                break;
+        }
+
+        PostUnlockCredential(action, ok, detail);
+    }
+
+    /// <summary>把凭据状态推给页面（**只有事实：配了没 / 谁 / 什么时候验的 / 冷却没**）。</summary>
+    private void PostUnlockCredential(string action, bool ok, string detail)
+    {
+        var s = Platform.UnlockCredentials.Current.Status();
+        Send(new
+        {
+            type = "host.unlock_credential",
+            action = action ?? "",
+            ok,
+            detail = detail ?? "",
+            configured = s.Configured,
+            user = s.User ?? "",
+            verified_at = s.VerifiedAt ?? "",
+            locked_out = s.LockedOut,
+            failures_left = s.FailuresLeft,
+            can_unlock = CanUnlock,
+        });
+    }
+
+    /// <summary>
+    /// 本机是否具备「真正解锁」的能力（= 凭据已配好且未被失败冷却锁住）。
+    ///
+    /// ⚠ 与 Core 的 <c>DeviceCapabilities</c> **必须同源**（都读 <c>UnlockCredentials.Ready</c>）：
+    ///   一个说能、一个说不能，页面上就会出现"点了必然失败"的按钮。
+    ///   Phase 2 起不再是写死的 false —— 用户在设置页存好凭据后即可为 true
+    ///   （真正把锁解开仍要等 Phase 3 的 Credential Provider）。
+    /// </summary>
+    private static bool CanUnlock => Platform.UnlockCredentials.Current.Ready;
 
     /// <summary><paramref name="dataUrl"/> 为空 = 截图失败，改回 <c>ok:false</c> + 中文原因。</summary>
     public void PostScreenshot(string? requestId, string? dataUrl, string? error)
@@ -556,6 +613,16 @@ public sealed class JsBridge
                 case "web.quit":
                     QuitRequested?.Invoke();
                     break;
+
+                // ── 远程解锁凭据（Phase 2）：状态 / 保存 / 测试 / 清除 ──
+                case "web.unlock_status":
+                case "web.unlock_save":
+                case "web.unlock_test":
+                case "web.unlock_clear":
+                {
+                    HandleUnlockCredential(type.Substring("web.unlock_".Length), root);
+                    break;
+                }
 
                 // ── 共享昵称（§7 Phase 4）。**形态只走桥**，昵称也走桥 ──
                 case "web.nickname_select":

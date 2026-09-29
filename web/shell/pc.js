@@ -827,6 +827,61 @@
     var legacy = $('legacy-name-row');
     if (legacy) legacy.hidden = nickOn();
     renderNickBlock();
+
+    refreshUnlock();          // 远程解锁凭据的状态（Phase 2）：每次打开设置都重读一次
+  }
+
+  /* ── 远程解锁凭据（Phase 2，docs/REMOTE-UNLOCK-PLAN.md §16）─────────────
+     口令只在点「保存 / 测试」的那一瞬间从输入框读出来交给宿主；宿主不回显、
+     页面也不留（成功后立刻清空输入框）。凭据文件只有宿主能碰（DPAPI + 文件 ACL），
+     页面拿到的永远只是状态事实。 */
+  function refreshUnlock() { post({ type: 'web.unlock_status' }); }
+
+  function unlockOp(action) {
+    var user = ($('set-unlock-user').value || '').trim();
+    var pass = ($('set-unlock-pass').value || '');
+
+    if (action !== 'clear' && (!user || !pass)) {
+      setHint('unlock-hint', action === 'test' ? '测试要把用户名和口令都填上。'
+                                              : '保存要把用户名和口令都填上。', 'warn');
+      return;
+    }
+    post({ type: 'web.unlock_' + action, user: user, secret: pass });
+    setHint('unlock-hint', action === 'clear' ? '正在清除凭据…' : '正在向 Windows 校验…', '');
+  }
+
+  function onUnlockCredential(d) {
+    if (!d || typeof d !== 'object') return;
+
+    var configured = d.configured === true;
+    var locked = d.locked_out === true;
+
+    var chip = $('unlock-state');
+    if (chip) {
+      chip.textContent = locked ? '冷却中' : (configured ? '已配置' : '未配置');
+      chip.className = 'chip' + (locked ? ' is-warn' : (configured ? ' is-ok' : ''));
+    }
+
+    var text = $('unlock-state-text');
+    if (text) {
+      if (locked) {
+        text.textContent = '连续失败次数过多，已暂停校验（稍后自动恢复）。';
+      } else if (configured) {
+        text.textContent = '账户：' + (d.user || '—')
+          + (d.verified_at ? '　校验于 ' + d.verified_at : '');
+      } else {
+        text.textContent = '还没有保存凭据 —— 网页端发起远程解锁时，本机会回 no_credential。';
+      }
+    }
+
+    if (d.detail) setHint('unlock-hint', d.detail, d.ok === false ? 'error' : 'ok');
+
+    if (d.ok === true) {
+      var pass = $('set-unlock-pass');
+      if (pass) pass.value = '';                       // 成功即清空，别把口令留在输入框里
+      var userEl = $('set-unlock-user');
+      if (userEl && d.user && document.activeElement !== userEl) userEl.value = d.user;
+    }
   }
 
   function saveSettings() {
@@ -1305,6 +1360,7 @@
     'host.runtime': onRuntime,
     /* 共享昵称（§7 Phase 4）：整份状态 / 操作回执 / 服务端错误 —— 都是免刷新重画的入口 */
     'host.nickname': onNickname,
+    'host.unlock_credential': onUnlockCredential,
     'host.nickname_result': onNicknameResult,
     'host.nickname_error': onNicknameError,
   };
@@ -1364,6 +1420,15 @@
     var ok = $('popup-ok'); if (ok) ok.onclick = closePopup;
     var save = $('settings-save'); if (save) save.onclick = saveSettings;
     var quit = $('btn-quit'); if (quit) quit.onclick = function () { post({ type: 'web.quit' }); };
+
+    /* 远程解锁凭据（Phase 2）：保存并校验 / 只测试 / 清除 */
+    var uSave = $('unlock-save'); if (uSave) uSave.onclick = function () { unlockOp('save'); };
+    var uTest = $('unlock-test'); if (uTest) uTest.onclick = function () { unlockOp('test'); };
+    var uClear = $('unlock-clear'); if (uClear) uClear.onclick = function () { unlockOp('clear'); };
+    var uPass = $('set-unlock-pass');
+    if (uPass) uPass.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); unlockOp('save'); }
+    });
 
     /* 共享昵称块（§7 Phase 4）：新建 / 刷新 / 回车提交 */
     var ncreate = $('nick-create-btn'); if (ncreate) ncreate.onclick = createNick;

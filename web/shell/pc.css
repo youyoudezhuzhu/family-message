@@ -443,6 +443,11 @@ html[data-view="settings"] #v-settings { display: flex; }
 
 .field-support.is-warn { color: var(--fluent-color-warning); }
 
+/* 远程解锁凭据（Phase 2，docs/REMOTE-UNLOCK-PLAN.md §16）：状态行 = chip + 一句事实说明 */
+.unlock-state { display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap; margin: 2px 0 var(--spacing-md); }
+.unlock-state__text { font: var(--font-caption); color: var(--fluent-color-text-secondary); line-height: 1.6; }
+#unlock-hint:not(:empty) { margin-top: var(--spacing-sm); }
+
 /* 撞名引导（「已存在，直接选用它？」）：[hidden] 必须显式隐藏 —— display:flex 会盖掉它 */
 #nick-conflict {
   display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;

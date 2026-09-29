@@ -198,11 +198,13 @@ public partial class App : Application
         //  · 截图：包住 ScreenCapture（本地页面路径仍直接用那个低层原语）；
         //  · 电源：包住宿主的 ExecuteShutdown（托盘气泡 / event 帧 / 页面回执都在那段里，
         //    页面请求关机也走它）——注入的委托只负责切 UI 线程，与原时序一致；
-        //  · 解锁：只是调用点，校验逻辑仍在 UnlockGuard（§8.12 归属待拍板）。
+        //  · 解锁：协议校验在 UnlockGuard（§8.12 归属待拍板）+ Phase 2 的凭据就绪判断
+        //    （UnlockCredentials：DPAPI 保险箱 + LogonUser 校验闸门 + 审计）。
+        //    ⚠ `unlock` 能力**只在凭据配好且未冷却时**才上报，所以传的是现算委托。
         var capabilities = new PlatformCapabilities(
             screenshot: new WindowsScreenshotProvider(),
             power: new WindowsPowerProvider(delay => Dispatcher.Invoke(() => ExecuteShutdown(delay))),
-            unlock: new WindowsUnlockGuard());
+            unlock: new WindowsUnlockGuard(() => UnlockCredentials.Current.Ready));
 
         // UI 静态依赖（App.IsHeadless / SessionState.Current）在 Phase 1 收进 IPlatformInfo，
         // Windows 侧实现只做包装（Platform/WindowsPlatformInfo.cs），行为不变（§Phase 1-3）

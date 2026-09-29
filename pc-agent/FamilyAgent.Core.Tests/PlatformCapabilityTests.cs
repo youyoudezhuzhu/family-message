@@ -64,6 +64,9 @@ internal sealed class FakeUnlockGuard : IUnlockGuard
     public UnlockReply? Reply { get; set; } =
         new("r-1", UnlockReply.StatusFailed, UnlockReply.ReasonNoCredential);
 
+    /// <summary>凭据是否就绪（决定 capabilities 里报不报 unlock）。默认 false = 今天的行为。</summary>
+    public bool Ready { get; set; }
+
     public int Calls { get; private set; }
 
     public string? LastDeviceId { get; private set; }
@@ -174,18 +177,31 @@ public class CapabilityReportingTests
             DeviceCapabilities.Build(new FakePlatformInfo { IsHeadless = true }, FullCapabilities.Create()));
     }
 
-    /// <summary>⚠ 本阶段故意不上报 unlock：即使平台**真的**注册了解锁实现也不报（凭据还没做，§6 Phase 3 验收标准）。</summary>
+    /// <summary>
+    /// unlock 只在**真的能用**时上报（Phase 2 起）：注册了实现但凭据没配 → 不报；
+    /// 凭据配好（<c>Ready</c>）→ 报；会话 0（headless）→ 不报（没有桌面，解锁请求无处施加）。
+    /// </summary>
     [Fact]
-    public void UnlockIsNeverReportedYet_EvenWithAGuardRegistered()
+    public void UnlockIsReportedOnlyWhenCredentialReady()
     {
+        var guard = new FakeUnlockGuard();
         var capabilities = new PlatformCapabilities(
             screenshot: new FakeScreenshotProvider(),
             power: new FakePowerProvider(),
-            unlock: new FakeUnlockGuard());
+            unlock: guard);
 
         Assert.True(capabilities.SupportsUnlock);      // 实现是有的
-        Assert.DoesNotContain("unlock",                // 但不上报
+
+        // ① 有实现、但凭据没配好（Ready=false）→ 不报（报了就谎报）
+        Assert.DoesNotContain("unlock",
             DeviceCapabilities.Build(new FakePlatformInfo { IsHeadless = false }, capabilities));
+
+        // ② 凭据配好 → 报
+        guard.Ready = true;
+        Assert.Contains("unlock",
+            DeviceCapabilities.Build(new FakePlatformInfo { IsHeadless = false }, capabilities));
+
+        // ③ 会话 0 → 即使凭据配好也不报（与 shutdown 同一理由：没有桌面）
         Assert.DoesNotContain("unlock",
             DeviceCapabilities.Build(new FakePlatformInfo { IsHeadless = true }, capabilities));
     }

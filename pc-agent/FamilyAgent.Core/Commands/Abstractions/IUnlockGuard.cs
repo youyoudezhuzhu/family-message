@@ -20,6 +20,15 @@ namespace FamilyAgent.Core.Commands.Abstractions;
 public interface IUnlockGuard
 {
     /// <summary>
+    /// 本机现在**真的能参与远程解锁**吗（凭据已配好 + 未被失败冷却锁住）。
+    ///
+    /// 它决定 <c>capabilities</c> 里报不报 <c>unlock</c>：
+    /// 「有实现」不等于「能用」—— 没配凭据就上报，等于给网页端一个点了必然失败的按钮。
+    /// 每次现算（用户随时可能在设置页存/清凭据）。
+    /// </summary>
+    bool Ready { get; }
+
+    /// <summary>
     /// 校验一条 <c>unlock_request</c>。
     ///
     /// 返回 null 表示这帧连 <c>request_id</c> 都没有 —— 没法应答，也没法记重放缓存，

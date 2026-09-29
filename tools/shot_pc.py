@@ -112,6 +112,19 @@ BRIDGE = r"""
 
       case 'web.close': window.__closed = true; break;
       case 'web.quit': window.__quit = true; break;
+
+      /* 远程解锁凭据（Phase 2）：页面只发动作，状态一律由宿主回 host.unlock_credential */
+      case 'web.unlock_status':
+      case 'web.unlock_save':
+      case 'web.unlock_test':
+      case 'web.unlock_clear':
+        dispatch(Object.assign({
+          type: 'host.unlock_credential',
+          action: msg.type.slice('web.unlock_'.length),
+          ok: CFG.unlock_ok !== false,
+          detail: CFG.unlock_detail || '',
+        }, CFG.unlock || {}));
+        break;
     }
   }
 
@@ -489,6 +502,8 @@ def case_popup_history(browser, base):
 def case_settings(browser, base):
     print("\n════ 用例 6：settings · 已配置（浅色）════")
     cfg = {"mode": "settings", "history": CONVO,
+           "unlock": {"configured": True, "user": "PC-01\\用户", "verified_at": "2026-09-29 18:20:00",
+                      "locked_out": False, "failures_left": 3, "can_unlock": True},
            "runtime": {"version": "cs-0.13.4", "runtime": "153.0.4234.48", "platform": "Windows 10.0.26100",
                        "device_id": "pc_shufang", "device_name": "书房电脑",
                        "server": "http://192.168.1.50:18801", "enroll_configured": True, "autostart": True,
@@ -500,7 +515,7 @@ def case_settings(browser, base):
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "爸爸",
                      "enroll_configured": True, "autostart": True}}
-    c = Case(browser, base, cfg, width=1180, height=1300, name="settings").wait()
+    c = Case(browser, base, cfg, width=1180, height=1780, name="settings").wait()
     check(c.view() == "settings", "起始视图 = settings（由 hello.mode 决定）")
     check(c.page.evaluate("window.__types()[0]") == "web.ready", "先发 web.ready")
 
@@ -522,6 +537,54 @@ def case_settings(browser, base):
     check(f["datalist"] == ["爸爸", "妈妈", "朵朵"], "昵称候选来自 host.hello.reply_names", json.dumps(f["datalist"], ensure_ascii=False))
     check(f["autostart"] is True, "开机自启=开", str(f["autostart"]))
     check(f["theme"] == "light", "主题=浅色", f["theme"])
+
+    print("\n[settings] 远程解锁凭据卡（Phase 2，docs/REMOTE-UNLOCK-PLAN.md §16）")
+    u = c.page.evaluate("""() => ({
+        chip: document.querySelector('#unlock-state').textContent,
+        chipCls: document.querySelector('#unlock-state').className,
+        text: document.querySelector('#unlock-state-text').textContent,
+        pass: document.querySelector('#set-unlock-pass').value,
+        hasButtons: ['unlock-save', 'unlock-test', 'unlock-clear'].every((id) => !!document.getElementById(id)),
+        askedStatus: window.__count('web.unlock_status'),
+    })""")
+    check(u["chip"] == "已配置" and "is-ok" in u["chipCls"], "凭据状态=已配置", json.dumps(u, ensure_ascii=False))
+    check("PC-01\\用户" in u["text"], "状态行显示账户名与校验时间", u["text"])
+    check(u["pass"] == "", "口令框为空（宿主从不回显口令）", u["pass"])
+    check(u["hasButtons"] is True, "三个按钮都在（保存并校验 / 测试凭据 / 清除凭据）")
+    check(u["askedStatus"] >= 1, "打开设置即向宿主查一次状态", str(u["askedStatus"]))
+
+    print("\n[settings] 凭据卡交互：空口令不许提交 → 填好后发 web.unlock_save 并清空口令框")
+    empty = c.page.evaluate("""() => {
+        const btn = document.getElementById('unlock-save');
+        const errs = []; const oldErr = console.error;
+        console.error = (...a) => errs.push(a.map(String).join(' '));
+        btn.click();
+        console.error = oldErr;
+        return { hint: document.querySelector('#unlock-hint').textContent,
+                 saveCount: window.__count('web.unlock_save'),
+                 hasClick: !!btn.onclick,
+                 passVal: document.querySelector('#set-unlock-pass').value,
+                 userVal: document.querySelector('#set-unlock-user').value,
+                 errs: errs,
+                 hintHas: document.querySelector('#unlock-hint').textContent.indexOf('都填上') >= 0 };
+    }""")
+    check(empty["hasClick"] is True, "「保存并校验」按钮已接线（onclick 存在）", json.dumps(empty, ensure_ascii=False))
+    check(empty["errs"] == [], "点击不抛异常", json.dumps(empty, ensure_ascii=False))
+    check(empty["saveCount"] == 0, "空口令时**不**发 web.unlock_save", json.dumps(empty, ensure_ascii=False))
+    check(empty["hintHas"] is True, "给出「用户名和口令都填上」的提示", json.dumps(empty, ensure_ascii=False))
+
+    after = c.page.evaluate("""() => {
+        document.querySelector('#set-unlock-user').value = 'PC-01\\\\用户';
+        document.querySelector('#set-unlock-pass').value = 'placeholder-not-a-real-secret';
+        document.querySelector('#unlock-save').click();
+        return { msg: window.__last('web.unlock_save'),
+                 passAfter: document.querySelector('#set-unlock-pass').value };
+    }""")
+    check(after["msg"] and after["msg"].get("user") == "PC-01\\用户",
+          "点「保存并校验」发出 web.unlock_save（带用户名）", json.dumps(after["msg"], ensure_ascii=False))
+    check(after["msg"] and after["msg"].get("secret") == "placeholder-not-a-real-secret",
+          "口令随消息交给宿主（凭据文件只有宿主能碰）", json.dumps(after["msg"], ensure_ascii=False))
+    check(after["passAfter"] == "", "宿主回 ok 后页面立刻清空口令框", after["passAfter"])
 
     info = c.page.evaluate("""() => ({
         version: document.querySelector('#info-version').textContent,
@@ -565,6 +628,7 @@ def case_settings(browser, base):
         autostart:true, server:'http://192.168.1.50:18801', enroll_configured:true})""")
     c.wait(150)
     c.page.evaluate("document.querySelector('#settings-hint').textContent = ''")
+    c.page.evaluate("document.querySelector('#unlock-hint').textContent = ''")
     # Playwright 点按钮时会自动把元素滚进视口 —— 截图前滚回顶部，整页都在画面里
     c.page.evaluate("document.querySelector('.stage--settings').scrollTop = 0")
     check(c.page.evaluate("document.querySelector('.stage--settings').scrollTop") == 0,
