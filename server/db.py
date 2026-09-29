@@ -131,20 +131,20 @@ CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
 --   · **只有这 6 列**：不许出现任何「归属 / 设备 / 客户端」身份列
 --     —— 「哪个客户端拥有这个昵称」这个概念不存在（§0.6 / §10 已定 1）；
 --   · nickname_id 才是稳定身份，display_name 只是「当前显示名」（改名不改 id）；
---   · color 存**逻辑色 ID**（color_01 … color_16），**不存 HEX**：HEX 是「显示色」，
+--   · color 存**逻辑色 ID**（color_01 … color_32），**不存 HEX**：HEX 是「显示色」，
 --     由客户端按「逻辑色 ID + 主题」算出来（§4.4）。NAS 不必为浅/深主题各存一套色，
 --     同时「昵称颜色全局统一」仍然成立；
---   · 「逻辑色 ID → 基础色值」常量表在 server/nicknames.py（逻辑色池的唯一定义点），
---     DB 只做「枚举 + 唯一」约束 → 以后改基础色值不需要 DDL 迁移；
---   · 灰（本地临时昵称用）的逻辑色 ID 是 `gray`，**不在这张表里、也不在下面的 CHECK 枚举里**，
+--   · ★ 色表自 v0.19 起是**数据**（表 `nickname_palette` 是权威，可由网页端增删）——
+--     所以这里**不再写死 16 个 ID 的枚举 CHECK**（写死就加不了新色），
+--     只留一个**形状** CHECK（`color_NN`，拦住乱值；'gray' 因此天然进不来）。
+--     合法性（ID 在不在池里 / 有没有被停用）由服务层查 `nickname_palette` 判定；
+--   · 灰（本地临时昵称用）的逻辑色 ID 是 `gray`，**不在这张表里、也不符合形状 CHECK**，
 --     它永远不会被分配给共享昵称（§3.2.1）；
 --   · 删除 = status='inactive'（软删）：行永久保留，颜色立即释放（§3.5）。
 CREATE TABLE IF NOT EXISTS nicknames (
     nickname_id  INTEGER PRIMARY KEY AUTOINCREMENT,
     display_name TEXT    NOT NULL CHECK (length(trim(display_name)) BETWEEN 1 AND 32),
-    color        TEXT    NOT NULL CHECK (color IN (
-                     'color_01','color_02','color_03','color_04','color_05','color_06','color_07','color_08',
-                     'color_09','color_10','color_11','color_12','color_13','color_14','color_15','color_16')),
+    color        TEXT    NOT NULL CHECK (color GLOB 'color_[0-9][0-9]'),
     status       TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
     created_at   TEXT    NOT NULL,
     updated_at   TEXT    NOT NULL
@@ -162,6 +162,32 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_nicknames_color_active
 
 -- 常用查询：列全表按状态（判重 SELECT 与列表查询都走索引①）
 CREATE INDEX IF NOT EXISTS ix_nicknames_status ON nicknames(status, nickname_id);
+
+-- ══ 共享昵称颜色表（v0.19 起「色表是数据」；docs/COLOR-TABLE-PLAN.md §3.1）══════
+--   ⚠ 表名**故意不叫 `nickname_colors`**：那是 r3 试过的「归属层」的名字，已废弃，
+--     并且 `tools/test_nicknames.py` 里有守卫断言「这张表不许存在」。
+--     色表与归属层是两件事，不要混（颜色属于昵称，不属于任何客户端，§0.6）。
+--   · `color_id` **只增不复用**：加色 = INSERT 一个新 id；删色 = status='retired'
+--     （**绝不 DELETE 行**）—— 历史消息快照只存 ID，删行 / 复用 ID 会让老消息的颜色漂移，
+--     这是本方案的头号红线（docs/NICKNAME-SYSTEM-PLAN.md §3.4.1）；
+--   · `hex` 是**基础色值**（客户端算显示色的起点，§4.4），不是显示色本身；
+--   · 同 hex 不许重复：服务层会先查再报 409，这里用 UNIQUE 兜并发。
+CREATE TABLE IF NOT EXISTS nickname_palette (
+    color_id   TEXT PRIMARY KEY CHECK (color_id GLOB 'color_[0-9][0-9]'),
+    hex        TEXT NOT NULL UNIQUE
+                    CHECK (hex GLOB '#[0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F][0-9A-F]'),
+    sort       INTEGER NOT NULL,
+    status     TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'retired')),
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_nickname_palette_status ON nickname_palette(status, sort);
+
+-- 应用级键值对。当前只有一条：`color_pool_version`（色表一变 +1，客户端据此重拉表）
+CREATE TABLE IF NOT EXISTS app_meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 # 已有安装的增量迁移（老库没有 sender_kind / sender_device_id）
@@ -206,6 +232,66 @@ POST_MIGRATION_DDL = [
 ]
 
 
+def _nicknames_has_color_enum(conn: sqlite3.Connection) -> bool:
+    """老库的 `nicknames.color` 是不是还写着 16 色枚举 CHECK？（v0.18 及以前的建表语句）"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='nicknames'").fetchone()
+    sql = (row[0] or "") if row else ""
+    return "CHECK (color IN" in sql
+
+
+def _rebuild_nicknames_without_color_enum(conn: sqlite3.Connection) -> None:
+    """把 `nicknames` 重建一遍，去掉写死的 16 色枚举 CHECK（否则加不了新色）。
+
+    SQLite 不支持改 CHECK，只能走官方的「新建 → 搬数据 → 删旧 → 改名 → 重建索引」流程。
+    · 幂等：只在 `sqlite_master` 里还能看到 `CHECK (color IN` 时才动手（迁移过就不重复搬）；
+    · 没有任何外键指向 `nicknames`（`messages.sender_nickname_id` 只是普通整数列），
+      仍然按官方建议关掉 FK 再动表，避免意外；
+    · `nickname_id` 原样搬过去（含 AUTOINCREMENT 的 sqlite_sequence：搬入显式 id 会自动抬高水位）。
+    """
+    if not _nicknames_has_color_enum(conn):
+        return
+    conn.commit()                                   # PRAGMA 不能在事务里生效
+    conn.execute("PRAGMA foreign_keys=OFF")
+    conn.executescript("""
+        CREATE TABLE nicknames_new (
+            nickname_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+            display_name TEXT    NOT NULL CHECK (length(trim(display_name)) BETWEEN 1 AND 32),
+            color        TEXT    NOT NULL CHECK (color GLOB 'color_[0-9][0-9]'),
+            status       TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+            created_at   TEXT    NOT NULL,
+            updated_at   TEXT    NOT NULL
+        );
+        INSERT INTO nicknames_new (nickname_id, display_name, color, status, created_at, updated_at)
+            SELECT nickname_id, display_name, color, status, created_at, updated_at FROM nicknames;
+        DROP TABLE nicknames;
+        ALTER TABLE nicknames_new RENAME TO nicknames;
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_nicknames_name_active
+            ON nicknames(display_name) WHERE status = 'active';
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_nicknames_color_active
+            ON nicknames(color) WHERE status = 'active';
+        CREATE INDEX IF NOT EXISTS ix_nicknames_status ON nicknames(status, nickname_id);
+    """)
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.commit()
+
+
+def _seed_color_table(conn: sqlite3.Connection) -> None:
+    """把内置 16 色写进 `nickname_palette`（幂等；**已有行一律不动** —— 用户改过的色表绝不覆盖）。
+
+    顺带初始化 `app_meta.color_pool_version = 1`，与 v0.18 及以前客户端的
+    `COLOR_POOL_VERSION` 对齐：老客户端看到 1 = 「表跟我内置的那份一样」，不用重拉。
+    """
+    from nicknames import BUILTIN_COLORS, COLOR_POOL_VERSION, LOGICAL_COLORS   # 延迟导入避免环
+    for idx, cid in enumerate(BUILTIN_COLORS, start=1):
+        conn.execute(
+            "INSERT OR IGNORE INTO nickname_palette (color_id, hex, sort, status, created_at)"
+            " VALUES (?, ?, ?, 'active', ?)",
+            (cid, LOGICAL_COLORS[cid], idx, now_iso()))
+    conn.execute("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('color_pool_version', ?)",
+                 (str(COLOR_POOL_VERSION),))
+
+
 def _migrate(conn: sqlite3.Connection) -> None:
     for table, column, ddl in MIGRATIONS:
         cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
@@ -213,6 +299,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute(ddl)
     for ddl in POST_MIGRATION_DDL:
         conn.execute(ddl)
+    _rebuild_nicknames_without_color_enum(conn)     # 放开颜色枚举（v0.19）
+    _seed_color_table(conn)                         # 内置 16 色入库（幂等）
     conn.commit()
 
 

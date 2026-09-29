@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import sqlite3
 
 # ── ① 「逻辑色 ID → 基础色值」常量表 ─────────────────────────────────
@@ -59,6 +60,18 @@ LOGICAL_COLORS: dict[str, str] = {
 #: 池子本体 = 16 个逻辑色 ID；元组顺序 = 分配顺序（= 上面字典的书写顺序）
 COLOR_POOL: tuple[str, ...] = tuple(LOGICAL_COLORS)
 
+#: 内置 16 色 = 老客户端（exe 自带色表）能认得的全部 + 客户端兜底表 + 建库时的初始数据。
+#: ★ 自 v0.19 起「色表是**数据**」（表 `nickname_colors` 才是权威，可由网页端增删），
+#: `LOGICAL_COLORS` 只剩两个身份：① 建库种子 ② 客户端认不出某个 ID 时的兜底色。
+BUILTIN_COLORS: tuple[str, ...] = COLOR_POOL
+
+#: 颜色池上限（v0.19）：池子大小与「活跃昵称上限」**解耦** —— 后者固定 16（见下），
+#: 池子可以在 16…32 之间增删。池满时「加颜色」返回 503，**不是**无限膨胀。
+MAX_COLOR_POOL = 32
+
+#: 逻辑色 ID 的形状：`color_NN`。`gray` 不符合 → 永远不会被当成共享昵称的颜色（§3.2.1）。
+COLOR_ID_RE = re.compile(r"^color_(\d{2})$")
+
 #: 本地临时昵称（灰）的逻辑色 ID —— **不在池里**（§3.2.1）。
 #: 基础色值 #8A8A8A；判「是不是灰临时」只看消息快照的 sender_color == 这个值。
 LOCAL_TEMP_COLOR_ID = "gray"
@@ -70,9 +83,10 @@ LOCAL_TEMP_BASE_COLOR = "#8A8A8A"
 #: 客户端拿它判断自己那份「逻辑色 ID → 显示色」映射表是否落后（§4.3 / §4.4）。
 COLOR_POOL_VERSION = 1
 
-#: 活跃昵称上限 = 池子大小（16）：逻辑色在 active 昵称之间唯一 ⇒ 同时最多 16 条 active。
-#: 满额时新增一律 503 NO_AVAILABLE_COLOR，**绝不重色**（§3.1 / §4.3）。
-MAX_ACTIVE_NICKNAMES = len(COLOR_POOL)
+#: 活跃昵称上限 = 16（**与池子大小解耦**：v0.19 起颜色池可增删到 16…32，
+#: 但「同时活跃的共享昵称」仍是最多 16 条 —— 额度文案「x/16」和 UI 都按这个数，§4.3）。
+#: 池子满（池里没有空闲色）是另一条独立的闸，两者都报 `NoAvailableColor`（503）。
+MAX_ACTIVE_NICKNAMES = 16
 
 
 def is_valid_shared_color(color_id: str) -> bool:
@@ -279,4 +293,53 @@ def pick_random_recolor(old_color: str, candidates, *, rnd: random.Random | None
     if not far:                              # 全都很近 → 至少给个最远的（仍不等于旧色）
         return pick_farthest_from(old_color, items)
     return (rnd or random).choice(far)
+
+
+def is_color_id_shape(color_id: str) -> bool:
+    """这个字符串是不是一个**形状合法**的逻辑色 ID（`color_NN`）？
+
+    ⚠ 只判形状，不判「在不在池里 / 有没有被停用」—— 那是服务层查 `nickname_colors` 的事
+    （docs/COLOR-TABLE-PLAN.md §3.1）。`gray` 形状就不合法：它不是共享昵称的颜色（§3.2.1）。
+    """
+    return bool(isinstance(color_id, str) and COLOR_ID_RE.match(color_id))
+
+
+def next_color_id(existing) -> str | None:
+    """给「加一个新颜色」分配 ID：**现有最大序号 + 1**，**只增不复用**（方案红线 §2.1）。
+
+    已经停用（retired）的 ID 也占着序号 —— 不复活、不给新颜色复用，否则历史消息快照
+    里那个 ID 的颜色会凭空换掉（§3.4.1）。返回 `None` = 池子到顶（`MAX_COLOR_POOL`）→ 调用方 503。
+    """
+    used = set()
+    for cid in existing or ():
+        m = COLOR_ID_RE.match(cid) if isinstance(cid, str) else None
+        if m:
+            used.add(int(m.group(1)))
+    nxt = (max(used) + 1) if used else 1
+    return None if nxt > MAX_COLOR_POOL else "color_%02d" % nxt
+
+
+def normalize_hex(value: str) -> str | None:
+    """把用户输入归一成 `#RRGGBB`（**一律大写**）；认不出来 → `None`。
+
+    收这些写法（网页端输入框直接贴就行）：
+      `#5E35B1` · `5E35B1` · `#5E3`（三位缩写）· `rgb(94, 53, 177)` · `94,53,177`
+    统一大写是为了查重口径一致：`#5e35b1` 与 `#5E35B1` 必须是同一个色。
+    """
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    rgb = (re.match(r"^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})\s*(?:,\s*[\d.]+\s*)?\)$", s, re.I)
+           or re.match(r"^(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})$", s))
+    if rgb:
+        parts = [int(g) for g in rgb.groups()]
+        if any(p > 255 for p in parts):
+            return None
+        return "#%02X%02X%02X" % tuple(parts)
+    t = s[1:].strip() if s.startswith("#") else s
+    if re.match(r"^[0-9a-fA-F]{3}$", t):
+        t = "".join(c * 2 for c in t)
+    if not re.match(r"^[0-9a-fA-F]{6}$", t):
+        return None
+    return "#" + t.upper()
 
