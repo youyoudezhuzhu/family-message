@@ -10,6 +10,10 @@
 
 ## 1. 全绿门禁（一条条跑，任何一条红就停）
 
+> 这些门禁**已经进 CI**（`.github/workflows/checks.yml`：`core-and-docs` + `ui-e2e` 两个 job，
+> 在每次 push / tag / PR 上跑）。下面手工再跑一遍是**发布前的最终确认** —— CI 跑的是同一个 commit，
+> 但它不会告诉你「本地工作区里有没有没提交的东西」。
+
 ```bash
 export PATH=/vol1/<uid>/workspace/dotnet9:$PATH
 python3 tools/check_protocol_doc.py            # 协议与服务端逐条对齐（退出码 0）

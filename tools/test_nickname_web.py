@@ -31,6 +31,7 @@
     /vol1/@apphome/hermes-agent/data/venv/bin/python tools/test_nickname_web.py
     … --keep            保留临时目录（排查）
     … --no-shots        不截图（只断言）
+    … --shots-dir docs  截图归档到 docs/（**默认写本次临时目录**，不再脏仓库工作区）
 """
 from __future__ import annotations
 
@@ -331,15 +332,20 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--no-shots", action="store_true")
+    ap.add_argument("--shots-dir", default="",
+                    help="截图输出目录。默认写到**本次临时目录**（不再脏仓库工作区）；"
+                         "要像以前那样归档到 docs/ 就传 docs")
     args = ap.parse_args()
 
     tmp = Path(tempfile.mkdtemp(prefix="fm-nick-p3-"))
     shots: list[Path] = []
+    shot_dir = Path(args.shots_dir) if args.shots_dir else (tmp / "shots")
+    shot_dir.mkdir(parents=True, exist_ok=True)
 
     def shot(page, name: str) -> None:
         if args.no_shots:
             return
-        p = DOCS / f"nickname-{name}.png"
+        p = shot_dir / f"nickname-{name}.png"
         page.screenshot(path=str(p), full_page=False)
         shots.append(p)
         print(f"     📷 {p.name}")

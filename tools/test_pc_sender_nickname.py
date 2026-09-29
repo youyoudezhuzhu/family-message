@@ -50,7 +50,9 @@ import pack_shell  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_OUT = Path("/vol1/@appdata/hermes-agent/tmp/fm-pc-nick-shots")
+#: 截图输出目录：**默认写临时目录**（CI / 别的机器上 /vol1 不一定存在），
+#: 要归档就传命令行第一个参数（例如 `... /path/to/docs`）。
+DEFAULT_OUT = Path(tempfile.mkdtemp(prefix="fm-pc-nick-shots-"))
 
 SHELL = pack_shell.pack(tempfile.mkdtemp(prefix="fm-shell-nicksel-"), quiet=True)
 

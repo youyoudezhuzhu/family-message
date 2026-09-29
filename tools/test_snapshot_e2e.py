@@ -43,7 +43,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SERVER_DIR = ROOT / "server"
 PROD_PORT = 18801
-OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/vol1/@appdata/hermes-agent/tmp/fm-snapshot-e2e")
+#: 截图输出目录：默认写**临时目录**（CI / 别的机器上 /vol1 不一定存在），可传第一个参数覆盖。
+OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp(prefix="fm-snapshot-e2e-"))
 FAILS: list[str] = []
 
 sys.path.insert(0, str(ROOT / "tools"))

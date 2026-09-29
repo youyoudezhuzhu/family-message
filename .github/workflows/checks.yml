@@ -1,0 +1,76 @@
+name: Checks
+
+# Linux 侧护栏。为什么要单独一条工作流：
+#   build-windows-agent.yml 只负责「编译 + 打包 + 挂 Release」，**不跑 dotnet test、
+#   也不跑任何 Python 验收** —— 协议文档漂了、昵称快照坏了、PC/网页交互退化了，那边一律不红。
+# 这里把「本地手工跑的那些门禁」搬进 CI：
+#   · Core 单测（CORE-REFACTOR-PLAN §7-A-2 要求能在 ubuntu 上跑通）
+#   · 协议对账（tool 零依赖，服务端帧 vs PROTOCOL.md 逐条）
+#   · 四个真 Chromium 套件 + NAS 数据层套件
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-and-docs:
+    name: Core 单测 + 静态对账
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      # 零依赖，先跑：改协议不改文档，这里立刻红（v0.17 就吃过这个亏：10 个昵称帧一个都没写进文档）
+      - name: 协议文档对账（服务端帧 vs docs/PROTOCOL.md）
+        run: python3 tools/check_protocol_doc.py
+
+      - name: Windows 壳静态引用检查
+        run: python3 tools/check_agent_refs.py pc-agent/FamilyAgent
+
+      - name: Core 单测
+        run: dotnet test pc-agent/FamilyAgent.Core.Tests/FamilyAgent.Core.Tests.csproj -v q --nologo
+
+  ui-e2e:
+    name: UI / 端到端套件（真 Chromium）
+    runs-on: ubuntu-latest
+    needs: core-and-docs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 装依赖（服务端 + playwright + chromium）
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r server/requirements.txt
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      # 下面的套件都只起**测试实例**（18899 / 18897），生产 18801 是硬拒绝端口；
+      # 截图默认写临时目录（--shots-dir 才写 docs/），不会脏工作区。
+      - name: NAS 数据层 + API + 广播
+        run: python tools/test_nicknames.py
+
+      - name: 快照写端（HTTP + 设备帧）
+        run: python tools/test_nickname_snapshot.py
+
+      - name: 网页端 Phase 3（三端同步 / 额度 / 暗色 / 窄屏）
+        run: python tools/test_nickname_web.py --no-shots
+
+      - name: PC 端昵称交互（三形态）
+        run: python tools/test_pc_sender_nickname.py
+
+      - name: 三端 E2E（网页端 → 快照 → 三端上色）
+        run: python tools/test_snapshot_e2e.py

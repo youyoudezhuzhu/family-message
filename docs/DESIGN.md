@@ -291,9 +291,12 @@ GitHub Actions 构建镜像 → push 到 ghcr.io → NAS 用 trim-cli docker ima
 | 4 | Web 家控台（发送人 / 多设备 / 消息记录） | ✅ 已实现 |
 | 5 | 截图请求链路（Web→Server→Agent→回传） | ✅ 已验证（1280×720 JPEG） |
 | 6 | Python 参考 Agent（协议基准 + 联调工具） | ✅ 已验证 |
-| 7 | Windows C#/.NET WPF Agent | ⏳ 待做（Phase 1 的一部分） |
-| 8 | Docker 化 + NAS 部署 | ⏳ 待做 |
+| 7 | Windows C#/.NET WPF Agent | ✅ **已完成**（v0.15–v0.18：WPF + WebView2 壳，逻辑下沉 `FamilyAgent.Core`；见 `docs/CORE-REFACTOR-PLAN.md`） |
+| 8 | Docker 化 + NAS 部署 | ✅ **NAS 部署已完成**（改为 fnOS **原生 .fpk**，服务端口 18801；见 `docs/RELEASE.md`）；❌ **Docker 化未采用**（原生 fpk 与 fnOS 集成更直接） |
 | 9 | 米家 MIoT 模块 | ✅ 代码完成，待真实账号联调（Phase 3） |
+
+> 更新（2026-09-29）：第 7、8 项已完成（右栏）。本表只记录**立项时**（Phase 1）的计划状态，
+> 现行进度以 `docs/CORE-REFACTOR-PLAN.md`（分层架构）与 `docs/RELEASE.md`（发布流程）为准。
 
 **Phase 1 验证证据**（2026-09-22 13:16）：
 
