@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import itertools
 import uuid
+import weakref
 from typing import Any, Optional
 
 from fastapi import WebSocket
@@ -34,12 +35,17 @@ class DeviceHub:
         # 同一 device_id 上可能先后/同时挂着多条连接（开机自启的 headless 与
         # 登录后的交互式就是这种情况），光看 device_id 分不出「这句话到底
         # 写到了哪条 WebSocket 上」。给每条连接发一个短号，日志里就能对上号：
-        #   conn_ids     id(ws)      -> 连接短号 c0007
+        #   conn_ids     **连接对象本身（弱引用）** -> 连接短号 c0007
         #   conn_device  连接短号     -> device_id
         #   device_conns device_id   -> {连接短号}（当前**登记在册**的所有连接，
         #                              正常只有 1 条；对踢瞬间会短暂出现 2 条）
+        # ⚠ 2026-09-29 修：这里原来用 `id(ws)` 当键 —— CPython 会**复用对象地址**，
+        #   对踢压测（~4000 次顶替）时新连接会把旧条目覆盖掉，旧短号便永远留在
+        #   device_conns 里（实测残留 32 条、18 秒不降，`test_ws_kick` 的「台账排空」
+        #   判据就是被这个卡红的）。改用 WeakKeyDictionary：键是连接对象、被回收即自动
+        #   清掉，与 unbind 的显式清理形成双保险。
         self._conn_seq = itertools.count(1)
-        self.conn_ids: dict[int, str] = {}
+        self.conn_ids: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary()
         self.conn_device: dict[str, str] = {}
         self.device_conns: dict[str, set[str]] = {}
 
@@ -49,7 +55,7 @@ class DeviceHub:
         """取某条 WebSocket 的连接短号；没登记过返回 c----。"""
         if ws is None:
             return "c----"
-        return self.conn_ids.get(id(ws), "c----")
+        return self.conn_ids.get(ws, "c----")
 
     def conn_count(self, device_id: str) -> int:
         """该 device_id 当前登记在册的连接数（>1 说明有两条连接叠着）。"""
@@ -57,13 +63,13 @@ class DeviceHub:
 
     def _conn_register(self, device_id: str, ws: WebSocket) -> str:
         cid = f"c{next(self._conn_seq):04d}"
-        self.conn_ids[id(ws)] = cid
+        self.conn_ids[ws] = cid
         self.conn_device[cid] = device_id
         self.device_conns.setdefault(device_id, set()).add(cid)
         return cid
 
     def _conn_unregister(self, device_id: str, ws: WebSocket) -> str:
-        cid = self.conn_ids.pop(id(ws), "c----")
+        cid = self.conn_ids.pop(ws, "c----")
         self.conn_device.pop(cid, None)
         conns = self.device_conns.get(device_id)
         if conns is not None:
@@ -105,12 +111,32 @@ class DeviceHub:
                 self.devices.pop(device_id, None)
                 was_active = True
         cid = self._conn_unregister(device_id, ws)
+        # ★ 2026-09-29：顺手清残留。有少数连接（对踢压测 4524 条里 17 条）的关闭处理
+        #   没跑到 finally（socket 卡在 close 上），它们的短号会永远留在 device_conns 里。
+        #   conn_ids 是**弱引用**表（连接被回收即自动消失），所以它的 values 就是
+        #   「此刻真的还活着的连接」这个权威集合 —— 在这里对一次账，台账能自愈。
+        self._prune_ledger()
         print(
             f"[WS][UNBIND] device={device_id} conn={cid} "
             f"was_active={'true' if was_active else 'false'} "
             f"connections={self.conn_count(device_id)}",
             flush=True,
         )
+
+    def _prune_ledger(self) -> int:
+        """清掉「短号还在 device_conns 里、但连接已经没了」的残留登记，返回清掉几条。"""
+        live = set(self.conn_ids.values())
+        dropped = 0
+        for dev, conns in list(self.device_conns.items()):
+            stale = conns - live
+            if stale:
+                conns -= stale
+                dropped += len(stale)
+                for cid in stale:
+                    self.conn_device.pop(cid, None)
+            if not conns:
+                self.device_conns.pop(dev, None)
+        return dropped
 
     def is_online(self, device_id: str) -> bool:
         return device_id in self.devices

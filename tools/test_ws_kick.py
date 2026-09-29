@@ -477,16 +477,34 @@ async def phase2(wsbase: str, device_id: str, http: httpx.AsyncClient,
 
 
 async def check_drain(srv: TestServer, device_id: str, wait: float = 3.0) -> None:
-    """两个客户端都停了之后，连接台账应排空到 0（确认这套登记不会漏账）。"""
-    print(f"\n── 阶段 2b：两侧都断开 {wait:.0f}s 后，连接台账应排空")
+    """两个客户端都停了之后，连接台账应排空到 0（确认这套登记不会漏账）。
+
+    ★ 2026-09-29：原来只等 `wait` 秒就读**最后一行** —— 但对踢压测会造出近 4000 条连接，
+    服务端的关闭清理是排队的，3 秒不够（实测停在 24）。所以改成**轮询到 0（最多 20s）**
+    并把下降过程打出来：能归零 = 清理滞后（不是漏账），一直不归零才是真漏账。
+    """
+    print(f"\n── 阶段 2b：两侧都断开后，连接台账应排空（轮询最多 20s）")
+
+    def last_count() -> tuple[int, str]:
+        lines = [l for l in srv.log_text().splitlines()
+                 if l.startswith("[WS]") and f"device={device_id}" in l]
+        last = lines[-1] if lines else "(无 [WS] 行)"
+        m = re.search(r"connections=(\d+)", last)
+        return (int(m.group(1)) if m else -1), last
+
+    trace: list[int] = []
+    n, last = last_count()
+    deadline = time.time() + 20.0
     await asyncio.sleep(wait)
-    lines = [l for l in srv.log_text().splitlines()
-             if l.startswith("[WS]") and f"device={device_id}" in l]
-    last = lines[-1] if lines else "(无 [WS] 行)"
-    m = re.search(r"connections=(\d+)", last)
-    n = int(m.group(1)) if m else -1
+    while True:
+        n, last = last_count()
+        trace.append(n)
+        if n == 0 or time.time() > deadline:
+            break
+        await asyncio.sleep(1.0)
     print(f"  最后一行：{last}")
-    check("连接台账排空（connections=0，无残留登记）", n == 0, f"connections={n}")
+    print(f"  台账下降过程（每秒采样）：{trace}")
+    check("连接台账排空（connections=0，无残留登记）", n == 0, f"connections={n} 采样={trace}")
 
 
 # ============================================================
