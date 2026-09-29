@@ -54,9 +54,27 @@ windows-latest 编译 → 上传 artifact → `softprops/action-gh-release` 附�
 
 ## 4. 构建 fpk 并附到同一个 Release
 
+⚠ 两个坑（v0.18.0 实测各踩一次）：
+
+1. **别用默认暂存根**：`/vol1/@apphome/hermes-agent/data/fpk-build` 是全局共享的，**并发的第二次构建**
+   会把它封成 0000（fnpack 的副作用）→ 另一头 `mkdir: Permission denied` 直接失败。
+   每次用独立的 `FM_BUILD_ROOT`（如 `/vol1/<uid>/workspace/.fm-build-$VERSION`），事后
+   `chmod -R u+rwX <它>` 再 `rm -rf`。
+2. **从 tag 的干净工作树构建**（不要从正在干活的工作区构建）：`build-fpk.sh` 是拷**工作区**的
+   `server/` + `web/` 的，工作区里有人并发改文件时，包里出的就不是 tag 的内容了。
+
 ```bash
-./build-fpk.sh                       # 产出 ./family-message_X.Y.Z.fpk（内部：暂存目录 → 拷 server/ + web/ → fnpack build）
-ls -l family-message_*.fpk
+V=vX.Y.Z
+git worktree add --detach /vol1/<uid>/workspace/.fm-rel-$V $V          # tag 的干净检出
+cd /vol1/<uid>/workspace/.fm-rel-$V
+FM_VENV_PY=/vol1/@apphome/hermes-agent/data/venv/bin/python \
+FM_BUILD_ROOT=/vol1/<uid>/workspace/.fm-build-$V \
+  ./build-fpk.sh                                                      # 产出 ./family-message_X.Y.Z.fpk
+tar -xOzf family-message_X.Y.Z.fpk manifest | head -3                 # 抽检：version + desc 对不对
+cd - && cp /vol1/<uid>/workspace/.fm-rel-$V/family-message_X.Y.Z.fpk .
+chmod -R u+rwX /vol1/<uid>/workspace/.fm-build-$V 2>/dev/null; rm -rf /vol1/<uid>/workspace/.fm-build-$V
+rm -f /vol1/<uid>/workspace/.fm-rel-$V/family-message_X.Y.Z.fpk
+git worktree remove --force /vol1/<uid>/workspace/.fm-rel-$V
 ```
 
 上传（**必须 `--data-binary`，不要 `-F`**；release id 从 API 取）：
