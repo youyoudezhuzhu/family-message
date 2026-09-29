@@ -623,7 +623,9 @@ pc-agent/
 | 1 协议文档 | ✅ `docs/PROTOCOL.md` 冻结版（服务端 26 帧 + 设备上行 14 帧 + §10 能力清单 + §11 客户端检查表 + `message_status` 标预留）；`docs/DESIGN.md` 两处标历史 | `python3 tools/check_protocol_doc.py` → 退出码 0 |
 | 2 清理 | ✅ shell.js **保留**（见上）；`_pending` 语义定死；`AgentClient` 口径收敛（README） | `dotnet build` 0 warning；`python3 tools/check_agent_refs.py` 通过 |
 | 3 Android 契约 | ✅ `docs/ANDROID-CONTRACT.md` | 表 A 6 个接口签名逐条核对 Core 源码 |
-| ★ 勘察新发现 → **已补写端**（2026-09-29） | `messages.sender_nickname_id` / `sender_color` **有写端了**：服务端落库时按发送方带来的 `nickname_id` **查表填色**（HTTP `/api/messages` 与设备帧 `reply` 两条路都接线；PC 端 `ConnectionManager.Reply` 带上本机当前选用的 id）。缺失 / 明确 null / 伪造色的语义见 `docs/PROTOCOL.md` §2。⚠ **Web 页面（`web/static/app.js`）尚未带 `nickname_id`** → 网页端发的消息暂按「字段缺失 = 两列 NULL」老语义走（观感不变，不算回归） | `python3 tools/test_nickname_snapshot.py` → A–G 全 PASS（含「重创同名不污染历史」「灰临时 gray」） |
+| ★ 勘察新发现 → **已补写端**（2026-09-29） | `messages.sender_nickname_id` / `sender_color` **有写端了**：服务端落库时按发送方带来的 `nickname_id` **查表填色**（HTTP `/api/messages` 与设备帧 `reply` 两条路都接线；PC 端 `ConnectionManager.Reply` 带上本机当前选用的 id）。缺失 / 明确 null / 伪造色的语义见 `docs/PROTOCOL.md` §2。Web 端（`web/static/app.js` 的 `nickname_id: currentSenderId()`）与 Web 端渲染（先按 `sender_nickname_id` 查表、再按 `sender_color`、最后哈希兜底）**两侧语义逐字对上** | `python3 tools/test_nickname_snapshot.py` → A–G 全 PASS（含「重创同名不污染历史」「灰临时 gray」） |
+| 回归（2026-09-29） | 既有两套验收在补写端之后**全绿** | `python3 tools/test_nicknames.py` → **119/119**；`python3 tools/test_nickname_web.py` → **76/76**（含三端实时同步、额度、暗色、375px） |
+| 重创同名的读取路径判据 | ✅ 只有**唯一性检查**按 `display_name` 查（`services/nicknames.py:161 _active_id_of`，用于 create/rename 撞名）；**没有任何**「给消息/历史上色而按名字反查 id」的路径 —— 上色一律走 `sender_nickname_id` / `sender_color` 快照 | `grep -rn 'FROM nicknames' server/` 全量人工核对 |
 
 **验收标准**
 - 机械判据：`grep -rn '"type":' server/main.py server/hub.py` 的输出与 `PROTOCOL.md` 的帧表格**逐条对齐**（允许「已注释」项被显式标注为不广播）。
@@ -646,7 +648,12 @@ pc-agent/
 ## 7. 验收标准（汇总，均可测）
 
 ### A. 分层与依赖（机械判据）
-1. `grep -rnE "WebView2|System\.Windows|Dispatcher|System\.Windows\.Forms" pc-agent/FamilyAgent.Core/` → 空输出。
+1. 剥注释后 `grep -rnE "WebView2|System\.Windows|Dispatcher|System\.Windows\.Forms" pc-agent/FamilyAgent.Core/` → 空输出。
+   - ⚠ **2026-09-29 判据修正（Phase 5 实测）**：Core 里这些字样**只允许出现在注释**（解释「为什么本类不认识 UI」），
+     纯文本 grep 会命中注释 → 判读必须**先剥注释**（例如 `grep ... | grep -vE '^\s*///|^\s*//'`），
+     或按 `pc-agent/FamilyAgent.Core/README.md` 的说明人工确认「代码零引用 + 注释合规」。
+     实测：当前命中项**全部是注释**（`MessageManager` / `DeliveryState` / `INotificationSink` 等），
+     代码侧 `using` 与 `<TargetFramework>net9.0</TargetFramework>` 均干净。
 2. `pc-agent/FamilyAgent.Core/FamilyAgent.Core.csproj` 的 `<TargetFramework>` 为 `net9.0`（**不是** `net9.0-windows`），
    且可在 `ubuntu-latest` 上 `dotnet test` 通过。
 3. Core 的公开事件只有 §3.3 那五类；Core 内部不存在「把消息直接交给某个 UI」的路径
