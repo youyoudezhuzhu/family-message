@@ -73,6 +73,11 @@
 - 截图以模态框展示，不新开页面
 
 ### PC Agent
+> ⚠ **历史段落（v0.16 之前）** —— 下面是 WebView2 壳重构（v0.15–v0.17）**之前**的设计，
+> 保留只为追溯。现行实现与协议以 `docs/PROTOCOL.md`（2026-09-29 冻结版）与
+> `docs/CORE-REFACTOR-PLAN.md` 为准：分层为 `FamilyAgent.Core`（net9.0，零平台依赖）
+> + `FamilyAgent`（WPF + WebView2 壳，只做显示与转发）；「首次运行弹配置窗」已改为
+> 设置视图（`web/shell/app.html` 的 settings 形态），不再单独弹窗。
 - 后台常驻 + 系统托盘，开机自启
 - 首次运行弹配置窗（Server URL / 设备名 / Device ID / 注册口令）
 - WebSocket 长连接 + 心跳 + 指数退避重连
@@ -189,6 +194,11 @@ Browser → Server
 ```
 
 ### 五态状态机
+
+> ⚠ **历史段落**：`message_status` 广播与页面上的「五态进度标签」在**群聊模型**（v0.16）
+> 之后不再对外暴露 —— 服务端照旧入库（`message_targets` 五态一个不少），但对外只有单一
+> `status = "sent"`。现行口径见 `docs/PROTOCOL.md` §9。
+> （下面这段状态机本身**仍然正确**，只是对外可见性变了。）
 
 ```
 created → server_received → device_received → popup_displayed → read
