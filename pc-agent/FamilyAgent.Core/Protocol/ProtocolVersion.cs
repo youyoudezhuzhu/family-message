@@ -18,5 +18,5 @@ namespace FamilyAgent.Core.Protocol;
 public static class ProtocolVersion
 {
     /// <summary>对外暴露的版本号（原 <c>AgentClient.ReportedVersion</c>）。</summary>
-    public const string AgentVersion = "cs-0.19.3";
+    public const string AgentVersion = "cs-0.20.0";
 }
