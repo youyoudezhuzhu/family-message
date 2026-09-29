@@ -36,6 +36,12 @@ jobs:
       - name: Windows 壳静态引用检查
         run: python3 tools/check_agent_refs.py pc-agent/FamilyAgent
 
+      # 隐私门禁（2026-09-29 加）：真实内网 IP / 注册口令示例 / 个人称呼不许进仓库。
+      # 那次清理发现这些东西在仓库与历史里躺了很久、还进过已发布的 Release 资产 ——
+      # 清一次靠人记会被再犯，所以做成机器判据。
+      - name: 隐私自检（内网特征 / 口令示例 / 个人称呼）
+        run: python3 tools/check_privacy.py
+
       - name: Core 单测
         run: dotnet test pc-agent/FamilyAgent.Core.Tests/FamilyAgent.Core.Tests.csproj -v q --nologo
 
