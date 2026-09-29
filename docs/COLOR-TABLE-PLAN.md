@@ -104,7 +104,9 @@ CREATE TABLE nickname_palette (
 >   测试：网页端 **102/102**（新增 H 段 17 条，含窄屏 375 与暗色；并修掉一条真 flake ——
 >   发起端走 HTTP 响应、其余端走广播，改成「等三端收敛」）。截图：`13-color-table-desktop` /
 >   `14-color-picker-dialog` / `15-color-table-narrow-375` / `16-color-table-dark`。
-> - **P4 未开工**（回归 + 发布 + PC 端升一次 exe）。
+> - **P4 ✅ 已发布（2026-09-29）**：`v0.19.0` —— Release 两资产（`family-message_0.19.0.fpk` 224,602 B +
+>   `FamilyAgent-win-x64.zip` 65,958,457 B）；tag `v0.19.0` → `7654d6b`；CR 在 tag 上两条 workflow 都 success
+>   （`Checks` = 本仓门禁、`Build Windows Agent` = 出 exe）。交付物已复制到 `/vol1/<uid>/workspace/`。
 
 | 期 | 内容 | 交付物 | 不动的东西 |
 |---|---|---|---|
