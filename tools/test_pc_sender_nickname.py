@@ -553,22 +553,22 @@ def case_color_table(b, base, out):
     """T7 ★ v0.19：色表以**服务端**为准（宿主在 hello / host.nickname 里带来 color_table）。
 
     四件事：
-      · 采纳 —— hello 带的表生效（hasServerTable / base('color_17')）
+      · 采纳 —— hello 带的表生效（hasServerTable / base('color_32')）
       · 渲染 —— 自定义色（内置表里没有）按服务端 HEX 渲染，**不是**灰兜底
       · **空表不覆盖** —— 宿主没拿到表时推空数组，页面必须保留手上那份
       · 整表帧带来新表 → 立刻换色（免重启 / 免刷新）
     """
-    custom = [{"color_id": "color_17", "hex": "#0FA3B1"}]
+    custom = [{"color_id": "color_32", "hex": "#0FA3B1"}]
     state = nick_state(2, True)
-    state["nicknames"] = state["nicknames"] + [nick(9, "自定义色", "color_17")]
+    state["nicknames"] = state["nicknames"] + [nick(9, "自定义色", "color_32")]
     ctx, pg, errs = open_page(b, base, "settings", nick=state, color_table=color_rows(custom))
     try:
         def probe():
             return pg.evaluate("""() => {
               var N = window.FM_PC.nick;
               return {
-              has: N.hasServerTable(), hex17: N.base('color_17'),
-              known: N.isKnown('color_17'), dot17: N.dot('color_17'),
+              has: N.hasServerTable(), hex17: N.base('color_32'),
+              known: N.isKnown('color_32'), dot17: N.dot('color_32'),
               dotGray: N.dot('gray'), v: N.tableVersion(),
               swatch: (function () {
                 var rows = document.querySelectorAll('#nick-list .nick-row');
@@ -585,7 +585,7 @@ def case_color_table(b, base, out):
 
         got = probe()
         check("T7 宿主 hello 带的色表被采纳（hasServerTable）", got["has"] is True, got)
-        check("T7 自定义色认得出，且按**服务端 HEX** 取基础色（内置表没有 color_17 → 兜底是灰）",
+        check("T7 自定义色认得出，且按**服务端 HEX** 取基础色（内置表没有 color_32 → 兜底是灰）",
               got["known"] is True and got["hex17"] == "#0FA3B1", got)
         check("T7 自定义色的圆点不是灰兜底（服务端色参与渲染）",
               got["dot17"] != got["dotGray"], {"dot17": got["dot17"], "dotGray": got["dotGray"]})
@@ -609,9 +609,9 @@ def case_color_table(b, base, out):
           type: 'host.nickname', available: true, online: true, can_manage: true,
           offline_reason: 'x', default_name: '书房电脑', local_temp_color: 'gray',
           max_active: 16, pool_version: 9,
-          color_table: [{ color_id: 'color_17', hex: '#7B1FA2' }],
+          color_table: [{ color_id: 'color_32', hex: '#7B1FA2' }],
           current: { nickname_id: 2, display_name: '妈妈', color: 'color_13', is_local_temp: false },
-          nicknames: [{ nickname_id: 9, display_name: '自定义色', color: 'color_17', status: 'active',
+          nicknames: [{ nickname_id: 9, display_name: '自定义色', color: 'color_32', status: 'active',
                         created_at: 'x', updated_at: 'x' }], notice: '' })""")
         pg.wait_for_timeout(250)
         changed = probe()

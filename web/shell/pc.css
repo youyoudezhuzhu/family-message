@@ -167,6 +167,20 @@ html[data-view="settings"] #v-settings { display: flex; }
 .select__el:focus { border-color: var(--fluent-color-primary); border-bottom-width: 2px; }
 .select__chevron { position: absolute; right: var(--spacing-md); pointer-events: none; color: var(--fluent-color-text-secondary); }
 
+/* ★ v0.19.1：回复栏下拉左边的**颜色预览点**（用户要求 PC 端也有预览）。
+   原生 <select> 里塞不进色块 → 在它左边放一个 10px 圆点，颜色 = 当前选用昵称的
+   圆点显示色（§4.4：浅色混 35% 黑 / 深色混 30% 白，按主题现算，见 pc.js 的 paintSenderDot）。
+   灰临时昵称（没选任何人）不给颜色，保持 CSS 默认灰 —— 「没选」不该看着像选了谁。
+   宽度只有 10px，和网页端选中项里的色点同尺寸（用户原话：不要大预览区）。 */
+.select--dot .select__el { padding-left: 28px; }
+.select__dot {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  width: 10px; height: 10px; border-radius: var(--radius-circle);
+  background: var(--fluent-color-text-disabled);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18);
+  pointer-events: none;
+}
+
 /* ★ 原生 <select> 的**下拉列表**是浏览器/系统自己画的，不吃 .select__el 的样式：
    深色模式下实测「弹窗仍是白底、字是白的」→ 选项看不清（v0.18.0 实测反馈）。
    两条一起上，缺一不可：

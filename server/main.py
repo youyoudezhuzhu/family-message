@@ -1009,7 +1009,8 @@ if CONFIG["nickname"]["enabled"]:
             rows = color_svc.rows(status)
         except color_svc.ColorError as e:
             raise _nickname_fail(e)
-        return {"color_pool_version": color_svc.pool_version(), "colors": rows}
+        return {"color_pool_version": color_svc.pool_version(), "colors": rows,
+                "max_color_pool": color_svc.max_pool_size()}
 
     @app.post("/api/nicknames/colors", dependencies=[WebAuth], status_code=201)
     async def api_color_add(body: ColorAddBody):

@@ -25,10 +25,14 @@
   /* ── 逻辑色 ID → 基础色值（与 server/nicknames.py 的 LOGICAL_COLORS 逐字对应）──
      顺序无意义（分配优先级在服务端），这里只做「ID → 色值」查找。 */
   var BASE = {
-    color_01: '#5E35B1', color_02: '#3949AB', color_03: '#1E88E5', color_04: '#039BE5',
-    color_05: '#00897B', color_06: '#43A047', color_07: '#7CB342', color_08: '#C0CA33',
-    color_09: '#F9A825', color_10: '#FB8C00', color_11: '#F4511E', color_12: '#E53935',
-    color_13: '#D81B60', color_14: '#8E24AA', color_15: '#6D4C41', color_16: '#546E7A',
+    color_01: '#EF5350', color_02: '#FF7043', color_03: '#FFA726', color_04: '#FFCA28',
+    color_05: '#66BB6A', color_06: '#9CCC65', color_07: '#26A69A', color_08: '#26C6DA',
+    color_09: '#42A5F5', color_10: '#5C6BC0', color_11: '#7E57C2', color_12: '#AB47BC',
+    color_13: '#EC407A', color_14: '#8D6E63', color_15: '#78909C', color_16: '#B71C1C',
+    color_17: '#D84315', color_18: '#E65100', color_19: '#F57F17', color_20: '#2E7D32',
+    color_21: '#558B2F', color_22: '#00695C', color_23: '#00838F', color_24: '#1565C0',
+    color_25: '#283593', color_26: '#4527A0', color_27: '#6A1B9A', color_28: '#AD1457',
+    color_29: '#4E342E', color_30: '#37474F', color_31: '#004D40',
     gray: '#8A8A8A',           // 本地临时昵称（不在池里，第 17 个 ID）
   };
 

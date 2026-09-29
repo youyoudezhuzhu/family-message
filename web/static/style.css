@@ -297,10 +297,16 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
               border-color var(--duration-fast) var(--curve-standard);
 }
 .combo__btn:hover { background: var(--fluent-fill-control-hover); }
-.combo__btn > span:first-child {
-  flex: 1; min-width: 0;
+/* ★ 选中项里的「名字」这部分：吃掉剩余宽度并省略号截断。
+   ⚠ 这里**不能**再写成 `.combo__btn > span:first-child`（v0.19.1 实测反馈）：
+   加了「色点 + 名字」之后色点成了 first-child，那条规则把**色点**拉成了
+   132px 宽的横条（用户原话「预览区域太大」）——所以改成按类选名字。 */
+.combo__label {
+  flex: 1 1 auto; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 色点是固定 12px 的小圆点（与设置页昵称行、消息头像同一套显示色） */
+.combo__btn > .combo__swatch { flex: 0 0 12px; width: 12px; height: 12px; }
 .combo__btn .icon {
   width: 16px; height: 16px; color: var(--fluent-color-text-secondary);
   transition: transform var(--duration-normal) var(--curve-standard);
@@ -327,6 +333,14 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 .combo.is-open .combo__menu {
   display: block;
   animation: flyout-in var(--duration-normal) var(--curve-decelerate);
+}
+/* ★ v0.19.1：发送区钉在页面底部，下拉再往下开会被视口切掉 → 这一处**向上开**。
+   （三区独立之后消息区不再顶长页面，视口底部就是输入框，必须朝上弹。） */
+.combo--up .combo__menu { top: auto; bottom: calc(100% + 4px); }
+.combo--up.is-open .combo__menu { animation-name: flyout-in-up; }
+@keyframes flyout-in-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
 }
 .combo__item {
   display: flex; align-items: center; gap: var(--spacing-sm);
@@ -937,15 +951,20 @@ button.name-row__swatch:focus-visible { outline: 2px solid var(--fluent-color-pr
 .chat-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }
 .chat-list--compact { gap: var(--spacing-md); }
 
-/* ── 首页布局：发送框钉在底部（用户报「没有消息时发送框跑到页面中间」）──
-   三段接力，缺一段就回退成「发送卡片紧跟内容」：
-     · #page-home 撑满 .main 的高度（.main 是固定高度容器，见第 4 节）；
-     · 「家庭消息」这一段吃掉剩余空间（flex:1 + min-height:0 → 列表自己滚，
-       而不是把整页顶长）；
-     · 发送卡片固定尺寸，自然落在最下面。
-   消息为空时列表整块 hidden（app.js 切换），空态占同样的空间并垂直居中。 */
-#page-home { min-height: 100%; }
-.section--messages { flex: 1 1 auto; min-height: 0; }
+/* ── 首页布局：三段互不影响（★ v0.19.1 用户实测反馈）────────────
+   症状：消息越多，整页越长，发送框被顶到最下面（要滚很远才看到输入框）。
+   实测根因：`#page-home` 原来只有 `min-height: 100%`、**没有高度上限** ——
+   `.section--messages` 的 `flex: 1 1 auto` 在内容超出时会先满足 min-content，
+   于是把 `#page-home` 撑到 2000+ px（超过 `.main` 的固定高度），
+   溢出量全落到 `.main` 的滚动区；而消息列表自己的 `clientH == scrollH`
+   （没有受限高度 → `min-height: 0` 不生效）根本不滚。三个区域就「串」了。
+   修法（对齐 PC 端 `.view` 的 grid + `.stage` 自己滚）：
+     · `#page-home` 给**确定高度**（= .main 的内容高度）并允许被压缩；
+     · 「家庭消息」这一段吃掉剩余空间且**不许超出**（min-height: 0 + overflow: hidden）；
+     · 列表 `.chat-scroll` 自己滚（滚轮翻看），在线设备区与发送卡片都是固定尺寸。
+   这样三个区域互不影响：消息再多也只在自己格子里堆。 */
+#page-home { height: 100%; min-height: 0; }
+.section--messages { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .section--messages .chat-scroll {
   /* 首页的列表不再按 60dvh 封顶：空间由上面的 flex 分配，剩多少用多少 */
   flex: 1 1 auto;

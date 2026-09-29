@@ -51,10 +51,14 @@
      ⚠ 安全（R2）：返回值全部来自本段的常量表；**未知 ID 一律走灰兜底**，
        绝不把收到的字符串塞进 style。 */
   var NICK_BASE = {
-    color_01: '#5E35B1', color_02: '#3949AB', color_03: '#1E88E5', color_04: '#039BE5',
-    color_05: '#00897B', color_06: '#43A047', color_07: '#7CB342', color_08: '#C0CA33',
-    color_09: '#F9A825', color_10: '#FB8C00', color_11: '#F4511E', color_12: '#E53935',
-    color_13: '#D81B60', color_14: '#8E24AA', color_15: '#6D4C41', color_16: '#546E7A',
+    color_01: '#EF5350', color_02: '#FF7043', color_03: '#FFA726', color_04: '#FFCA28',
+    color_05: '#66BB6A', color_06: '#9CCC65', color_07: '#26A69A', color_08: '#26C6DA',
+    color_09: '#42A5F5', color_10: '#5C6BC0', color_11: '#7E57C2', color_12: '#AB47BC',
+    color_13: '#EC407A', color_14: '#8D6E63', color_15: '#78909C', color_16: '#B71C1C',
+    color_17: '#D84315', color_18: '#E65100', color_19: '#F57F17', color_20: '#2E7D32',
+    color_21: '#558B2F', color_22: '#00695C', color_23: '#00838F', color_24: '#1565C0',
+    color_25: '#283593', color_26: '#4527A0', color_27: '#6A1B9A', color_28: '#AD1457',
+    color_29: '#4E342E', color_30: '#37474F', color_31: '#004D40',
     gray: '#8A8A8A',           // 本地临时昵称（不在池里，第 17 个 ID；永不分配给共享昵称）
   };
   var NICK_LOCAL_TEMP_ID = 'gray';
@@ -341,6 +345,7 @@
       S.myName = currentNickName();
       renderClient();
       renderPopup();
+      paintSenderDots();     // ★ 宿主推来新状态（选用变了 / 色表变了）→ 预览点跟上
     }
   }
 
@@ -506,6 +511,26 @@
     sel.appendChild(o);
   }
 
+  /** ★ v0.19.1：回复栏下拉左边的**颜色预览点**（用户要求 PC 端也有预览）。
+      位置：和下拉同一个 .select 包裹层里的 .select__dot（app.html 里写死，两处都加了）。
+      颜色：昵称模式 = 当前选用昵称的**圆点显示色**（§4.4 按主题现算）；
+            灰临时昵称 / 老路径 = 不给颜色（回 CSS 默认灰）——「没选」不该看着像选了谁。
+      谁调：① 下拉重建时（buildSenderSelect）；② 换人时（onSenderChange）；
+            ③ 主题变时（applyTheme，显示色按主题现算）；④ 宿主推来新状态（syncNickIdentity）。 */
+  function paintSenderDot(sel) {
+    if (!sel || !sel.parentElement) return;
+    var dot = sel.parentElement.querySelector('.select__dot');
+    if (!dot) return;
+    var n = (nickOn() && currentNickId() !== null) ? nickById(currentNickId()) : null;
+    dot.style.background = n ? nickDot(n.color, nickTheme()) : '';
+    dot.title = n ? ('当前名义「' + String(n.display_name || '') + '」的颜色')
+                  : '还没选昵称（灰临时名字）';
+  }
+
+  function paintSenderDots() {
+    Object.keys(BARS).forEach(function (k) { paintSenderDot($(BARS[k].sender)); });
+  }
+
   /** 一个回复栏的下拉。昵称模式下它就是「我以后用谁的名义」（= 选择昵称，纯本地动作）。 */
   function buildSenderSelect(sel) {
     if (!sel) return;
@@ -521,6 +546,7 @@
         addOption(sel, String(n.nickname_id), String(n.display_name || ''));
       });
       sel.value = curId === null ? '' : String(curId);
+      paintSenderDot(sel);
       return;
     }
 
@@ -528,6 +554,7 @@
     var cur = S.myName || items[0];
     items.forEach(function (n) { addOption(sel, n, n); });
     sel.value = items.indexOf(cur) >= 0 ? cur : items[0];
+    paintSenderDot(sel);
   }
 
   /** 事件来源 → 是哪个回复栏（'client' / 'popup'）。
@@ -582,6 +609,7 @@
          桥靠「带没带这个字段」区分「切回灰临时」与「坏帧」。 */
       post({ type: 'web.nickname_select', nickname_id: (v === '') ? null : parseInt(v, 10) });
       applyNickSelectionLocally(v);         // 本地立刻跟手（不再等宿主推回）
+      paintSenderDots();                    // ★ 预览点也跟着换（别的端选的人不会动这台）
       return;
     }
 
@@ -591,6 +619,7 @@
       var sel = $(BARS[k].sender);
       if (sel && sel.value !== v) sel.value = v;
     });
+    paintSenderDots();
     renderClient();
     renderPopup();
   }
@@ -728,6 +757,7 @@
        主题一变必须重画，否则圆点 / 头像还停在旧主题那套。 */
     renderClient();
     renderPopup();
+    paintSenderDots();     // ★ 预览点是按主题现算的显示色，主题一变就得重画
     if (S.view === 'settings') renderNickBlock();
   }
 

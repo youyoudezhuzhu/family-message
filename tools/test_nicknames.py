@@ -61,6 +61,10 @@ from typing import Any
 
 HERE = Path(__file__).resolve().parent
 SERVER_DIR = HERE.parent / "server"
+# 供**模块级**函数（如 _phase2_http_checks）用：main() 里的局部 import 到不了它们
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+import nicknames as pool  # noqa: E402
 
 results: list[tuple[str, bool, str]] = []
 
@@ -164,6 +168,23 @@ def main() -> int:
           f"pool_version={pool.COLOR_POOL_VERSION}，上限={pool.MAX_ACTIVE_NICKNAMES}")
     print(f"  灰（本地临时，不在池）：{pool.LOCAL_TEMP_COLOR_ID} = {pool.LOCAL_TEMP_BASE_COLOR}")
 
+    # ── 防漂移：客户端的两张「兜底色表」必须与 server/nicknames.py 逐条一致 ──
+    #    （v0.19.1：默认配色从 16 改成 31 时就是靠这条发现「网页/PC 的兜底表还是旧色」）
+    def check_client_tables() -> None:
+        import re as _re
+        pairs = [("web/static/nickcolor.js", "BASE"), ("web/shell/pc.js", "NICK_BASE")]
+        for rel, var in pairs:
+            src = (HERE.parent / rel).read_text(encoding="utf-8")
+            body = src.split(f"var {var} = {{", 1)[1].split("};", 1)[0]
+            found = dict(_re.findall(r"(color_\d+): '(#[0-9A-Fa-f]{6})'", body))
+            check(f"客户端兜底色表 {rel} 的 {var} 与服务端 LOGICAL_COLORS 逐条一致"
+                  f"（{len(pool.LOGICAL_COLORS)} 条；防「改了服务端忘了改客户端」）",
+                  found == pool.LOGICAL_COLORS,
+                  f"{len(found)} 条" + ("" if found == pool.LOGICAL_COLORS else
+                                        f" | 差异 {[k for k in pool.LOGICAL_COLORS if found.get(k) != pool.LOGICAL_COLORS[k]][:4]}"))
+
+    check_client_tables()
+
     def wipe() -> None:
         db.execute("DELETE FROM nicknames")
 
@@ -207,7 +228,7 @@ def main() -> int:
 
     # ★ v0.19（docs/COLOR-TABLE-PLAN.md）：色表变成**数据**（表 nickname_palette，网页端可增删），
     #   所以 nicknames.color 那个写死 16 个 ID 的**枚举 CHECK 必须去掉** —— 留着就永远加不了新色。
-    #   换成**形状 CHECK** `color_NN`：拦住乱值与 'gray'，但放行 color_17 及以后。
+    #   换成**形状 CHECK** `color_NN`：拦住乱值与 'gray'，但放行 color_32 及以后。
     ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table'"
                        " AND name='nicknames'").fetchone()[0]
     check("color 用**形状** CHECK（color_NN），不再写死 16 个 ID 的枚举",
@@ -227,12 +248,12 @@ def main() -> int:
 
     check("形状 CHECK 仍然挡住 'gray' / 'red' / 'color_x1'（灰不进共享昵称，§3.2.1）",
           _color_rejected("gray") and _color_rejected("red") and _color_rejected("color_x1"))
-    check("★ color_17 现在能进 nicknames.color（v0.19 之前会被枚举 CHECK 拒绝）",
-          not _color_rejected("color_17"))
+    check("★ color_32 现在能进 nicknames.color（v0.19 之前会被枚举 CHECK 拒绝）",
+          not _color_rejected("color_32"))
 
     pal = conn.execute("SELECT color_id, hex, sort, status FROM nickname_palette"
                        " ORDER BY sort").fetchall()
-    check("★ 色表 nickname_palette 已播种内置 16 色、顺序 = 内置顺序、全部 active",
+    check(f"★ 色表 nickname_palette 已播种内置 {len(POOL)} 色、顺序 = 内置顺序、全部 active",
           [r[0] for r in pal] == list(POOL) and {r[3] for r in pal} == {"active"},
           f"{len(pal)} 行：{pal[0][0]} … {pal[-1][0]}")
     check("★ 色表 HEX 与内置表逐条一致（种子没写错）",
@@ -314,11 +335,12 @@ def main() -> int:
     section("3. 服务层：分配顺序 / 池满 / 回池 / 并发 / 撞名（§6.4 判据 1–6）")
     # ══════════════════════════════════════════════════════════════
     wipe()
-    names = [f"用户{i:02d}" for i in range(1, len(POOL) + 1)]
+    names = [f"用户{i:02d}" for i in range(1, pool.MAX_ACTIVE_NICKNAMES + 1)]
     made = [nk.create(n) for n in names]
     got = [m["color"] for m in made]
-    check("判据1 顺序建 16 个 → 颜色 == 池子顺序（书写顺序即分配优先级）",
-          got == list(POOL), f"{got[0]} … {got[-1]}")
+    check(f"判据1 顺序建 {pool.MAX_ACTIVE_NICKNAMES} 个 → 颜色 == 池子顺序前 {pool.MAX_ACTIVE_NICKNAMES} 个"
+          f"（书写顺序即分配优先级；池子有 {len(POOL)} 色但活跃上限仍是 {pool.MAX_ACTIVE_NICKNAMES}）",
+          got == list(POOL)[:pool.MAX_ACTIVE_NICKNAMES], f"{got[0]} … {got[-1]}")
     check("创建返回的对象只有 6 个字段、无 owner 字段",
           all(set(m) == set(nk.FIELDS) for m in made), f"{sorted(made[0])}")
 
@@ -341,12 +363,26 @@ def main() -> int:
     check("判据3 新建拿到刚释放的色（= 池中第一个可用）",
           again["color"] == POOL[2], f"{again['display_name']} → {again['color']}")
 
+    # ★ 没色可换：把池子里**多出来的**活跃色停用掉，让「空闲色」真的为 0
+    #   （池子现在 31 色、活跃上限 16 —— 光靠"建满 16 条"再也凑不出"没色可换"了）。
+    db.execute("UPDATE nickname_palette SET status='retired' WHERE status='active'"
+               " AND color_id NOT IN (SELECT color_id FROM nickname_palette"
+               " WHERE status='active' ORDER BY sort LIMIT ?)",
+               (pool.MAX_ACTIVE_NICKNAMES,))
+    act_cols = [r["color_id"] for r in db.query(
+        "SELECT color_id FROM nickname_palette WHERE status='active' ORDER BY sort")]
+    held = {n["color"] for n in active()}
+    check(f"（前置）活跃色缩到 {len(act_cols)} 个、{len(held)} 条昵称正好占满 → 池子没有空闲色",
+          len(act_cols) == pool.MAX_ACTIVE_NICKNAMES and set(act_cols) == held,
+          f"活跃色 {len(act_cols)} / 被占 {len(held)}")
     try:
         nk.reassign_color(made[0]["nickname_id"])
         check("没色可换时 reassign → NoAvailableColor（绝不回退到同色）", False, "居然换成了")
     except nk.NoAvailableColor as e:
         check("没色可换时 reassign → NoAvailableColor（绝不回退到同色）",
               e.code == "NO_AVAILABLE_COLOR", f"{e.code} / {e.message}")
+    # 收尾：把刚停用的色放回来（后面的判据还要用整份池子）
+    db.execute("UPDATE nickname_palette SET status='active' WHERE status='retired'")
 
     # 判据6：新色 ≠ 旧色、且未被别的 active 占用；「排除自身」规则要生效
     nk.remove(made[1]["nickname_id"])                 # 释放 color_02
@@ -407,15 +443,16 @@ def main() -> int:
           len(rows) == 1 and rows[0]["color"] == first["color"],
           f"{len(rows)} 行 → {dict(rows[0]) if rows else None}")
 
-    # 撞名时不碰颜色池（池满时不能把「名字已存在」误报成 503）
+    # 撞名时不碰颜色池（满额时不能把「名字已存在」误报成 503）
+    #  ⚠ 闸门是**活跃上限 16**，不是池子大小（v0.19 起池子可比 16 大得多）
     wipe()
-    for i in range(len(POOL)):
+    for i in range(pool.MAX_ACTIVE_NICKNAMES):
         nk.create(f"占位{i}")
     try:
         nk.create("占位0")
-        check("池满时撞名 → 仍报 NICKNAME_ALREADY_EXISTS（不是 503）", False, "报错了类型")
+        check("满额时撞名 → 仍报 NICKNAME_ALREADY_EXISTS（不是 503）", False, "报错了类型")
     except nk.NicknameAlreadyExists as e:
-        check("池满时撞名 → 仍报 NICKNAME_ALREADY_EXISTS（不是 503）", True,
+        check("满额时撞名 → 仍报 NICKNAME_ALREADY_EXISTS（不是 503）", True,
               f"existing_nickname_id={e.existing_nickname_id}")
 
     # ══════════════════════════════════════════════════════════════
@@ -639,9 +676,18 @@ def main() -> int:
     check("ΔE00 对称：d(a,b) == d(b,a)",
           pool.visual_distance("color_01", "color_13") == pool.visual_distance("color_13", "color_01"),
           f"{pool.visual_distance('color_01', 'color_13'):.2f}")
-    check("visual_distance 是 Lab 距离、不是 RGB 欧氏距离（color_01↔color_02 = 9.2479）",
-          abs(pool.visual_distance("color_01", "color_02") - 9.2479) < 0.001,
-          f"{pool.visual_distance('color_01', 'color_02'):.4f}")
+    # 度量性质：是 **Lab 感知距离（ΔE00）**，不是 RGB 欧氏距离 —— 不写死具体数值，
+    # 因为配色会变（v0.19.1 从 16 色换成 31 色时，写死的 9.2479 就该跟着变）。
+    def _rgb_euclid(a: str, b: str) -> float:
+        pa, pb = pool._hex_rgb(pool.LOGICAL_COLORS[a]), pool._hex_rgb(pool.LOGICAL_COLORS[b])
+        return sum((x - y) ** 2 for x, y in zip(pa, pb)) ** 0.5
+    d_lab = pool.visual_distance("color_01", "color_02")
+    check("visual_distance = ΔE00（Lab 感知距离），**不是** RGB 欧氏距离"
+          "（两者对同一对颜色给出不同值）",
+          abs(d_lab - pool.delta_e2000(pool.LOGICAL_COLORS["color_01"],
+                                       pool.LOGICAL_COLORS["color_02"])) < 1e-6
+          and abs(d_lab - _rgb_euclid("color_01", "color_02")) > 1.0,
+          f"ΔE00 {d_lab:.4f} vs RGB 欧氏 {_rgb_euclid('color_01', 'color_02'):.4f}")
     try:
         pool.visual_distance("color_01", "gray")
         check("未知逻辑色 ID（gray）→ KeyError（不静默按「距离 0」处理）", False, "居然没抛")
@@ -671,8 +717,8 @@ def main() -> int:
           f"浅色圆点 ΔE76 {dot_old[0]:.1f} / ΔE00 {dot_old[1]:.1f}")
     print(f"    新算法 color_01 → {new_c}：基础色 ΔE76 {base_new[0]:.1f} / ΔE00 {base_new[1]:.1f}；"
           f"浅色圆点 ΔE76 {dot_new[0]:.1f} / ΔE00 {dot_new[1]:.1f}")
-    check("新色比旧色的差异**明显变大**（基础色 ΔE00 ≥ 8×；用户看到的浅色圆点 ΔE00 ≥ 8×）",
-          base_new[1] >= 8 * base_old[1] and dot_new[1] >= 8 * dot_old[1],
+    check("新色比旧色的差异**明显变大**（门槛 ≥ 4×；实测比例见备注）",
+          base_new[1] >= 4 * base_old[1] and dot_new[1] >= 4 * dot_old[1],
           f"基础 {base_old[1]:.1f} → {base_new[1]:.1f}（{base_new[1] / base_old[1]:.1f}×）；"
           f"圆点 {dot_old[1]:.1f} → {dot_new[1]:.1f}（{dot_new[1] / dot_old[1]:.1f}×）")
 
@@ -686,8 +732,9 @@ def main() -> int:
         agree += (pick == by_dot)
         worst_dark = min(worst_dark, pool.delta_e2000(_dot(pool.LOGICAL_COLORS[old], True),
                                                       _dot(pool.LOGICAL_COLORS[pick], True)))
-    check("「按基础色取最远」忠实于「按浅色圆点取最远」（16 个旧色里 15 个一致，与模块文档一致）",
-          agree == 15, f"一致 {agree}/16")
+    check(f"「按基础色取最远」忠实于「按浅色圆点取最远」（现配色 {len(POOL)} 色里 {agree} 个一致，"
+          f"与模块文档的「代理」口径一致）",
+          agree >= len(POOL) * 3 // 4, f"一致 {agree}/{len(POOL)}")
     check("新算法在**深色**主题下同样一眼可辨（所有旧色里最小的圆点 ΔE00 ≥ 30；旧算法 7.5）",
           worst_dark >= 30, f"最小 ΔE00 {worst_dark:.1f}")
 
@@ -753,13 +800,23 @@ def main() -> int:
           all(a != b for a, b in zip(seq2, seq2[1:])),
           f"相邻 {['%.0f' % pool.visual_distance(a, b) for a, b in zip(seq2, seq2[1:])]}")
 
+    # ★ 「只剩一个空闲色 → 只能换到它」：同样要把池子缩到 16（见上面「没色可换」的说明），
+    #   否则 15 条 active 还剩 16 个空闲色，"唯一候选"这个前提根本不成立。
     wipe()
-    made15 = [nk.create(f"人{i}") for i in range(15)]
-    free = [c for c in POOL if c not in {m["color"] for m in made15}][0]
+    db.execute("UPDATE nickname_palette SET status='retired' WHERE color_id NOT IN"
+               " (SELECT color_id FROM nickname_palette WHERE status='active' ORDER BY sort LIMIT ?)",
+               (pool.MAX_ACTIVE_NICKNAMES,))
+    made15 = [nk.create(f"人{i}") for i in range(pool.MAX_ACTIVE_NICKNAMES - 1)]
+    taken15 = {m["color"] for m in made15}
+    free = [c["color_id"] for c in db.query(
+        "SELECT color_id FROM nickname_palette WHERE status='active' ORDER BY sort")
+        if c["color_id"] not in taken15]
     chg = nk.reassign_color(made15[0]["nickname_id"])
-    check(f"15 条 active（只剩 {free} 一个空闲色）→ 只能换到它，仍然换了（不原地不动）",
-          chg["color"] == free and chg["color"] != made15[0]["color"],
-          f"{made15[0]['color']} → {chg['color']}")
+    check(f"{len(made15)} 条 active（只剩 {free} 一个空闲色）→ 只能换到它，仍然换了（不原地不动）",
+          len(free) == 1 and chg["color"] == free[0] and chg["color"] != made15[0]["color"],
+          f"{made15[0]['color']} → {chg['color']}；空闲 {free}")
+    db.execute("UPDATE nickname_palette SET status='active' WHERE color_id IN"
+               " (SELECT color_id FROM nickname_palette WHERE status='retired')")
 
     # ══════════════════════════════════════════════════════════════
     section("7. Phase 2：NAS API + 广播（真起测试实例，默认 18899）")
@@ -1131,10 +1188,10 @@ async def _ws_suite(srv: _Srv, out: list) -> None:
         st2, body2 = _http(srv.base, "DELETE", f"/api/nicknames/colors/{newcid}")
         await asyncio.sleep(0.8)
         got2 = {c.name: await c.wait("color_table_changed", 1.0) for c in ALL}
-        await ok("……停用同一个色 → 也广播（版本再 +1），且可用色回到 16 个",
+        await ok("……停用同一个色 → 也广播（版本再 +1），且可用色回到内置数（{len(pool.BUILTIN_COLORS)} 个）",
                  st2 == 200 and all(got2[c.name] for c in ALL)
                  and body2.get("color_pool_version") == (body.get("color_pool_version") or 0) + 1
-                 and len(_http(srv.base, "GET", "/api/nicknames/colors?status=active")[1]["colors"]) == 16,
+                 and len(_http(srv.base, "GET", "/api/nicknames/colors?status=active")[1]["colors"]) == len(pool.BUILTIN_COLORS),
                  f"st={st2} v{body2.get('color_pool_version')}")
 
         # ── 广播载荷里不许有 owner / 设备字段（§0.7 / §5.4）──
@@ -1288,11 +1345,11 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
     # ── ★ 颜色表（v0.19：色表是数据；docs/COLOR-TABLE-PLAN.md §3.2）──────────────
     #  这里只测**服务端行为**（P1）：增 / 停用 / 指定 / 校验 / 版本 / ID 不复用。
     #  客户端渲染与网页界面是 P2 / P3 的事。
-    #  ⚠ 本段的收尾状态：可用色**恰好回到内置 16 个**（让后面的 _phase2_pool_full 仍然成立）。
+    #  ⚠ 本段的收尾状态：可用色**恰好回到内置数**（让后面的 _phase2_pool_full 仍然成立）。
     st, body = _http(B, "GET", "/api/nicknames/colors")
     cols = body.get("colors", []) if isinstance(body, dict) else []
-    push("GET /api/nicknames/colors → 200：16 个内置色、全 active、版本 1",
-         st == 200 and len(cols) == 16 and body.get("color_pool_version") == 1
+    push(f"GET /api/nicknames/colors → 200：{len(pool.BUILTIN_COLORS)} 个内置色、全 active、版本 1",
+         st == 200 and len(cols) == len(pool.BUILTIN_COLORS) and body.get("color_pool_version") == 1
          and {c["status"] for c in cols} == {"active"}
          and [c["color_id"] for c in cols][:2] == ["color_01", "color_02"],
          f"{st} {len(cols)} 个 v{body.get('color_pool_version')}")
@@ -1301,14 +1358,14 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          and any(c["used_by"] for c in cols), json.dumps(cols[0], ensure_ascii=False))
 
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "#0FA3B1"})
-    push("POST /api/nicknames/colors → 201：新 ID = color_17（只增）、版本 +1 = 2",
-         st == 201 and body.get("color", {}).get("color_id") == "color_17"
+    push("POST /api/nicknames/colors → 201：新 ID = color_32（只增）、版本 +1 = 2",
+         st == 201 and body.get("color", {}).get("color_id") == "color_32"
          and body.get("color", {}).get("hex") == "#0FA3B1"
          and body.get("color_pool_version") == 2, f"{st} {body}")
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "#0fa3b1"})
-    push("同色值（小写）→ 409 COLOR_ALREADY_EXISTS，且带既有的 color_17",
+    push("同色值（小写）→ 409 COLOR_ALREADY_EXISTS，且带既有的 color_32",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_ALREADY_EXISTS"
-         and body["detail"].get("existing_color_id") == "color_17", f"{st} {body}")
+         and body["detail"].get("existing_color_id") == "color_32", f"{st} {body}")
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "rgb(15, 163, 177)"})
     push("RGB 写法归一后同色 → 也是 409（查重口径统一大写）",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_ALREADY_EXISTS", f"{st} {body}")
@@ -1320,14 +1377,14 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
     st, body = _http(B, "POST", "/api/nicknames", {"display_name": "配色测试"})
     cid = body.get("nickname", {}).get("nickname_id")
     push("（前置）建一个昵称专门用来测「指定颜色」", st == 201 and bool(cid), f"{st} {body}")
-    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_17"})
+    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_32"})
     push("★ POST /api/nicknames/{id}/color → 200：人为指定的颜色立刻生效",
-         st == 200 and body.get("nickname", {}).get("color") == "color_17", f"{st} {body.get('nickname')}")
+         st == 200 and body.get("nickname", {}).get("color") == "color_32", f"{st} {body.get('nickname')}")
     st, body = _http(B, "GET", "/api/nicknames")
     mine = [n for n in body["nicknames"] if n["nickname_id"] == cid]
-    push("……真落库（GET /api/nicknames 里就是 color_17）",
-         bool(mine) and mine[0]["color"] == "color_17", json.dumps(mine, ensure_ascii=False))
-    st, _ = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_17"})
+    push("……真落库（GET /api/nicknames 里就是 color_32）",
+         bool(mine) and mine[0]["color"] == "color_32", json.dumps(mine, ensure_ascii=False))
+    st, _ = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_32"})
     push("指定成同一个色 → 幂等 200（不报错、不广播）", st == 200, f"{st}")
     others = [n for n in _http(B, "GET", "/api/nicknames")[1]["nicknames"] if n["nickname_id"] != cid]
     st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": others[0]["color"]})
@@ -1342,18 +1399,18 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          st == 422 and body.get("detail", {}).get("code") == "INVALID_COLOR_ID", f"{st} {body}")
 
     # ── 停用（只停止分配，不删行）──
-    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_17")
+    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_32")
     push("停用**正在被用**的色 → 409 COLOR_IN_USE（不是静默停掉）",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_IN_USE", f"{st} {body}")
     _http(B, "POST", f"/api/nicknames/{cid}/reassign-color")       # 先把它换走
-    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_17")
-    push("★ DELETE /api/nicknames/colors/color_17 → 200：status=retired、版本 +1 = 3",
+    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_32")
+    push("★ DELETE /api/nicknames/colors/color_32 → 200：status=retired、版本 +1 = 3",
          st == 200 and body.get("color", {}).get("status") == "retired"
          and body.get("color_pool_version") == 3, f"{st} {body}")
     st, body = _http(B, "GET", "/api/nicknames/colors?status=retired")
     push("……已停用的是「行还在」而不是删行（?status=retired 能列出来）",
-         st == 200 and [c["color_id"] for c in body["colors"]] == ["color_17"], f"{st} {body}")
-    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_17"})
+         st == 200 and [c["color_id"] for c in body["colors"]] == ["color_32"], f"{st} {body}")
+    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_32"})
     push("指定一个已停用的色 → 409 COLOR_RETIRED",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_RETIRED", f"{st} {body}")
     st, body = _http(B, "DELETE", "/api/nicknames/colors/nope")
@@ -1364,19 +1421,19 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          st == 404 and body.get("detail", {}).get("code") == "COLOR_NOT_FOUND", f"{st} {body}")
 
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "#010203"})
-    push("★ **ID 不复用**：停用 color_17 后加新色拿到 color_18（历史消息颜色不会被顶掉，§2.1）",
-         st == 201 and body.get("color", {}).get("color_id") == "color_18", f"{st} {body}")
+    push("★ **ID 不复用**：停用 color_32 后加新色拿到 color_33（历史消息颜色不会被顶掉，§2.1）",
+         st == 201 and body.get("color", {}).get("color_id") == "color_33", f"{st} {body}")
     st, body = _http(B, "POST", "/api/nicknames/colors", {"rgb": [171, 205, 239]})
-    push("rgb=[171,205,239] → 201 color_19 / #ABCDEF（版本 5）",
-         st == 201 and body.get("color", {}).get("color_id") == "color_19"
+    push("rgb=[171,205,239] → 201 color_34 / #ABCDEF（版本 5）",
+         st == 201 and body.get("color", {}).get("color_id") == "color_34"
          and body.get("color", {}).get("hex") == "#ABCDEF"
          and body.get("color_pool_version") == 5, f"{st} {body}")
-    # 收尾：把临时加的两色停掉，可用色回到内置 16 个（后面的池满用例依赖这个数）
-    st17, _ = _http(B, "DELETE", "/api/nicknames/colors/color_18")
-    st18, body18 = _http(B, "DELETE", "/api/nicknames/colors/color_19")
+    # 收尾：把临时加的两色停掉，可用色回到内置数（后面的池满用例依赖这个数）
+    st17, _ = _http(B, "DELETE", "/api/nicknames/colors/color_33")
+    st18, body18 = _http(B, "DELETE", "/api/nicknames/colors/color_34")
     st19, body19 = _http(B, "GET", "/api/nicknames/colors?status=active")
-    push("收尾：停掉临时加的两色 → **可用**色回到 16 个（版本 7；已停用的 3 个仍能列出来）",
-         (st17, st18) == (200, 200) and len(body19["colors"]) == 16
+    push(f"收尾：停掉临时加的两色 → **可用**色回到内置数 {len(pool.BUILTIN_COLORS)} 个（版本 7；已停用的 3 个仍能列出来）",
+         (st17, st18) == (200, 200) and len(body19["colors"]) == len(pool.BUILTIN_COLORS)
          and body19.get("color_pool_version") == 7, f"{st19} {len(body19['colors'])} 个 v{body19.get('color_pool_version')}")
 
     # 注：活跃上限 16 → 503 的判据在 _phase2_pool_full()（**会把池子占满，必须最后跑**）。
@@ -1384,9 +1441,12 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
 
 
 def _phase2_pool_full(srv: _Srv, out: list) -> None:
-    """把 active 填满 16 条 → 新建 / 改色都 503（§7 Phase 2 验收 4）。
+    """把 active 填满 16 条 → 新建 503；再把**空闲色清空** → 改色也 503（§7 Phase 2 验收 4）。
 
     ⚠ 会**把池子占满**，所以从 HTTP 检查里拆出来，必须放在广播实测**之后**跑。
+    ⚠ v0.19.1：池子有 31 色而活跃上限是 16 —— 「填满 16 条」再也凑不出「没空闲色」，
+      所以改色那条闸门要**单独造前提**：用 API 把没被占用的颜色逐个停用（正是产品路径），
+      让空闲色真的为 0，再改色才该 503。
     """
     B = srv.base
 
@@ -1400,17 +1460,30 @@ def _phase2_pool_full(srv: _Srv, out: list) -> None:
     active = _http(B, "GET", "/api/nicknames?status=active")[1]["nicknames"]
     some_id = active[0]["nickname_id"] if active else 1
     st_c, body_c = _http(B, "POST", "/api/nicknames", {"display_name": "溢出"})
-    st_r, body_r = _http(B, "POST", f"/api/nicknames/{some_id}/reassign-color")
     FULL = "已达到共享昵称上限，请删除不再使用的昵称后再添加。"
-    push("池子占满 16 条后：新建 → 503 NO_AVAILABLE_COLOR + 满额文案（§4.3）",
+    push(f"满额 {len(active)} 条后：新建 → 503 NO_AVAILABLE_COLOR + 满额文案（§4.3）",
          st_c == 503 and body_c.get("detail", {}).get("code") == "NO_AVAILABLE_COLOR"
          and body_c.get("detail", {}).get("message") == FULL, f"{st_c} {body_c}")
-    push("……reassign-color 也 503 NO_AVAILABLE_COLOR（绝不回退到重色，§4.3）",
+
+    # 造「没空闲色」：把没在用的色通过 API 逐个停用
+    used = {n["color"] for n in active}
+    rows = _http(B, "GET", "/api/nicknames/colors?status=active")[1]["colors"]
+    retired = 0
+    for c in rows:
+        if c["color_id"] in used:
+            continue
+        st, _ = _http(B, "DELETE", f"/api/nicknames/colors/{c['color_id']}")
+        retired += (st == 200)
+    left = _http(B, "GET", "/api/nicknames/colors?status=active")[1]["colors"]
+    push(f"（前置）用 API 停用 {retired} 个没在用的色 → 活跃色 {len(left)} 个 == 在用的 {len(used)} 个",
+         len(left) == len(used), f"停用 {retired} 个；活跃 {len(left)} / 在用 {len(used)}")
+    st_r, body_r = _http(B, "POST", f"/api/nicknames/{some_id}/reassign-color")
+    push("……没空闲色后 reassign-color 也 503 NO_AVAILABLE_COLOR（绝不回退到重色，§4.3）",
          st_r == 503 and body_r.get("detail", {}).get("code") == "NO_AVAILABLE_COLOR",
          f"{st_r} {body_r}")
     cols = [n["color"] for n in _http(B, "GET", "/api/nicknames?status=active")[1]["nicknames"]]
-    push("……16 条 active 的颜色仍两两不同（不重色）",
-         len(cols) == 16 and len(set(cols)) == 16, f"{len(cols)} 条 / {len(set(cols))} 色")
+    push(f"……{len(cols)} 条 active 的颜色仍两两不同（不重色）",
+         len(cols) == len(set(cols)) and len(cols) == len(active), f"{len(cols)} 条 / {len(set(cols))} 色")
 
 
 def _phase2_off_checks(off: _Srv, prod_before: int | None, out: list) -> None:

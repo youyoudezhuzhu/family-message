@@ -407,6 +407,7 @@ function buildSelect(host, items, value, onChange) {
   btn.setAttribute('aria-expanded', 'false');
 
   const label = document.createElement('span');
+  label.className = 'combo__label';   // ★ v0.19.1：名字按类定宽（不能再靠 span:first-child，见 style.css 注释）
   label.textContent = chosen ? chosen.label : '（没有可选项）';
   /* §4.4 规则 4：**不用色值当字色** —— 昵称颜色（逻辑色 ID 经 §4.4 算出来的显示色）
      在「已选项」这里走「色块 + 常规字色」。item.swatch 只有共享昵称路径会传
@@ -523,56 +524,13 @@ async function loadVersion() {
 async function loadDevices() {
   state.devices = await api('/api/devices');
   renderDevices();
-  renderHomeDevices();
   renderXmPcPick();
   renderShotPicks();
 }
 
-/** 首页顶部的一排在线设备（只读展示；点一下去设备页） */
-function renderHomeDevices() {
-  const box = $('home-devices');
-  box.innerHTML = '';
-
-  const online = state.devices.filter((d) => d.online);
-  const list = online.length ? online : state.devices;
-
-  $('home-dev-empty').hidden = state.devices.length > 0;
-  $('home-dev-count').textContent = state.devices.length
-    ? `${online.length} 台在线 · 共 ${state.devices.length} 台` : '';
-
-  list.forEach((d) => {
-    const el = document.createElement('button');
-    el.type = 'button';
-    el.className = 'tile';
-    el.onclick = () => go('devices');
-
-    const ic = document.createElement('span');
-    ic.className = 'dev__icon';
-    ic.appendChild(icon('desktop'));
-
-    const mid = document.createElement('span');
-    mid.className = 'grow';
-    const nm = document.createElement('span');
-    nm.className = 'tile__name';
-    nm.textContent = d.name;
-    const mt = document.createElement('span');
-    mt.className = 'tile__meta';
-    mt.style.display = 'block';
-    mt.textContent = d.last_seen ? `最后在线 ${d.last_seen}` : '从未上线';
-    mid.append(nm, mt);
-
-    const st = document.createElement('span');
-    st.className = 'tile__state';
-    const dot = document.createElement('span');
-    dot.className = 'presence ' + (d.online ? 'presence--online' : 'presence--offline');
-    const stx = document.createElement('span');
-    stx.textContent = d.online ? '在线' : '离线';
-    st.append(dot, stx);
-
-    el.append(ic, mid, st);
-    box.appendChild(el);
-  });
-}
+/* ★ v0.19.1：`renderHomeDevices()` 整块删掉了 —— 首页顶部那块「在线设备」和侧栏「设备」页
+   是同一份数据、同一个去处（点一下都是 go('devices')），用户要求去掉重复。
+   设备列表现在只有一处渲染：renderDevices()（设备页 / #devices）。 */
 
 /* ── B5b. Windows 会话状态徽标 + 远程解锁（Phase 1）─────────────
    后端契约（已冻结，前端照此对接；不改任何路径、请求体与帧格式）：
@@ -1298,6 +1256,7 @@ async function loadColorTable() {
     const okSet = FMNickColor.setTable(act, r && r.color_pool_version);
     if (typeof (r && r.color_pool_version) === 'number') nickPoolVersion = r.color_pool_version;
     if (rows.length) nickColorRows = rows;        // ★ v0.19：色表 UI 用（含已停用）
+    if (typeof r.max_color_pool === 'number') nickPoolMax = r.max_color_pool;
     renderColorTable();
     if (okSet) {
       redrawNicks();
@@ -1696,7 +1655,8 @@ async function deleteNick(n) {
            弹窗里保留「随机换一个」（= 原来的换色）。 ────────────────────── */
 
 /** 从服务端拉到的整份色表（含 retired；服务端 rows() 的字段原样） */
-let nickColorRows = [];
+let nickColorRows = [];     // 色表 UI 用（含已停用；可用色另由 FMNickColor 那份管）
+let nickPoolMax = 0;        // 颜色池上限（服务端说了算，v0.19.1 起别写死）
 
 /** 画色块区：状态、谁在用、能否停用都在这一处决定（不在别处重复判断）。 */
 function renderColorTable() {
@@ -1709,7 +1669,7 @@ function renderColorTable() {
 
   const act = nickColorRows.filter((c) => c.status === 'active');
   const used = act.filter((c) => c.in_use).length;
-  count.textContent = `可用 ${act.length} / 上限 32 · 在用 ${used}/${NICK_MAX_ACTIVE}`;
+  count.textContent = `可用 ${act.length}${nickPoolMax ? ` / 上限 ${nickPoolMax}` : ''} · 在用 ${used}/${NICK_MAX_ACTIVE}`;
 
   grid.textContent = '';
   nickColorRows.forEach((c) => {

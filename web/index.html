@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.19.0">
-<link rel="stylesheet" href="static/style.css?v=0.19.0">
-<link rel="stylesheet" href="static/shell.css?v=0.19.0">
+<link rel="stylesheet" href="static/tokens.css?v=0.19.1">
+<link rel="stylesheet" href="static/style.css?v=0.19.1">
+<link rel="stylesheet" href="static/shell.css?v=0.19.1">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -159,10 +159,10 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 
   <!-- ══ 左侧导航（窄屏自动变图标条 / 手机变抽屉）═══════════════ -->
   <nav class="nav-pane" id="nav-pane" aria-label="主导航">
-      <button class="nav-item" type="button" data-page="home" title="首页" aria-label="首页">
-        <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-home"/></svg>
-        <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-home-filled"/></svg>
-        <span class="nav-item__label">首页</span>
+      <button class="nav-item" type="button" data-page="home" title="消息" aria-label="消息">
+        <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-chat"/></svg>
+        <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-chat-filled"/></svg>
+        <span class="nav-item__label">消息</span>
       </button>
       <button class="nav-item" type="button" data-page="devices" title="设备" aria-label="设备">
         <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-desktop"/></svg>
@@ -185,23 +185,11 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
   <!-- ══ 主内容区 ═══════════════════════════════════════════════ -->
   <main class="main" id="main">
 
-    <!-- ── 首页：在线设备 + 家庭消息（整条群聊流，主页内直接滚） + 发送区 ──
-         顶部原本的问候区（「早上好 …」+「N 台电脑在线…」）已按需求整块去掉：
-         设备数量在下面「在线设备」标题右边已经写着，问候语是重复信息。 -->
+    <!-- ── 消息：整条群聊流（页内自己滚，滚轮翻看） + 发送区 ──
+         ★ v0.19.1：顶部那块「在线设备」已按用户要求整块删掉 —— 它和侧栏「设备」页
+         功能完全重复（同一个列表、同一个去处）。首页现在只有「家庭消息 + 发送区」两段。
+         导航里的名字也从「首页」改成「消息」（图标同步换成对话气泡）：这一页现在就是消息。 -->
     <section class="page" id="page-home">
-      <section class="section" aria-labelledby="t-online">
-        <div class="section__head">
-          <h3 class="section__title" id="t-online">在线设备</h3>
-          <span class="card__hint" id="home-dev-count"></span>
-        </div>
-        <div class="dev-strip" id="home-devices"></div>
-        <div class="empty" id="home-dev-empty">
-          <svg class="icon icon--lg" aria-hidden="true"><use href="#i-desktop"/></svg>
-          <span class="empty__title">还没有设备</span>
-          <span class="empty__hint">在 Windows PC 上运行 Family Agent，填好服务端地址与设备注册口令，它就会出现在这里。</span>
-        </div>
-      </section>
-
       <!-- 消息记录在前、发送框在后：像聊天应用一样从上往下读，输入框在底部。
            整条群聊流都渲染在这里（不再只放最近 3 条），容器自己可上下滚动，
            所以不需要「查看全部」跳到别的页面。 -->
@@ -226,7 +214,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       <section class="card card--compose" aria-label="发送区">
         <div class="compose__bar">
           <div class="compose__sender">
-            <div class="combo" id="sender-sel" aria-label="发送人"></div>
+            <div class="combo combo--up" id="sender-sel" aria-label="发送人"></div>
           </div>
           <input class="text-input compose__input" id="content" type="text"
                  placeholder="写点什么，回车发送……" maxlength="2000"
@@ -434,10 +422,10 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 
 <!-- ══ 底部导航（手机）═══════════════════════════════════════════ -->
 <nav class="bottom-nav" id="bottom-nav" aria-label="主导航（手机）">
-      <button class="bottom-nav__item" type="button" data-page="home" title="首页" aria-label="首页">
-        <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-home"/></svg>
-        <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-home-filled"/></svg>
-        <span class="nav-item__label">首页</span>
+      <button class="bottom-nav__item" type="button" data-page="home" title="消息" aria-label="消息">
+        <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-chat"/></svg>
+        <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-chat-filled"/></svg>
+        <span class="nav-item__label">消息</span>
       </button>
       <button class="bottom-nav__item" type="button" data-page="devices" title="设备" aria-label="设备">
         <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-desktop"/></svg>
@@ -595,9 +583,9 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
 <!-- nickcolor.js：逻辑色 ID → 显示色（§4.4 映射表），chat.js / shell.js / app.js 共用 -->
-<script src="static/nickcolor.js?v=0.19.0"></script>
-<script src="static/chat.js?v=0.19.0"></script>
-<script src="static/shell.js?v=0.19.0"></script>
-<script src="static/app.js?v=0.19.0"></script>
+<script src="static/nickcolor.js?v=0.19.1"></script>
+<script src="static/chat.js?v=0.19.1"></script>
+<script src="static/shell.js?v=0.19.1"></script>
+<script src="static/app.js?v=0.19.1"></script>
 </body>
 </html>

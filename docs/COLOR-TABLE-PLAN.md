@@ -85,6 +85,15 @@ CREATE TABLE nickname_palette (
 ## 4. 分期（每期可独立交付、可回退）
 
 > **执行进度**
+> - **★ v0.19.1 追加（用户定稿，2026-09-29）**：
+>   ① **默认配色 16 → 31 色**：前 15 个 Material 400 系、后 16 个 800/900 系（用户清单里 `#26A69A`
+>      重复出现两次，而 `hex` 有 UNIQUE 约束、色表也不该有重复色 → 按去重 31 个建表）。
+>      `nicknames.color` 存的是**逻辑色 ID**，改配色**不需要动任何昵称**；老库靠 `_seed_color_table()`
+>      的 **upsert** 把已有槽位改指到新色，有改动 → `color_pool_version +1` → 客户端免刷新重拉。
+>   ② **池上限 32 → 64**（默认 31 个内置色，留 32 就只剩 1 个名额）；上限改由服务端下发
+>      （`GET /api/nicknames/colors` 的 `max_color_pool`），网页端不再写死。
+>   ③ **客户端兜底表同步 + 防漂移断言**：`nickcolor.js` 的 `BASE` 与 `pc.js` 的 `NICK_BASE` 按服务端常量
+>      重新生成（31 条），并加断言「两张客户端表必须与服务端 `LOGICAL_COLORS` 逐条一致」。
 > - **P1 ✅ 已完成（2026-09-29）**：`nickname_palette` 表 + 迁移（真实库副本实测通过）、颜色表服务
 >   （增 / 停用 / 指定 / 校验 / 池上限 32）、4 个 HTTP 端点 + `color_table_changed` 广播、
 >   `create`·`reassign` 改用动态色表、活跃上限 16 与池子大小解耦。

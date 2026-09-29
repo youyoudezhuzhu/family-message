@@ -277,19 +277,47 @@ def _rebuild_nicknames_without_color_enum(conn: sqlite3.Connection) -> None:
 
 
 def _seed_color_table(conn: sqlite3.Connection) -> None:
-    """把内置 16 色写进 `nickname_palette`（幂等；**已有行一律不动** —— 用户改过的色表绝不覆盖）。
+    """把内置色写进 `nickname_palette`（幂等），并在**内置色值变了**时把版本号 +1。
 
-    顺带初始化 `app_meta.color_pool_version = 1`，与 v0.18 及以前客户端的
-    `COLOR_POOL_VERSION` 对齐：老客户端看到 1 = 「表跟我内置的那份一样」，不用重拉。
+    ★ v0.19.1：播种从「`INSERT OR IGNORE`，已有行一律不动」升级成 **upsert** —— 因为
+    默认配色会变（用户把 16 色换成 31 色），而老库里 color_01…16 这些**槽位已经存在**，
+    光靠 OR IGNORE 会让它们永远停在旧色值上（昵称只与编号关联，槽位在 = 认得到它）。
+    规则：
+      · 槽位不存在 → 插（sort = 在内置清单里的位次）；
+      · 槽位存在、色值不同 → 改指到新色（记为 changed）；
+      · 槽位存在、色值相同 → 不动（幂等，重跑无副作用）；
+      · 新色值已被**别的**槽位占用（UNIQUE(hex) / 用户自加过同色）→ 跳过并返回，
+        不抛异常、不动别人那行（宁可少一个内置槽，也不要破坏用户数据）。
+    `changed` 为真 → `color_pool_version` +1，客户端（网页 / PC / 将来 Android）据此重拉表。
     """
     from nicknames import BUILTIN_COLORS, COLOR_POOL_VERSION, LOGICAL_COLORS   # 延迟导入避免环
+    changed = 0
     for idx, cid in enumerate(BUILTIN_COLORS, start=1):
-        conn.execute(
-            "INSERT OR IGNORE INTO nickname_palette (color_id, hex, sort, status, created_at)"
-            " VALUES (?, ?, ?, 'active', ?)",
-            (cid, LOGICAL_COLORS[cid], idx, now_iso()))
-    conn.execute("INSERT OR IGNORE INTO app_meta (key, value) VALUES ('color_pool_version', ?)",
-                 (str(COLOR_POOL_VERSION),))
+        want = LOGICAL_COLORS[cid]
+        row = conn.execute("SELECT hex FROM nickname_palette WHERE color_id = ?", (cid,)).fetchone()
+        if row is None:
+            try:
+                conn.execute(
+                    "INSERT INTO nickname_palette (color_id, hex, sort, status, created_at)"
+                    " VALUES (?, ?, ?, 'active', ?)",
+                    (cid, want, idx, now_iso()))
+                changed += 1
+            except sqlite3.IntegrityError:
+                continue                     # 这个 HEX 已被别人占用：跳过，不动别人的行
+        elif row[0] != want:
+            try:
+                conn.execute("UPDATE nickname_palette SET hex = ?, sort = ? WHERE color_id = ?",
+                             (want, idx, cid))
+                changed += 1
+            except sqlite3.IntegrityError:
+                continue
+    row = conn.execute("SELECT value FROM app_meta WHERE key = 'color_pool_version'").fetchone()
+    if row is None:
+        conn.execute("INSERT INTO app_meta (key, value) VALUES ('color_pool_version', ?)",
+                     (str(COLOR_POOL_VERSION),))
+    elif changed:
+        v = int(row[0] or "0") + 1
+        conn.execute("UPDATE app_meta SET value = ? WHERE key = 'color_pool_version'", (str(v),))
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
