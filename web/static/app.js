@@ -1436,7 +1436,21 @@ function renderNickList() {
   renderNickQuota();
 }
 
-/** 一行的 DOM：色点（NAS 的逻辑色 ID）+ 名字（可就地改名）+ 换色 / 删除 */
+/** 昵称行里的文字按钮 —— 与 PC 端 `mkBtn()` **逐字对齐**（选用 / 换色 / 删除）。
+ *  v0.18.0 实测反馈：网页端原来只有「换色 / 删除」两个图标按钮，PC 端是三个文字按钮
+ *  —— 两端要长得一样、用得一样。id 也与 PC 同构（`nick-use-<id>` 等），
+ *  两端测试就能照同一套选择器写。 */
+function nickBtn(label, id, title) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  if (id) b.id = id;
+  b.className = 'btn btn--secondary btn--sm';
+  b.textContent = label;
+  if (title) b.title = title;
+  return b;
+}
+
+/** 一行的 DOM：色点（NAS 的逻辑色 ID）+ 名字（可就地改名）+ 选用 / 换色 / 删除 */
 function nickRowEl(n) {
   const row = document.createElement('div');
   row.className = 'name-row' + (selectedNickId() === n.nickname_id ? ' name-row--using' : '');
@@ -1458,23 +1472,22 @@ function nickRowEl(n) {
   const actions = document.createElement('div');
   actions.className = 'name-row__actions';
 
-  const recolor = document.createElement('button');
-  recolor.type = 'button';
-  recolor.className = 'icon-btn';
-  recolor.title = '重新分配颜色（这个名字所有在用的机器会一起变）';
-  recolor.setAttribute('aria-label', `重新分配「${n.display_name}」的颜色`);
-  recolor.appendChild(icon('sync', 'icon icon--sm'));
+  /* 「选用」= 选择昵称，**纯本地动作 —— 唯一能离线的**（§5.2，与 PC 端同口径）；
+     正在用的那条置灰（不用重复点）。 */
+  const use = nickBtn('选用', `nick-use-${n.nickname_id}`,
+    `以「${n.display_name}」的名义发言（只影响本机）`);
+  use.disabled = selectedNickId() === n.nickname_id;
+  use.onclick = () => selectNick(Number(n.nickname_id));
+
+  const recolor = nickBtn('换色', `nick-color-${n.nickname_id}`,
+    '重新分配颜色（全局：所有在用的机器一起变）');
   recolor.onclick = () => reassignNickColor(n);
 
-  const del = document.createElement('button');
-  del.type = 'button';
-  del.className = 'icon-btn icon-btn--danger';
-  del.title = '删除这个昵称（历史消息保留当时的名字和颜色）';
-  del.setAttribute('aria-label', `删除昵称 ${n.display_name}`);
-  del.appendChild(icon('delete', 'icon icon--sm'));
+  const del = nickBtn('删除', `nick-del-${n.nickname_id}`,
+    '删除这个共享昵称（全局；历史消息原样不变）');
   del.onclick = () => deleteNick(n);
 
-  actions.append(recolor, del);
+  actions.append(use, recolor, del);
   row.append(sw, input, actions);
   return row;
 }

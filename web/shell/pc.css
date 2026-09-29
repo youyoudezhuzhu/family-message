@@ -167,6 +167,20 @@ html[data-view="settings"] #v-settings { display: flex; }
 .select__el:focus { border-color: var(--fluent-color-primary); border-bottom-width: 2px; }
 .select__chevron { position: absolute; right: var(--spacing-md); pointer-events: none; color: var(--fluent-color-text-secondary); }
 
+/* ★ 原生 <select> 的**下拉列表**是浏览器/系统自己画的，不吃 .select__el 的样式：
+   深色模式下实测「弹窗仍是白底、字是白的」→ 选项看不清（v0.18.0 实测反馈）。
+   两条一起上，缺一不可：
+     1) `color-scheme` 让浏览器按当前主题画弹窗（滚动条 / 选中高亮也跟着变）；
+     2) `option` 显式给**不透明**底色 + 文字色 —— 注意 tokens 里的
+        `--fluent-fill-control` 是**半透明白**（#FFFFFF0F），拿它当弹窗底会透出系统白底，
+        所以这里必须用实色的 surface（浅色 #FFFFFF / 深色 #2B2B2B）。 */
+.select__el option {
+  background-color: var(--fluent-color-surface-elevated);
+  color: var(--fluent-color-text);
+}
+[data-mode="light"] .select__el { color-scheme: light; }
+[data-mode="dark"] .select__el { color-scheme: dark; }
+
 /* ── 3. 群聊气泡（web/static/chat.js 的 DOM + 与 style.css 同值的规则）──
      左右分阵营只认 chat.js 传进来的 myName：别人发的靠左，自己发的靠右。 */
 .chat-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }

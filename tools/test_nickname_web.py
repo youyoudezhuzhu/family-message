@@ -500,7 +500,7 @@ def main() -> int:
             beforeC = row_colors(pageC)[0]["dot"]
             beforeB_msg = msg_colors(pageB)
             t0 = time.time()
-            pageA.click("#names-list .name-row .icon-btn")     # 重新分配颜色
+            pageA.click('#names-list .name-row .name-row__actions button:has-text("换色")')  # 重新分配颜色
             changed = False
             while time.time() - t0 < 6:
                 if row_colors(pageB)[0]["dot"] != beforeB and row_colors(pageC)[0]["dot"] != beforeC:
@@ -601,10 +601,14 @@ def main() -> int:
             geom = pageN.evaluate("""() => Array.from(document.querySelectorAll('#names-list .name-row')).map(r => {
                 const q = (s) => { const e = r.querySelector(s); const b = e.getBoundingClientRect();
                                    return {l: b.left, r: b.right, w: b.width}; };
+                const btns = Array.from(r.querySelectorAll('.name-row__actions button'));
                 return { row: {l: r.getBoundingClientRect().left, r: r.getBoundingClientRect().right},
                          scrollW: r.scrollWidth, clientW: r.clientWidth,
-                         input: q('.name-row__input'), first: q('.name-row__actions .icon-btn'),
-                         last: q('.name-row__actions .icon-btn:last-child'), h: r.getBoundingClientRect().height };
+                         input: q('.name-row__input'), first: q('.name-row__actions .btn'),
+                         last: q('.name-row__actions .btn:last-child'), h: r.getBoundingClientRect().height,
+                         labels: btns.map((b) => b.textContent),
+                         useDisabled: btns.length ? btns[0].disabled : null,
+                         using: r.classList.contains('name-row--using') };
               })""")
             ok_narrow = len(geom) >= 1 and all(   # len>=1：空数组会让 all() 假通过
                 g["scrollW"] <= g["clientW"] + 1                      # 不溢出
@@ -614,6 +618,13 @@ def main() -> int:
                 and g["h"] <= 48                                      # 仍是单行（没被挤成两行）
                 for g in geom)
             check("窄屏行内不重叠 / 不溢出 / 不换行", ok_narrow, json.dumps(geom, ensure_ascii=False))
+            # ★ v0.18.0 实测反馈：网页端要和 PC 端一样有「选用 / 换色 / 删除」三个**文字**按钮
+            check("★ 每行都是三个文字按钮：选用 / 换色 / 删除（与 PC 端同款）",
+                  all(g["labels"] == ["选用", "换色", "删除"] for g in geom),
+                  json.dumps([g["labels"] for g in geom], ensure_ascii=False))
+            check("……正在用的那一行「选用」置灰（不用重复点），其余行可点",
+                  all((g["useDisabled"] is True) == g["using"] for g in geom),
+                  json.dumps([(g["using"], g["useDisabled"]) for g in geom]))
             card = pageN.evaluate("""() => { const c = document.getElementById('card-nicknames');
                 const b = c.getBoundingClientRect(); return {l: b.left, r: b.right, w: b.width}; }""")
             check("昵称卡片不超出 375px 视口", card["l"] >= 0 and card["r"] <= 377, json.dumps(card))

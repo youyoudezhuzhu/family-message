@@ -218,6 +218,8 @@ code { font-family: var(--fluent-font-mono); font-size: 12px; }
 .btn--danger { background: transparent; color: var(--fluent-color-error); }
 .btn--danger:hover:not(:disabled) { background: var(--fluent-color-error-tint); }
 .btn--danger:active:not(:disabled) { background: var(--fluent-color-error-tint); }
+/* 小号按钮：昵称行里的「选用 / 换色 / 删除」用（与 PC 端 .btn--sm 同值） */
+.btn--sm { height: 32px; padding: 0 var(--spacing-md); font: var(--font-caption); }
 
 .btn:disabled {
   cursor: not-allowed;
@@ -719,7 +721,13 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   outline: none;
 }
 /* 行尾操作（重新分配颜色 / 删除）：定宽不压缩，输入框自己吃掉剩余宽度 —— 窄屏不重叠 */
-.name-row__actions { display: flex; flex: 0 0 auto; gap: 0; }
+.name-row__actions { display: flex; flex: 0 0 auto; align-items: center; gap: var(--spacing-xs); }
+/* 窄屏（手机）：三个文字按钮比原来的图标按钮宽，375px 上要把间距和内边距收紧，
+   才能保住「名字 + 三个按钮」仍然是**单行**（行高 ≤ 48px，见 test_nickname_web 的窄屏用例）。 */
+@media (max-width: 480px) {
+  .name-row__actions { gap: 2px; }
+  .name-row__actions .btn--sm { padding: 0 var(--spacing-sm); }
+}
 
 /* 昵称卡片里的说明行（额度提示 / 错误 / 空态引导） */
 .nick-note {

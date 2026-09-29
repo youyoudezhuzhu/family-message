@@ -476,6 +476,64 @@ def case_create_delete_progress(b, base, out):
         ctx.close()
 
 
+def _theme_select_styles(pg):
+    """读「主题」下拉在**当前主题**下算出来的样式（option 的底色/文字色最关键）。"""
+    return pg.evaluate("""() => {
+      const sel = document.querySelector('#set-theme');
+      const opt = sel ? sel.querySelector('option') : null;
+      const co = opt ? getComputedStyle(opt) : null;
+      const cs = sel ? getComputedStyle(sel) : null;
+      return {
+        mode: document.documentElement.getAttribute('data-mode'),
+        scheme: cs ? cs.colorScheme : '',
+        selBg: cs ? cs.backgroundColor : '', selFg: cs ? cs.color : '',
+        optBg: co ? co.backgroundColor : '', optFg: co ? co.color : '',
+      };
+    }""")
+
+
+def case_theme_select(b, base, out):
+    """T6 设置页「主题」下拉：**暗色模式下必须看得清**（v0.18.0 实测：弹窗白底 + 白字）。
+
+    原生 `<select>` 的下拉列表由浏览器/系统绘制，**不吃 `.select__el` 的样式** ——
+    这条检查就落在「option 有没有拿到**不透明**底色 + 与主题一致的文字色 + color-scheme」上。
+    ⚠ 弹窗本身截不到（系统级控件，headless 也不进截图），所以断言的是**它渲染时会用的计算样式**。
+    """
+    ctx, pg, errs = open_page(b, base, "settings")
+    try:
+        pg.select_option("#set-theme", "dark")
+        pg.click("#settings-save")          # 真机路径：主题要**保存**才生效（pc.js:785-792）
+        pg.wait_for_timeout(400)
+        d = _theme_select_styles(pg)
+        print("  暗色：", json.dumps(d, ensure_ascii=False))
+        check("T6 暗色：<option> 底色是**不透明**色（不是 rgba 半透明 → 不会透出系统白底）",
+              d["optBg"].startswith("rgb(") and d["optBg"] != "rgb(0, 0, 0)", d["optBg"])
+        check("T6 暗色：<option> 底色不是白（老 bug：白底 + 白字 = 看不见）",
+              d["optBg"] not in ("rgb(255, 255, 255)", "white"), d["optBg"])
+        check("T6 暗色：<option> 文字是浅色（与深底有对比）",
+              d["optFg"] in ("rgb(255, 255, 255)", "white"), d["optFg"])
+        check("T6 暗色：select 自带 color-scheme: dark（浏览器才把弹窗画成深色）",
+              "dark" in d["scheme"], d["scheme"])
+        pg.locator("#set-theme").scroll_into_view_if_needed()
+        box = pg.locator("#set-theme").bounding_box()
+        pg.screenshot(path=str(out / "pc-theme-select-dark.png"),
+                      clip={"x": max(0, box["x"] - 140), "y": max(0, box["y"] - 70),
+                            "width": box["width"] + 300, "height": box["height"] + 110})
+        pg.screenshot(path=str(out / "pc-theme-settings-dark-full.png"))
+
+        pg.select_option("#set-theme", "light")
+        pg.click("#settings-save")
+        pg.wait_for_timeout(400)
+        l = _theme_select_styles(pg)
+        print("  浅色：", json.dumps(l, ensure_ascii=False))
+        check("T6 浅色（对照）：<option> 白底 + 深色文字",
+              l["optBg"] in ("rgb(255, 255, 255)", "white") and l["optFg"] == "rgb(26, 26, 26)", l)
+        check("T6 浅色：select 的 color-scheme 是 light", "light" in l["scheme"], l["scheme"])
+        check("T6 切主题零控制台报错", not errs, errs[:3])
+    finally:
+        ctx.close()
+
+
 def main():
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
@@ -501,6 +559,8 @@ def main():
         case_rename_pending(b, base, out, "taken", in_view="popup")
         case_rename_pending(b, base, out, "silent")
         case_create_delete_progress(b, base, out)
+        print("\n== T6 设置页主题下拉（暗色下看得清）==")
+        case_theme_select(b, base, out)
         b.close()
     srv.shutdown()
     print("\n截图目录：", out)
