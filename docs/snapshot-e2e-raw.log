@@ -1,0 +1,31 @@
+═══ 昵称快照 · 三端 E2E ═══
+  实例 http://127.0.0.1:18899　壳页 http://127.0.0.1:45933
+  昵称：妈妈 id=1 color=color_01
+
+== E1/E2. Web A 发消息 → 落库快照 ==
+  落库行：{"sender_name": "妈妈", "sender_nickname_id": 1, "sender_color": "color_01"}
+    [PASS] E1 快照 = (妈妈 id, 妈妈色) → [1, "color_01"]
+    [PASS] E2 Web B 不刷新就收到（DOM 里出现该消息） → "妈妈 | E2E 三端消息"
+  设备帧快照字段：{"sender_nickname_id": 1, "sender_color": "color_01"}
+    [PASS] E5 服务端→设备的那一帧带快照（与落库一致） → [1, "color_01"]
+    [PASS] E5b 帧里 history 的条目也带快照字段（PC 右侧历史同样按快照上色） → [{"message_id": 1, "sender_name": "妈妈", "content": "E2E 三端消息", "created_at": "2026-09-29 12:20:36", "direction": "in", "sender_nickname_id": 1, "sender_color": "color_01"}]
+
+== E3/E4. 三端解析同一个逻辑色 ID + 渲染底色一致 ==
+  Web A={"id": "color_01", "bg": "rgb(94, 53, 177)"}  Web B={"id": "color_01", "bg": "rgb(94, 53, 177)"}
+  PC 壳页={"id": "color_01", "bg": "rgb(94, 53, 177)"}
+    [PASS] E3 三端解析出同一个逻辑色 ID（= 妈妈的颜色） → {"A": "color_01", "B": "color_01", "PC": "color_01"}
+    [PASS] E4 三端渲染头像底色一致（共用 chat.js） → {"A": "rgb(94, 53, 177)", "B": "rgb(94, 53, 177)", "PC": "rgb(94, 53, 177)"}
+
+== E6. ★ 重创同名：老消息仍按快照解析成旧色 ==
+  重创：新 id=2 新 color=color_08（旧 color=color_01）
+    [PASS] E6 前置：重创后换了色，两行颜色不同（断言才可证） → ["color_01", "color_08"]
+    [PASS] E6a 老消息在库里没被改写 → [1, "color_01"]
+  重创后 Web B={"id": "color_01", "bg": "rgb(94, 53, 177)"}  PC={"id": "color_01", "bg": "rgb(94, 53, 177)"}
+    [PASS] E6b Web B（不刷新）老消息仍是旧色，且不是新行的色 → ["color_01", "color_08"]
+    [PASS] E6c PC 端老消息仍是旧色（快照驱动，不走名字反查） → ["color_01", "color_08"]
+    [PASS] E7 A 控制台零报错 → []
+    [PASS] E7 B 控制台零报错 → []
+    [PASS] E7 PC 控制台零报错 → []
+
+截图目录： /vol1/@appdata/hermes-agent/tmp/fm-snapshot-e2e
+✓ 三端 E2E 全部通过
