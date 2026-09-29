@@ -83,7 +83,7 @@
 | type | 载荷 | 说明 |
 |---|---|---|
 | `hello` | `device_id` `token` `server_time` `offline_after_seconds` | 握手成功（§3） |
-| `message` | `message_id` `sender_name` `content` `message_type` `created_at` `status` `auto_close_seconds` `history[]` `redelivered?` | 有条留言要弹（见下） |
+| `message` | `message_id` `sender_name` `content` `message_type` `created_at` `status` `sender_nickname_id` `sender_color` `auto_close_seconds` `history[]` `redelivered?` | 有条留言要弹（见下）。★ 快照两字段与 `history[]` 里每个条目都带（PC 端 `pc.js` 的解析优先级是「快照 id → 快照色 → 名字反查」，缺了就会在**重创同名**时挂错行，§3.4.1） |
 | `heartbeat_ack` | `server_time` | 心跳回执 |
 | `screenshot_request` | `request_id` | 要求截屏 |
 | `shutdown` | `delay_seconds` | 要求关机（默认 5 秒） |

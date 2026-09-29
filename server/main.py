@@ -305,6 +305,10 @@ def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dic
     Agent 直接渲染，不需要再多一次往返请求。
 
     对外只有单一状态：status = "sent"（逐设备的已送达/已显示只存在于服务端内部）。
+
+    ★ 快照字段（`sender_nickname_id` / `sender_color`）**必须带上**：PC 端
+    `pc.js: nickColorIdForMessage()` 的优先级是「快照 id → 快照色 → 名字反查」，
+    没有快照就只能按名字反查 —— 重创同名 / 删名之后会挂到**新行**上（§3.4.1 明令禁止）。
     """
     payload = {
         "type": "message",
@@ -314,6 +318,9 @@ def _device_payload(msg: dict, device_id: str, redelivered: bool = False) -> dic
         "message_type": msg["message_type"],
         "created_at": msg["created_at"],
         "status": msg_svc.STATUS_SENT,
+        # 昵称快照（可能为 None = 老消息/老客户端 → PC 走名字反查 + 哈希兜底）
+        "sender_nickname_id": msg.get("sender_nickname_id"),
+        "sender_color": msg.get("sender_color"),
         "auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
         "history": msg_svc.group_history(
             limit=int(CONFIG["message"].get("history_limit", 30)),

@@ -200,6 +200,10 @@ def group_history(limit: int = 30, viewer_device_id: Optional[str] = None) -> li
             "content": m["content"],
             "created_at": m["created_at"],
             "direction": "out" if mine else "in",
+            # 昵称快照（§3.2）：PC 弹窗右侧的历史也要按**快照**上色 ——
+            # 少了这两个字段，重创同名 / 删名之后历史就会按名字反查挂到新行上（§3.4.1 明令禁止）。
+            "sender_nickname_id": m.get("sender_nickname_id"),
+            "sender_color": m.get("sender_color"),
         })
     return out
 
