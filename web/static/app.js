@@ -485,6 +485,7 @@ async function bootConsole() {
   nickEnabled = !!(state.config && state.config.nickname_enabled);
   nickPoolVersion = (state.config && state.config.color_pool_version) || 0;
   dropLegacyNamesKey();                       // 旧 key 只删不读（不再有第二真相源）
+  if (nickEnabled) await loadColorTable();     // ★ v0.19：色表以服务端为准（内置表只兜底）
   if (nickEnabled) await loadNicknames();      // 拉整表（空库 → 空数组，服务端不建任何行）
   redrawNicks();
 
@@ -1136,6 +1137,9 @@ function handleServerFrame(d) {
     upsertNickname(d.nickname);
   } else if (d.type === 'nickname_removed') {
     dropNickname(d.nickname);          // 软删：摘缓存；正在用它的人回退灰临时（§11 风险 4）
+  } else if (d.type === 'color_table_changed') {
+    // ★ v0.19：色表被增删 → 重拉一次并按新表重画（老客户端忽略这一帧即可，帧里只有版本号）
+    loadColorTable();
   } else if (d.type === 'nickname_list_sync') {
     // 整表下发（新客户端连上 / 客户端主动请求时服务端推）：直接替换本地缓存，对齐一致性
     if (typeof d.pool_version === 'number') nickPoolVersion = d.pool_version;
@@ -1274,6 +1278,28 @@ async function loadNicknames() {
     nickList = [];
     rebuildNickIndex();
     snack('读取昵称失败：' + nickErrText(e), { error: true });
+  }
+}
+
+/** ★ v0.19：拉服务端**颜色表**并让本地以它为准（内置表只做首屏兜底）。
+
+    谁调：① bootConsole（启动就拉一次）；② 收到 `color_table_changed` 广播后重拉。
+    拿到就重画（昵称行色点 / 设置页 / 消息里的头像底色都按新表重算，因为显示色是现算的）。
+    拉不到 → 保留手上那份（内置表或上次的表），**绝不清空**，只提示一次。 */
+async function loadColorTable() {
+  if (!window.FMNickColor) return false;
+  try {
+    const r = await api('/api/nicknames/colors?status=active');
+    const okSet = FMNickColor.setTable(r && r.colors, r && r.color_pool_version);
+    if (typeof (r && r.color_pool_version) === 'number') nickPoolVersion = r.color_pool_version;
+    if (okSet) {
+      redrawNicks();
+      renderMessages(isLogAtBottom());      // 老消息的快照色也要按新表重算
+    }
+    return !!okSet;
+  } catch (e) {
+    snack('读取颜色表失败：' + nickErrText(e), { error: true });
+    return false;
   }
 }
 

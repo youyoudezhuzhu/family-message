@@ -100,6 +100,14 @@
 | `nickname_error` | `request` `code` `message` `existing_nickname_id?` | 昵称操作被拒（`request` 回显发起帧 type） |
 | `color_table_changed` | `color_pool_version` | **v0.19**：颜色表被增删（加色 / 停用）→ 客户端**重拉** `GET /api/nicknames/colors` 并重画；认不出的客户端忽略即可（只带版本号，不推全表） |
 
+### `hello` 帧（服务端 → 设备，连上即发）
+
+- 既有握手字段：`device_id`、`token`、`server_time`、`offline_after_seconds`。
+- **v0.19 新增**：颜色表版本 + 可用的颜色表 `[{color_id, hex}]` —— **设备端 / PC 壳 / 将来 Android
+  以此为准**（客户端内置表只做首屏兜底，认不出的逻辑色 ID 走兜底色）。
+  色表变更由广播 `color_table_changed` 通知，客户端据此重拉 `GET /api/nicknames/colors`。
+  昵称开关关闭时这两个字段**都不存在**（与「开关关闭时现有行为逐字不变」一致）。
+
 ### `message` 帧
 
 ```json

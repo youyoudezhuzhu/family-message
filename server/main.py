@@ -1103,6 +1103,13 @@ async def ws_device(websocket: WebSocket, device_id: str):
         "token": known["token"],
         "server_time": db.now_iso(),
         "offline_after_seconds": CONFIG["device"]["offline_after_seconds"],
+        # ★ v0.19：色表随 hello 下发（设备端 / PC 壳 / 将来 Android 以此为准，内置表只做兜底）。
+        #   开关关闭时**一个字段都不加**（与「开关关闭时现有行为逐字不变」一致）；
+        #   老客户端忽略这个字段即可 —— 认不出的逻辑色 ID 走兜底色（§2.4）。
+        **({"color_pool_version": color_svc.pool_version(),
+            "color_table": [{"color_id": c["color_id"], "hex": c["hex"]}
+                            for c in color_svc.rows("active")]}
+           if CONFIG["nickname"]["enabled"] else {}),
     })
     await HUB.broadcast_web({"type": "device_status", "device_id": device_id,
                              "status": "online", "device": _public(row)})

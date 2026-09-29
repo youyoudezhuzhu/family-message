@@ -71,12 +71,40 @@
   }
 
   /** 这个逻辑色 ID 认不认识（'gray' 算认识的）。调用方据此决定是否走哈希兜底 */
+  /* ★ v0.19：色表是**数据**（服务端表 `nickname_palette` 是权威），上面那份 BASE 只做
+     「首屏兜底」：拿到服务端表前 / 服务端没下发时按它渲染，认不出的 ID 依旧走 FALLBACK（灰）。
+     setTable(rows, version) 由 app.js 在启动时与收到 color_table_changed 后调用。 */
+  var SERVER_TABLE = null;                 // {color_17:'#0FA3B1', …}；null = 还没拿到
+  var TABLE_VERSION = 1;                   // 服务端 color_pool_version
+
+  function setTable(rows, version) {
+    if (!rows || typeof rows.length !== 'number') return false;
+    var next = {};
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i] && rows[i].color_id, hex = rows[i] && rows[i].hex;
+      if (typeof id === 'string' && typeof hex === 'string'
+          && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
+        next[id] = hex.toUpperCase();
+      }
+    }
+    if (!Object.keys(next).length) return false;   // 空表 / 全不合法 → 保留旧表，绝不把表清空
+    SERVER_TABLE = next;
+    if (typeof version === 'number') TABLE_VERSION = version;
+    return true;
+  }
+
+  function tableVersion() { return TABLE_VERSION; }
+  function hasServerTable() { return !!SERVER_TABLE; }
+  function tableIds() { return Object.keys(SERVER_TABLE || BASE); }
+
   function isKnown(id) {
+    if (SERVER_TABLE && Object.prototype.hasOwnProperty.call(SERVER_TABLE, id)) return true;
     return typeof id === 'string' && Object.prototype.hasOwnProperty.call(BASE, id);
   }
 
-  /** 逻辑色 ID → 基础色值（未知 → 灰的基础色值） */
+  /** 逻辑色 ID → 基础色值（**服务端表优先**，未知 → 灰的基础色值） */
   function base(id) {
+    if (SERVER_TABLE && Object.prototype.hasOwnProperty.call(SERVER_TABLE, id)) return SERVER_TABLE[id];
     return isKnown(id) ? BASE[id] : BASE[FALLBACK_ID];
   }
 
@@ -130,6 +158,11 @@
     avatarBg: avatarBg,
     avatarFg: avatarFg,
     display: display,
+    /* ★ v0.19：色表以服务端为准 */
+    setTable: setTable,
+    tableVersion: tableVersion,
+    hasServerTable: hasServerTable,
+    tableIds: tableIds,
     /* 下面几个只给测试 / 排查用（断言 §4.4 表用得上） */
     mix: mix,
     contrast: contrast,

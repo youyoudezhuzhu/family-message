@@ -748,6 +748,47 @@ def main() -> int:
             check("广播载荷里没有任何 HEX（颜色只走逻辑色 ID）", not hexes,
                   str(hexes[:1]))
 
+            # ── G. ★ v0.19：颜色表以服务端为准（内置表只兜底）+ 广播后免刷新跟着变 ──
+            #    ⚠ 必须放在「断网 / 开关关闭」之前：那两段会把 on 实例停掉。
+            section("★ G 颜色表以服务端为准（v0.19 P2）")
+            reset_library(on, keep=0)          # 自备前置：清库，不假设实例天生干净
+            st, body = http(on.base, "POST", "/api/nicknames/colors", {"hex": "#0FA3B1"})
+            custom = (body.get("color") or {}).get("color_id")
+            ver = body.get("color_pool_version")
+            check("（前置）服务端加一个自定义色 #0FA3B1",
+                  st == 201 and custom == "color_17", f"{st} {body}")
+            st, body = http(on.base, "POST", "/api/nicknames", {"display_name": "服务端的色"})
+            nid = (body.get("nickname") or {}).get("nickname_id")
+            st2, _ = http(on.base, "POST", f"/api/nicknames/{nid}/color", {"color_id": custom})
+            check("（前置）把那个昵称指定成自定义色", st == 201 and st2 == 200, f"{st} {st2}")
+
+            G = browser.new_context(viewport={"width": 1280, "height": 900})
+            pageG, errsG = open_page(G, on.base)
+            stateG = pageG.evaluate("""() => ({
+                has: FMNickColor.hasServerTable(), v: FMNickColor.tableVersion(),
+                ids: FMNickColor.tableIds().length, hex: FMNickColor.base('color_17'),
+            })""")
+            check("★ 页面启动就拉了服务端色表（认得出 / 版本一致 / 17 个色）",
+                  stateG["has"] and stateG["v"] == ver and stateG["ids"] == 17, json.dumps(stateG))
+            check("★ 自定义色按**服务端 HEX** 渲染（内置表里没有 color_17 —— 走兜底会变灰）",
+                  stateG["hex"] == "#0FA3B1", json.dumps(stateG))
+            go_settings(pageG)
+            grows = [r for r in row_colors(pageG) if r["name"] == "服务端的色"]
+            check("……昵称行色点用的就是它（服务端表优先，不是灰兜底）",
+                  bool(grows) and grows[0]["colorId"] == "color_17",
+                  json.dumps(grows, ensure_ascii=False))
+            shot(pageG, "12-color-table-from-server")
+
+            # 广播：页面开着，服务端再加一个色 → 免刷新跟到
+            st, body = http(on.base, "POST", "/api/nicknames/colors", {"hex": "#7B1FA2"})
+            pageG.wait_for_function("() => FMNickColor.tableIds().length >= 18", timeout=8000)
+            afterG = pageG.evaluate("() => ({v: FMNickColor.tableVersion(), hex: FMNickColor.base('color_18')})")
+            check("★ 服务端加色 → color_table_changed 广播 → 页面**免刷新**重拉（18 个色 / 版本跟进）",
+                  afterG["hex"] == "#7B1FA2" and afterG["v"] == body.get("color_pool_version"),
+                  json.dumps(afterG))
+            check("……G 段零控制台报错", not errsG, str(errsG[:3]))
+            G.close()
+
             # ── 断网 / 服务不可达：网页端不崩、不本地生效 ─────────────────
             section("G' 断网（服务不可达）时昵称管理失败并提示，不本地生效")
             go_settings(pageA)
@@ -798,6 +839,7 @@ def main() -> int:
             check("开关关闭时仍能发消息", len(msg_colors(page)) >= 1, str(msg_colors(page)[-1:]))
             check("开关关闭时页面无 JS 错误", errs == [], str(errs[:2]))
             shot(page, "11-disabled-fallback")
+
             browser.close()
         off.stop()
 

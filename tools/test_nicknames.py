@@ -993,8 +993,17 @@ async def _ws_suite(srv: _Srv, out: list) -> None:
         await ok("新 /ws/web 连上即收 nickname_list_sync（整表同步，§5.4）",
                  (await w1.wait("nickname_list_sync", 0.5)) is not None,
                  f"web-A 帧序 {w1.types()}")
-        await ok("设备连上收 hello（既有握手未受影响）",
-                 (await dev.wait("hello", 0.5)) is not None, f"{dev.types()}")
+        hello_dev = await dev.wait("hello", 0.5)
+        await ok("设备连上收 hello（既有握手未受影响）", hello_dev is not None, f"{dev.types()}")
+        st_ct, ct = await asyncio.to_thread(_http, B, "GET", "/api/nicknames/colors?status=active")
+        await ok("★ 设备 hello 里带了色表（v0.19 P2：color_table + color_pool_version，"
+                 "设备端 / PC 壳 / 将来 Android 都以此为准，内置表只兜底）",
+                 bool(hello_dev) and st_ct == 200
+                 and len(hello_dev.get("color_table") or []) == len(ct.get("colors") or [])
+                 and hello_dev.get("color_pool_version") == ct.get("color_pool_version")
+                 and all(set(c) == {"color_id", "hex"} for c in (hello_dev.get("color_table") or [])),
+                 f"n={len((hello_dev or {}).get('color_table') or [])} "
+                 f"v{(hello_dev or {}).get('color_pool_version')} vs {len(ct.get('colors') or [])}")
 
         # ── HTTP POST 新建 → 三端 nickname_created ──
         st, body = await asyncio.to_thread(_http, B, "POST", "/api/nicknames",
