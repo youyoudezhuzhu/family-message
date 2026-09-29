@@ -176,6 +176,26 @@ public sealed class WindowsPlatformTests
         Assert.Equal(("DESKTOP-1", "jzh"), LogonUserVerifier.SplitUser("DESKTOP-1\\jzh"));
         Assert.Equal((null, "jzh"), LogonUserVerifier.SplitUser("  jzh  "));
         Assert.Equal((null, "\\jzh"), LogonUserVerifier.SplitUser("\\jzh"));
+        // 微软账户：邮箱走 MicrosoftAccount 虚拟域；也可以显式写成 MicrosoftAccount\邮箱
+        Assert.Equal(("MicrosoftAccount", "someone@outlook.com"),
+                     LogonUserVerifier.SplitUser("someone@outlook.com"));
+        Assert.Equal(("MicrosoftAccount", "someone@outlook.com"),
+                     LogonUserVerifier.SplitUser("MicrosoftAccount\\someone@outlook.com"));
+    }
+
+    [Fact]
+    public void LogonUser_微软账户邮箱写法不会抛异常()
+    {
+        if (NotWindows()) return;
+        var v = new LogonUserVerifier();
+
+        // 不存在的邮箱 + 错口令：只要求"不抛、如实回 false"。
+        // ⚠ 这里**不能**拿真实邮箱去试 —— MSA 走云端验证，错误尝试会累加
+        //   Microsoft 账户的失败计数（可能触发账号保护）。
+        var ok = v.Verify("fm-no-such-user-" + Guid.NewGuid().ToString("N") + "@outlook.com", "definitely-wrong");
+
+        Assert.False(ok);
+        Assert.NotNull(v.LastFailureReason);
     }
 
     [Fact]

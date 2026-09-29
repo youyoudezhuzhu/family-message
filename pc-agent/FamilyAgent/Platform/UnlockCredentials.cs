@@ -119,7 +119,8 @@ public sealed class UnlockCredentials
         if (check == UnlockCheckResult.LockedOut)
             return (false, $"连续失败次数过多，已暂停校验（{UnlockGate.LockoutWindow.TotalMinutes:0} 分钟后再试）。");
         if (check != UnlockCheckResult.Ok)
-            return (false, "口令校验没通过，没有保存（再试一次，或确认用户名写成 机器名\\用户名）。");
+            return (false, "口令校验没通过，没有保存。用户名填 whoami 显示的 电脑名\\用户名 最稳，"
+                         + "微软账户也可以填账户邮箱；口令是账户密码、不是 PIN。");
 
         _vault.Store(user, secret, DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         var aclOk = CredentialFileAcl.Restrict(_vault.Path, CredentialFileAcl.CurrentUserIdentity());
@@ -141,7 +142,8 @@ public sealed class UnlockCredentials
             UnlockCheckResult.Ok => (true, "校验通过。"),
             UnlockCheckResult.LockedOut =>
                 (false, $"连续失败次数过多，已暂停校验（{UnlockGate.LockoutWindow.TotalMinutes:0} 分钟后再试）。"),
-            _ => (false, "口令校验没通过（注意用户名格式：本机账户写 机器名\\用户名）。"),
+            _ => (false, "口令校验没通过（注意用户名：本机账户填 whoami 显示的 电脑名\\用户名，"
+                       + "微软账户可以填账户邮箱；口令是账户密码、不是 PIN）。"),
         };
     }
 

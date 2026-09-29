@@ -240,14 +240,19 @@
         <div class="form-row">
           <label class="field-label" for="set-unlock-user">用户名</label>
           <input class="input" id="set-unlock-user" type="text" autocomplete="username"
-                 spellcheck="false" placeholder="本机账户写 机器名\用户名，也可以只写用户名">
+                 spellcheck="false" placeholder="whoami 显示的 电脑名\用户名，或微软账户邮箱">
+          <span class="field-support">在命令提示符里跑 <code>whoami</code>，把打印出来的
+            <code>电脑名\用户名</code> 原样填进来最稳。用微软账户登录的电脑也可以直接填
+            <strong>账户邮箱</strong>（走云端验证）。</span>
         </div>
 
         <div class="form-row">
           <label class="field-label" for="set-unlock-pass">口令</label>
           <input class="input" id="set-unlock-pass" type="password" autocomplete="current-password"
-                 placeholder="Windows 登录口令">
-          <span class="field-support">已经存过的话，留空表示不改动。</span>
+                 placeholder="Windows 登录口令（不是 PIN）">
+          <span class="field-support">填<strong>账户密码</strong>，不是开机用的 PIN / 指纹 ——
+            微软账户的 PIN 交给 Windows 保管、拿不到明文，本地验不了。
+            已经存过的话，留空表示不改动。</span>
         </div>
 
         <div class="bar">

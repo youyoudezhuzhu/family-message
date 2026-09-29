@@ -685,6 +685,17 @@ def require(perm):
   "登录前也持有凭据 + Service 重启用标准恢复策略"，**不影响上面这套的可用性**（当前由
   交互进程持有凭据，LocalMachine 作用域 + ACL 已经让未来的 Service 能读到同一份文件）。
 
+- **2026-09-29 · 微软账户（MSA）支持补强**（用户实测提问驱动）：
+  - `LogonUserVerifier.SplitUser` 认三种写法：`域\账户`（`whoami` 打印的形式，最稳）、
+    裸账户名（当本机账户）、**邮箱**（走 Windows 虚拟域 `MicrosoftAccount` 云端验证）。
+    顺序上先判反斜杠再判 `@`，所以 `MicrosoftAccount\user@outlook.com` 也成立。
+  - 设置页文案改成 MSA 用户真能照做的版本：用户名提示 `whoami` 与"可填邮箱"，
+    口令提示**"是账户密码、不是 PIN"**（MSA + Windows Hello 的 PIN 拿不到明文，本地验不了）。
+  - 真机测试 +2：邮箱写法的拆分规则；用**不存在的邮箱**验证"不抛异常、如实回 false"
+    （⚠ 绝不拿真实邮箱试错口令 —— MSA 走云端，错误尝试会累加 Microsoft 账户的失败计数）。
+  - 结论（写清楚，免得用户以为是自己填错）：**MSA + PIN 场景下"用口令远程解锁"这条路
+    本身不通**，正解是 Phase 3 的 Credential Provider（它拿的是登录界面上用户实际输入的东西）。
+
 - **待做（按 §16.2 清单顺序）**：
   1. ~~Windows 侧 `DpapiSecretProtector`~~ ✅（第 2 步）
   2. ~~`LogonUser` 校验实现~~ ✅（第 3 步）
