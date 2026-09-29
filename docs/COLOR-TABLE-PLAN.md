@@ -44,7 +44,7 @@
 ### 3.1 数据模型（新增一张表，内置 16 色做初始数据）
 
 ```sql
-CREATE TABLE nickname_colors (
+CREATE TABLE nickname_palette (
   color_id   TEXT PRIMARY KEY,          -- 'color_01' … 允许增加到 'color_17' 以上（只增）
   hex        TEXT NOT NULL,             -- 归一化 '#RRGGBB'
   sort       INTEGER NOT NULL,          -- 池子顺序（= 新建优先顺序）
@@ -52,6 +52,8 @@ CREATE TABLE nickname_colors (
   created_at TEXT NOT NULL
 );
 ```
+> 表名说明：**不叫 `nickname_colors`** —— 那是 r3 废弃的「归属层」的名字，
+> `tools/test_nicknames.py` 里有守卫断言它不许存在；色表与「归属」是两件事。
 - 迁移：把现有 16 色写进去（`color_pool_version` 保持 **1**，语义不变）；`gray` 依旧不入表。
 - `nicknames.color` 的 DDL `CHECK` 枚举要**放宽**（否则自定义色进不去）→ 白名单改由 `is_valid_shared_color()` 查表判定。
 
@@ -81,6 +83,14 @@ CREATE TABLE nickname_colors (
 ---
 
 ## 4. 分期（每期可独立交付、可回退）
+
+> **执行进度**
+> - **P1 ✅ 已完成（2026-09-29）**：`nickname_palette` 表 + 迁移（真实库副本实测通过）、颜色表服务
+>   （增 / 停用 / 指定 / 校验 / 池上限 32）、4 个 HTTP 端点 + `color_table_changed` 广播、
+>   `create`·`reassign` 改用动态色表、活跃上限 16 与池子大小解耦。
+>   测试：`tools/test_nicknames.py` **154/154**（含 27 条色表断言：ID 不复用、在用色不可停用、
+>   指定颜色、广播三端都收到、版本号逐次 +1）。
+> - **P2 / P3 / P4 未开工**（客户端渲染、网页界面、回归与发布）。
 
 | 期 | 内容 | 交付物 | 不动的东西 |
 |---|---|---|---|

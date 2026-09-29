@@ -98,6 +98,7 @@
 | `nickname_color_changed` | `nickname{}` | 「重新分配颜色」的结果 |
 | `nickname_removed` | `nickname{}` `released_color` | 软删（`status=inactive`）后广播，颜色回池 |
 | `nickname_error` | `request` `code` `message` `existing_nickname_id?` | 昵称操作被拒（`request` 回显发起帧 type） |
+| `color_table_changed` | `color_pool_version` | **v0.19**：颜色表被增删（加色 / 停用）→ 客户端**重拉** `GET /api/nicknames/colors` 并重画；认不出的客户端忽略即可（只带版本号，不推全表） |
 
 ### `message` 帧
 
@@ -196,6 +197,7 @@ PC 侧另有本地重放缓存）。应答用 `unlock_result`（§5），`status
 | `nickname_updated` | 改名：`{nickname}` |
 | `nickname_color_changed` | 换色：`{nickname}` |
 | `nickname_removed` | 删除：`{nickname, released_color}` |
+| `color_table_changed` | **v0.19** 颜色表变了：`{color_pool_version}`（客户端重拉色表） |
 | `message_status` | ⚠ **预留 / 未启用**：逐设备 ACK 推进的广播在群聊模型下**已被注释掉**（数据照旧入库，只差这一层）。要恢复就放开 `server/main.py` 里那段注释 |
 
 ---
@@ -238,6 +240,10 @@ PC 侧另有本地重放缓存）。应答用 `unlock_result`（§5），`status
 | PATCH | `/api/nicknames/{nickname_id}` | 改名 `{display_name}`；撞名 **409 `NAME_TAKEN`**；不存在 404 |
 | POST | `/api/nicknames/{nickname_id}/reassign-color` | 重新分配颜色（新色 ≠ 旧色；池满 503 `NO_AVAILABLE_COLOR`） |
 | DELETE | `/api/nicknames/{nickname_id}` | 软删（`status=inactive`），颜色回池；已删 409 `NICKNAME_INACTIVE` |
+| GET | `/api/nicknames/colors` | **v0.19** 颜色表：`{color_pool_version, colors:[{color_id, hex, sort, status, used_by[]}]}`；`?status=active\|retired\|all`（默认 `all`） |
+| POST | `/api/nicknames/colors` | **v0.19** 加颜色 `{hex}` 或 `{rgb:[r,g,b]}`（收 `#RRGGBB`/`RRGGBB`/`#RGB`/`rgb(…)`/`r,g,b`），201 `{color, color_pool_version}`；同色值 409 `COLOR_ALREADY_EXISTS`；非法 422 `INVALID_COLOR_HEX`；池满 503 `COLOR_POOL_FULL` |
+| DELETE | `/api/nicknames/colors/{color_id}` | **v0.19** 停用颜色（行保留、`status=retired`，**ID 不复用**）；在用 409 `COLOR_IN_USE`；已停用 409 `COLOR_RETIRED`；不存在 404；形状错 422 `INVALID_COLOR_ID` |
+| POST | `/api/nicknames/{nickname_id}/color` | **v0.19** 人为指定颜色 `{color_id}`（与随机换色并列）；被别人占用 409 `COLOR_IN_USE`；已停用 409 `COLOR_RETIRED`；同色幂等 200 |
 | GET | `/api/xiaomi/devices` | 米家开关绑定列表 |
 | POST | `/api/xiaomi/devices` | 新建绑定 |
 | PATCH | `/api/xiaomi/devices/{id}` | 改绑定（动作 / 关联 PC / siid / piid） |
