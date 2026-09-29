@@ -643,9 +643,24 @@ def require(perm):
   ⚠ 这一组用的是**假实现**（`FakeProtector` / `FakeVerifier`）—— DPAPI 与 `LogonUser` 的真实现
   是 Windows 侧的事，真机行为要等接线后在 Windows 上验。
 
+- **2026-09-29 · 第 2–3 步完成 ✅**：Windows 真实现进新工程 `pc-agent/FamilyAgent.Windows/`
+  （`net9.0-windows`，**不引 NuGet** —— DPAPI 与 `LogonUser` 都直接 P/Invoke crypt32/advapi32，
+  少一个包就少一次云编译离线还原失败的可能）：
+  - `Secrets/DpapiSecretProtector.cs`：DPAPI 两种作用域（`CurrentUser` / `LocalMachine` + 附加熵），
+    加密前抹掉非托管副本，失败抛 `CryptographicException`（保险箱会吞掉并当"没配凭据"）。
+  - `Secrets/CredentialFileAcl.cs`：**先断继承**再把 ACL 收成 SYSTEM + Administrators
+    （+ 可选账户）—— 因为 LocalMachine 作用域"同机都能解"，文件权限就是第二道门。
+  - `Security/LogonUserVerifier.cs`：`LOGON32_LOGON_NETWORK`（**只验证，不建交互会话**，
+    不会把用户桌面顶掉）；`域\用户` / `机器\用户` / `用户` 都能拆；失败只记 Win32 码，不记口令。
+  - 真机判据 11 条（`FamilyAgent.Windows.Tests`）：Linux 上早退，**只在 windows-latest 的 CI 真跑**
+    （`.github/workflows/build-windows-agent.yml` 新增「Windows 平台能力测试」一步）；
+    已并入「build-windows-agent」workflow。
+  ⚠ 安全细节：`LogonUser` 的失败用例**只用不存在的账户名** —— 拿真实账户名试错口令会累加
+  系统/域的登录失败计数，可能把账户锁在外面。
+
 - **待做（按 §16.2 清单顺序）**：
-  1. Windows 侧 `DpapiSecretProtector`（LocalMachine + 附加熵 + 文件 ACL 只给服务账户）
-  2. `LogonUser` 校验实现（验证型登录，不建交互会话 → 不会把用户桌面顶掉）
+  1. ~~Windows 侧 `DpapiSecretProtector`~~ ✅（第 2 步）
+  2. ~~`LogonUser` 校验实现~~ ✅（第 3 步）
   3. Service 宿主（安装/卸载/恢复策略）+ 命名管道（ACL 限当前交互用户）
   4. 设置页「凭据」卡（输入 / 测试 / 清除 + 冷却提示）
   5. `capabilities` 上报 `unlock` + `docs/PROTOCOL.md` 那行 ❌ → ✅

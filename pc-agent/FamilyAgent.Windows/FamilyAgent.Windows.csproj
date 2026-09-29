@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Windows 平台能力实现（远程解锁 Phase 2）：DPAPI 加密、文件 ACL、LogonUser 校验。
+       见 docs/REMOTE-UNLOCK-PLAN.md §16.2。
+
+       为什么单独一个工程而不是塞进 WPF 宿主：
+         1. 后面 Phase 2 的 **Service** 也要用同一套（服务按 LocalMachine 作用域解密，
+            交互进程按 CurrentUser 作用域加密就不通）—— 两边共用一份实现；
+         2. 它能被 **windows-latest 的 CI 真正跑起来**（DPAPI / LogonUser 只在 Windows 上成立），
+            见 .github/workflows/build-windows-agent.yml 的「Windows 平台能力测试」一步；
+         3. Core 保持「能在 Linux 上跑单测」那条判据不被污染（§8.8）。
+
+       ⚠ 不引 NuGet：`System.Security.Cryptography.ProtectedData` 与 `LogonUser` 都能直接
+         P/Invoke（crypt32 / advapi32），少一个包就少一次云编译离线还原的风险。 -->
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>FamilyAgent.Windows</AssemblyName>
+    <RootNamespace>FamilyAgent.Windows</RootNamespace>
+    <Version>0.19.3</Version>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FamilyAgent.Core\FamilyAgent.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SplitUser 这类"内部小工具"要能被真机测试直接验 —— 用 InternalsVisibleTo 而不是把它
+         公开出去，免得它变成对外承诺的一部分（改名/改签名都要考虑兼容）。 -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+      <_Parameter1>FamilyAgent.Windows.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+</Project>

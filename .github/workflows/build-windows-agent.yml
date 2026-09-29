@@ -40,6 +40,15 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
 
+      # Windows 平台能力（远程解锁 Phase 2 的真实现）：DPAPI 加解密、文件 ACL、
+      # LogonUser 校验。**只在 Windows 上成立**，所以必须放在这个 job 里跑 ——
+      # 另一条 core-tests 在 ubuntu 上只能跑 Core 那批"假实现"判据。
+      - name: Windows 平台能力测试（DPAPI / ACL / LogonUser）
+        run: >
+          dotnet test pc-agent/FamilyAgent.Windows.Tests/FamilyAgent.Windows.Tests.csproj
+          -c Release --nologo
+        shell: pwsh
+
       - name: Publish (win-x64, self-contained, single file)
         run: >
           dotnet publish pc-agent/FamilyAgent/FamilyAgent.csproj

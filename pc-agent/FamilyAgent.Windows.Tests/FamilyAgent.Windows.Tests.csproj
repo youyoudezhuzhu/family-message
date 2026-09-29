@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Windows 平台能力的**真机**测试：DPAPI 加解密、文件 ACL、LogonUser 校验。
+       这些判据在 Linux 上不成立（测试体自己在非 Windows 上早退），
+       只在 windows-latest 的 CI 上真跑 —— 见 .github/workflows/build-windows-agent.yml
+       的「Windows 平台能力测试」一步。
+
+       为什么值得单独一个测试工程：第 1 步那 12 条判据用的是**假实现**（平台无关），
+       这里这 11 条是**真 DPAPI / 真 API**；两组合起来才覆盖「抽象对 + 实现对」。 -->
+  <PropertyGroup>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <AssemblyName>FamilyAgent.Windows.Tests</AssemblyName>
+    <RootNamespace>FamilyAgent.Windows.Tests</RootNamespace>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FamilyAgent.Windows\FamilyAgent.Windows.csproj" />
+    <ProjectReference Include="..\FamilyAgent.Core\FamilyAgent.Core.csproj" />
+  </ItemGroup>
+
+</Project>
