@@ -98,7 +98,21 @@ public partial class WebHostWindow : Window
     /// </summary>
     private string _shellMode = "client";
 
-    /// <summary>还没收到 web.ack 的消息 id（关窗/自动关闭时按「已读」回报）。</summary>
+    /// <summary>
+    /// 已经推给页面、但**还没等到页面 `web.ack`** 的消息 id。
+    ///
+    /// 语义（Phase 5 收尾时定死，**别**再当成「遗留字段」）：
+    /// <list type="bullet">
+    ///   <item>加：<see cref="SendMessage"/> 把消息交给页面时；</item>
+    ///   <item>减：页面回 <c>web.ack</c> → <see cref="MessageAcked"/>（宿主据此回报 <c>popup_displayed</c>）；</item>
+    ///   <item>清：窗口被关掉 / 自动关闭 → <see cref="RaiseDismissed"/> 把剩下的按「已读」回报。</item>
+    /// </list>
+    ///
+    /// 它**不是** Core 那套记账的重复：Core 的 <c>MessageManager</c> 记「消息有没有走到终态」，
+    /// 这里记「**页面这一侧**还有哪些没确认」—— 页面不在 Core 的视野里，这份等待集只能留在壳里。
+    /// Core 另有 <c>DisplayTimeout</c>（20 秒）兜底：无 UI / 界面起不来时走回落提醒 +
+    /// <c>popup_displayed</c>，所以这条路径不会留下「永远未 ACK」的消息。
+    /// </summary>
     private readonly List<long> _pending = new();
 
     /// <summary>页面还没就绪时的消息缓存，等正式页面 web.ready 后补推。</summary>
