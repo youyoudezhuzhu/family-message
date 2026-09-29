@@ -32,8 +32,12 @@
   - 「**当前用谁的名义**」是**纯本地状态**（PC: 本机配置文件；Web: localStorage），
     **不上传、不广播**，离线也能改。
   - 消息上的名字/颜色是**快照**：`sender_name` + `sender_nickname_id` + `sender_color`。
-    ⚠ 当前实现里后两列**没有生产者**（表、索引、两端读端都在，写端缺失）→ 现在恒为 `null`，
-    客户端解析时必须容忍 `null` 并退回「按名字反查昵称表 → 再退回名字哈希色」（§11 检查表第 9 条）。
+    **写端已补（2026-09-29）**：服务端在落库时填 —— 发送方带上当时选用的 `nickname_id` →
+    `(id, 该昵称当时的逻辑色 ID)`（**颜色由服务端查表填，客户端传的色值一律忽略**）；
+    明确带 `null`（灰临时）→ `(NULL, 'gray')`；**字段缺失**（老前端 / 老 exe）→ 两列 `NULL`。
+    ⚠ 客户端解析仍必须容忍 `NULL`：`NULL` ≠ 灰，要走「按名字反查昵称表 → 再退回名字哈希色」
+    兜底（老消息与老客户端产生的行都是这种）。判「灰临时」**只看 `sender_color == 'gray'`**。
+    验收：`python3 tools/test_nickname_snapshot.py`（A–G 七组，含「重创同名不污染历史」）。
   - 老协议（2026-09-23 版）写的「昵称是纯本地概念、服务端不存昵称表」**已作废**。
 
 ---
@@ -120,7 +124,7 @@
 - `history` 是**群聊空间**里最近 `message.history_limit` 条往来（不只是本设备与 Web 的往来），
   用来铺满对话界面；`direction` 是**相对本设备**的视角（本机发的 = `out`）。
 - `auto_close_seconds > 0` 到点自动关；`0` 必须手动关。
-- 快照字段（`sender_nickname_id` / `sender_color`）见 §2；当前恒 `null`。
+- 快照字段（`sender_nickname_id` / `sender_color`）见 §2；已由服务端写入（颜色查表填）。
 - **Agent 收到 `message` 后按顺序做**：① 立刻把弹窗显示出来 → ② 发 `ack: popup_displayed`
   → ③ 用户点关闭 → 发 `ack: read`。`device_received` 由服务端自己记，Agent 不发。
 - 界面 20 秒内起不来（WebView2 故障等）**必须有终态**：回报 `popup_displayed`
@@ -147,7 +151,7 @@ PC 侧另有本地重放缓存）。应答用 `unlock_result`（§5），`status
 |---|---|---|
 | `heartbeat` | `windows_state?` `capabilities?` | 建议 15 秒一次；会话状态有变化才广播 |
 | `ack` | `message_id` `status` | `status ∈ {device_received, popup_displayed, read}`；**只入库，不再对外广播**（群聊模型） |
-| `reply` | `sender_name` `content` `client_id` `sender_device_id?` | 本机回复。`client_id` 本地随机串，用来对回执；`sender_device_id` 让服务端跳过发起者 |
+| `reply` | `sender_name` `content` `client_id` `sender_device_id?` `nickname_id?` | 本机回复。`client_id` 本地随机串，用来对回执；`sender_device_id` 让服务端跳过发起者；`nickname_id` = 本机当时选用的共享昵称（`null` = 灰临时；**字段缺失 = 老 exe**）→ 服务端据此写消息快照（颜色查表填，见 §2） |
 | `history_request` | `request_id` `limit` | 主动拉历史（≤200） |
 | `screenshot_response` | `request_id` `format` `data_base64` `width` `height` `error` | 二选一：有 `data_base64` 或有 `error`。**别名 `screenshot` 仍被接受（兼容老 exe）** |
 | `unlock_result` | `request_id` `status` `reason` | `status ∈ {armed, success, failed…}` |
@@ -221,7 +225,7 @@ PC 侧另有本地重放缓存）。应答用 `unlock_result`（§5），`status
 | GET | `/api/devices/{id}` | 单个设备 |
 | GET | `/api/devices/{id}/status` | 设备状态 |
 | DELETE | `/api/devices/{id}` | 移除设备 |
-| POST | `/api/messages` | 发送留言 `{sender_name, content, device_ids}` |
+| POST | `/api/messages` | 发送留言 `{sender_name, content, nickname_id?}`；`nickname_id` = 本机当时选用的共享昵称（`null` = 灰临时，**不带** = 老前端 → 两列 `NULL`），服务端据此写消息快照（§2） |
 | GET | `/api/messages` | 消息列表（对外单一状态 `sent`） |
 | GET | `/api/conversations/{device_id}` | 某设备的对话明细（**双向**，靠 `sender_kind` 判方向） |
 | POST | `/api/messages/{id}/read` | 标记已读 |

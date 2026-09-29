@@ -623,7 +623,7 @@ pc-agent/
 | 1 协议文档 | ✅ `docs/PROTOCOL.md` 冻结版（服务端 26 帧 + 设备上行 14 帧 + §10 能力清单 + §11 客户端检查表 + `message_status` 标预留）；`docs/DESIGN.md` 两处标历史 | `python3 tools/check_protocol_doc.py` → 退出码 0 |
 | 2 清理 | ✅ shell.js **保留**（见上）；`_pending` 语义定死；`AgentClient` 口径收敛（README） | `dotnet build` 0 warning；`python3 tools/check_agent_refs.py` 通过 |
 | 3 Android 契约 | ✅ `docs/ANDROID-CONTRACT.md` | 表 A 6 个接口签名逐条核对 Core 源码 |
-| ★ 勘察新发现 | ⚠ **`messages.sender_nickname_id` / `sender_color` 没有写端**（列 / 索引 / 两端读端都在，写端缺失 → 恒 `NULL`）→ 已在协议里标为预留并要求客户端容忍 `null`；**补写端另立一项**（需放开 `server/`） | `grep -rn 'sender_nickname_id' server/ pc-agent/` 只命中 `db.py` 的建表/索引 |
+| ★ 勘察新发现 → **已补写端**（2026-09-29） | `messages.sender_nickname_id` / `sender_color` **有写端了**：服务端落库时按发送方带来的 `nickname_id` **查表填色**（HTTP `/api/messages` 与设备帧 `reply` 两条路都接线；PC 端 `ConnectionManager.Reply` 带上本机当前选用的 id）。缺失 / 明确 null / 伪造色的语义见 `docs/PROTOCOL.md` §2。⚠ **Web 页面（`web/static/app.js`）尚未带 `nickname_id`** → 网页端发的消息暂按「字段缺失 = 两列 NULL」老语义走（观感不变，不算回归） | `python3 tools/test_nickname_snapshot.py` → A–G 全 PASS（含「重创同名不污染历史」「灰临时 gray」） |
 
 **验收标准**
 - 机械判据：`grep -rn '"type":' server/main.py server/hub.py` 的输出与 `PROTOCOL.md` 的帧表格**逐条对齐**（允许「已注释」项被显式标注为不广播）。
