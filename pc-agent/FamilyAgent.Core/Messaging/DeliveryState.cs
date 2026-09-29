@@ -23,6 +23,7 @@ namespace FamilyAgent.Core.Messaging;
 ///
 /// ⚠ 取值顺序有意义：<c>Received &lt; Persisted &lt; NotDisplayed &lt; NotifiedFallback &lt; Displayed &lt; Read</c>
 ///   （<see cref="AckSent"/> 例外，见下），重放判据直接按数值比。
+///   Phase 4 追加的 <see cref="Backfilled"/> 也例外：它 > <c>Read</c>，见它自己的说明。
 /// </summary>
 public enum DeliveryState
 {
@@ -62,6 +63,27 @@ public enum DeliveryState
 
     /// <summary>用户关掉了强提醒窗（点了「知道了」/ 自动关闭 / Alt+F4）→ 回报 <c>read</c>。</summary>
     Read = 6,
+
+    /// <summary>
+    /// 服务端补投的历史消息（docs/CORE-REFACTOR-PLAN.md §6 Phase 4）。
+    ///
+    /// ★ 它存在的唯一理由是**把「补投」与「待显示」彻底分开**：主管已定
+    ///   「补投的历史消息只落盘 + 只进对话列表，绝不弹全屏、绝不发 ACK」。
+    ///   若补投的记录记成 <see cref="Persisted"/>，那么
+    ///   <see cref="IMessageStore.PendingReplay"/> / <see cref="MessageManager.PendingForReplay"/>
+    ///   会把它当成「还没显示过」的消息 —— 于是①页面就绪时被当弹窗重放一次
+    ///   （正是「一装好弹 50 个全屏窗」那条路），②<see cref="MessageManager.SweepDisplayTimeouts"/>
+    ///   会为它触发托盘兜底提醒。
+    ///
+    /// 取值刻意放在 <see cref="Read"/> 之后（<c>&gt; Displayed</c>）：两个判据
+    ///   （<see cref="DeliveryStateExtensions.IsBeforeDisplay"/> /
+    ///   <see cref="DeliveryStateExtensions.IsAwaitingDisplay"/>）都按大小比，
+    ///   于是它自动是**终态**：不重放、不兜底、不再需要任何界面回报。
+    ///
+    /// ⚠ 「已显示」对补投的消息永远是 false（见 <c>MessageManager.Report</c>）：
+    ///   它进的是列表，从来没弹过窗，也没有任何人回报过它被画出来。
+    /// </summary>
+    Backfilled = 7,
 }
 
 /// <summary><see cref="DeliveryState"/> 的判据与落盘字符串（集中一处，避免各处比大小 / 拼字符串）。</summary>
@@ -89,6 +111,7 @@ public static class DeliveryStateExtensions
         DeliveryState.Displayed => "displayed",
         DeliveryState.AckSent => "ack_sent",
         DeliveryState.Read => "read",
+        DeliveryState.Backfilled => "backfilled",
         _ => "persisted",
     };
 
@@ -102,6 +125,7 @@ public static class DeliveryStateExtensions
         "displayed" => DeliveryState.Displayed,
         "ack_sent" => DeliveryState.AckSent,
         "read" => DeliveryState.Read,
+        "backfilled" => DeliveryState.Backfilled,
         _ => DeliveryState.Persisted,
     };
 }

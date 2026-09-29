@@ -4,12 +4,15 @@ using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using FamilyAgent.Core.Commands;
 using FamilyAgent.Core.Commands.Abstractions;
 using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Devices;
 using FamilyAgent.Core.Diagnostics;
 using FamilyAgent.Core.Events;
 using FamilyAgent.Core.Protocol;
 using FamilyAgent.Core.Protocol.Frames;
+using FamilyAgent.Core.Sync;
 
 namespace FamilyAgent.Core.Transport;
 
@@ -39,8 +42,14 @@ namespace FamilyAgent.Core.Transport;
 ///
 /// ★ 连接代次（epoch）语义原样保留（工作区那版修复）：全类只有这一条连接循环，
 ///   每次 <c>Start()</c> 让代次 +1，循环只认自己那一代 —— 见 <see cref="ConnectionEpoch{TConn}"/>。
+///
+/// ★ Phase 4：本类**同时是** <see cref="ISyncConnection"/>（那个接口只是本类的一个视图 ——
+///   连接状态 / <c>hello</c> / <c>history_response</c> / 发 <c>history_request</c> 这四件事
+///   本来就在这里）。为此本阶段**只新增**两项：<see cref="HelloReceived"/> 与
+///   <see cref="RequestHistoryTracked"/>；连接代次、退避、心跳、Outbox、握手行为一律未动
+///   （原 <see cref="RequestHistory"/> 只是改道到新的那个方法上，发出的帧逐字相同）。
 /// </summary>
-public sealed class ConnectionManager
+public sealed class ConnectionManager : ICommandChannel, ISyncConnection
 {
     /// <summary>服务端「被新连接顶替」用的关闭码（见 server/hub.py 的 bind_device）。
     /// 4000 属私有区间，.NET 的 WebSocketCloseStatus 里没有对应枚举名，只能按数值比。</summary>
@@ -48,6 +57,7 @@ public sealed class ConnectionManager
 
     private readonly AgentConfig _config;
     private readonly IPlatformInfo _platform;
+    private readonly CapabilityReporter _capabilities;
     private readonly WebSocketTransport _transport;
     private readonly Outbox _outbox;
     private readonly ConnectionEpoch<ClientWebSocket> _epoch = new();
@@ -64,6 +74,15 @@ public sealed class ConnectionManager
 
     /// <summary>收到新消息（强类型帧取代原来的裸 <c>JsonElement</c>）。</summary>
     public event Action<MessageFrame>? MessageReceived;
+
+    /// <summary>
+    /// 服务端下发第一帧 <c>hello</c> ＝ **认证完成**（<see cref="ISyncConnection"/> 的成员）。
+    ///
+    /// 为什么必须单独一个事件：原实现里 <c>hello</c> 只做两件事（存 token / 重置心跳看门狗），
+    /// 对外没有任何信号 —— 于是 Phase 4 的 SyncService 无法知道"现在可以拉历史补齐了"，
+    /// 只能靠猜时间。它在 <c>hello</c> 的既有处理**之后**抛出。
+    /// </summary>
+    public event Action<HelloFrame>? HelloReceived;
 
     /// <summary>服务端请求截图（原来只传 request_id 字符串）。</summary>
     public event Action<ScreenshotRequestFrame>? ScreenshotRequested;
@@ -83,13 +102,25 @@ public sealed class ConnectionManager
 
     public event Action<string>? Log;
 
-    public ConnectionManager(AgentConfig config, IPlatformInfo platform)
+    /// <param name="capabilities">
+    /// 本平台注册了哪些能力实现（Phase 3）。**必填**，没有默认值：
+    /// 能力上协议就是事实契约，一个「忘了传」的默认值只会让本机在服务端悄悄变成
+    /// 「什么都不会」的哑设备（服务端不校验取值，见 §8.6）。
+    /// 不支持的平台请显式传 <see cref="PlatformCapabilities.None"/>。
+    /// </param>
+    public ConnectionManager(AgentConfig config, IPlatformInfo platform, PlatformCapabilities capabilities)
     {
         _config = config;
         _platform = platform;
+        _capabilities = new CapabilityReporter(platform, capabilities);
         _transport = new WebSocketTransport(WriteLog);
         _outbox = new Outbox(_transport, CurrentSocket);
     }
+
+    /// <summary>
+    /// 能力上报（Phase 3）：连接串与心跳帧两处取值都从这里来，保证同源。
+    /// </summary>
+    public CapabilityReporter Capabilities => _capabilities;
 
     public bool Connected => CurrentSocket() is { State: WebSocketState.Open };
 
@@ -158,7 +189,23 @@ public sealed class ConnectionManager
     private static string DescribeCloseCode(WebSocketCloseStatus? code) =>
         code is null ? "none" : ((int)code.Value).ToString();
 
-    private Uri BuildUri()
+    /// <summary>
+    /// 连接 URL。
+    ///
+    /// ★ Phase 3 补上了 <c>windows_state</c> / <c>capabilities</c> 两个查询参数：
+    ///   服务端**早就有**这条「一连上就报」的路（<c>server/main.py:740-741</c> 读、
+    ///   <c>:772-773</c> 写库并广播），但客户端一直没带 —— 那条路是空转的，
+    ///   能力/状态要等连上之后的第一次心跳（可能整整 15 秒）才到服务端。
+    ///   现在握手即报，网页端不会先看到「未知设备」再自己变。
+    ///
+    /// ⚠ 两个参数的**格式**必须与服务端的解析对齐（<c>_apply_reported_state()</c>，
+    ///   <c>main.py:262-288</c>）：<c>windows_state</c> 是单个字面量、
+    ///   <c>capabilities</c> 是**逗号分隔**的字符串。
+    ///
+    /// public 是为了单测：这是一个纯函数（只读配置与平台事实），
+    /// 而「参数到底有没有带上」是 Phase 3 的验收判据之一（§6 Phase 3-4）。
+    /// </summary>
+    public Uri BuildUri()
     {
         var baseUrl = (_config.ServerUrl ?? "").Trim().TrimEnd('/');
         if (baseUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -183,6 +230,8 @@ public sealed class ConnectionManager
         Add("platform", _platform.Platform);
         Add("agent_version", ProtocolVersion.AgentVersion);
         Add("enroll_token", _config.EnrollToken ?? "");
+        Add("windows_state", _platform.SessionState);
+        Add("capabilities", _capabilities.QueryValue());
 
         return new Uri($"{baseUrl}/ws/device/{Uri.EscapeDataString(_config.DeviceId)}{q}");
     }
@@ -210,7 +259,7 @@ public sealed class ConnectionManager
 
                 // 本代的心跳循环：看门狗字段是它的实例字段（§8.7），
                 // 收到 hello / heartbeat_ack 时由本代连接派发到**同一个**实例上。
-                var heartbeat = new HeartbeatLoop(_transport, _outbox, _platform);
+                var heartbeat = new HeartbeatLoop(_transport, _outbox, _platform, _capabilities.Capabilities);
 
                 try
                 {
@@ -314,7 +363,8 @@ public sealed class ConnectionManager
         if (ws is null)
             return;
 
-        _ = _outbox.SendNowAsync(ws, HeartbeatLoop.BuildHeartbeatJson(_platform), "heartbeat:state");
+        _ = _outbox.SendNowAsync(ws,
+                HeartbeatLoop.BuildHeartbeatJson(_platform, _capabilities.Capabilities), "heartbeat:state");
     }
 
     /// <summary>
@@ -369,6 +419,17 @@ public sealed class ConnectionManager
                 heartbeat.NotifyAckReceived();      // 连接刚建立，重置看门狗
                 _outbox.ResetFailStreak();
                 _outbox.Flush();
+
+                // ★ Phase 4：认证完成对外可见（SyncService 据此进入补齐阶段）。
+                //   放在既有处理之后：订阅者抛异常也不会影响 token/心跳/Outbox 那三步。
+                try
+                {
+                    HelloReceived?.Invoke(hello);
+                }
+                catch (Exception ex)
+                {
+                    AgentLog.Write("[WS] hello 订阅者抛异常（已忽略）：" + ex.GetType().Name + " " + ex.Message);
+                }
                 break;
             }
 
@@ -440,13 +501,44 @@ public sealed class ConnectionManager
         }, "reply");
 
     /// <summary>主动拉一次历史对话（从托盘打开对话窗口时用）。</summary>
-    public void RequestHistory(int limit = 30) =>
+    public void RequestHistory(int limit = 30) => RequestHistoryTracked(limit);
+
+    /// <summary>
+    /// 发一条 <c>history_request</c> 并把 <c>request_id</c> 还给调用方
+    /// （<see cref="ISyncConnection"/> 的成员，Phase 4）。
+    ///
+    /// 为什么需要拿到 id：一条连接上可能同时有两次历史请求 ——
+    /// 「用户点开对话窗口」拉的那份（渲染列表用）和「重连补齐」拉的那份（合并去重用）。
+    /// 不配对就无法知道 <c>history_response</c> 该归谁，补齐就有把列表数据当补齐数据处理的可能。
+    ///
+    /// ⚠ 帧形状与 <see cref="RequestHistory"/> 逐字相同（含 <c>request_id</c> 的生成方式），
+    ///   只是把 id 提前生成并返回 —— 既有调用方的行为不变。
+    /// </summary>
+    public string RequestHistoryTracked(int limit)
+    {
+        var requestId = Guid.NewGuid().ToString("N")[..12];
         SendOrQueue(new
         {
             type = FrameTypes.HistoryRequest,
-            request_id = Guid.NewGuid().ToString("N")[..12],
+            request_id = requestId,
             limit,
         }, "history_request");
+        return requestId;
+    }
+
+    /// <summary>
+    /// 回一条 <c>event</c> 帧（<c>{type:"event", kind, detail}</c>）。
+    ///
+    /// 位置：Phase 3 从宿主里两处内联的匿名对象（<c>App.xaml.cs</c> 的关机回执）
+    /// 收进来 —— JSON 形状逐字未变，只是不再各处拼一遍。
+    /// </summary>
+    public void SendEvent(string kind, string detail) =>
+        SendOrQueue(new
+        {
+            type = FrameTypes.Event,
+            kind,
+            detail,
+        }, "event");
 
     /// <summary>回传截图。截图有时效性，连不上就丢弃并记日志，不排队。</summary>
     public async Task SendScreenshotAsync(string requestId, string? base64, int width, int height,

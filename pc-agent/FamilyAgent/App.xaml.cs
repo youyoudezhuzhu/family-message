@@ -4,7 +4,10 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using FamilyAgent.Core.Commands;
+using FamilyAgent.Core.Commands.Abstractions;
 using FamilyAgent.Core.Config;
+using FamilyAgent.Core.Devices;
 using FamilyAgent.Core.Diagnostics;
 using FamilyAgent.Core.Events;
 using FamilyAgent.Core.Messaging;
@@ -50,8 +53,16 @@ public partial class App : Application
     /// </summary>
     private MessageManager? _messaging;
 
-    /// <summary>WebView2 不可用时的原生通知回落（<see cref="FallbackNotifier"/>，§6 Phase 2-5 / §8.11）。</summary>
-    private FallbackNotifier? _fallback;
+    /// <summary>
+    /// WebView2 不可用时的原生通知回落（<see cref="FallbackNotifier"/>，§6 Phase 2-5 / §8.11）。
+    ///
+    /// Phase 3：字段类型是 Core 的 <see cref="INotificationSink"/>（「通知」正式登记为
+    /// 一项平台能力的数据形状），实现仍是 Windows 的 <see cref="FallbackNotifier"/>。
+    /// </summary>
+    private INotificationSink? _fallback;
+
+    /// <summary>命令派发（Phase 3）：截图 / 关机 / 解锁的应答统一由 Core 发出。</summary>
+    private CommandRouter? _router;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -162,15 +173,38 @@ public partial class App : Application
 
         AgentLog.Write($"=== FamilyAgent 启动 device={Config.DeviceId} server={Config.ServerUrl} "
                        + $"theme={Config.ThemeMode} agent={ProtocolVersion.AgentVersion} ===");
+        // ── 平台能力（Phase 3，见 docs/CORE-REFACTOR-PLAN.md §6 Phase 3）──────
+        // 把 Windows 的三个实现注册进 Core：**能力表就是从这里推导的** ——
+        // 没注册的能力（例如未来 Android 骨架的截图/电源）不会出现在 capabilities 里，
+        // 服务端也就不会给这台设备显示那个按钮（需求 §8；服务端不校验取值，见 §8.6）。
+        //
+        // 三个实现都是无状态转发，就地建一次即可：
+        //  · 截图：包住 ScreenCapture（本地页面路径仍直接用那个低层原语）；
+        //  · 电源：包住宿主的 ExecuteShutdown（托盘气泡 / event 帧 / 页面回执都在那段里，
+        //    页面请求关机也走它）——注入的委托只负责切 UI 线程，与原时序一致；
+        //  · 解锁：只是调用点，校验逻辑仍在 UnlockGuard（§8.12 归属待拍板）。
+        var capabilities = new PlatformCapabilities(
+            screenshot: new WindowsScreenshotProvider(),
+            power: new WindowsPowerProvider(delay => Dispatcher.Invoke(() => ExecuteShutdown(delay))),
+            unlock: new WindowsUnlockGuard());
+
         // UI 静态依赖（App.IsHeadless / SessionState.Current）在 Phase 1 收进 IPlatformInfo，
         // Windows 侧实现只做包装（Platform/WindowsPlatformInfo.cs），行为不变（§Phase 1-3）
-        Core = new ConnectionManager(Config, new WindowsPlatformInfo());
+        Core = new ConnectionManager(Config, new WindowsPlatformInfo(), capabilities);
         Core.ConnectionStateChanged += OnConnectionChanged;
-        Core.ScreenshotRequested += OnScreenshotRequested;
         Core.ReplyAcked += OnReplyAcked;
         Core.HistoryReceived += OnHistoryReceived;
-        Core.ShutdownRequested += OnShutdownRequested;
-        Core.UnlockRequested += OnUnlockRequested;
+        AgentLog.Write($"[CAP] 本机能力：{Core.Capabilities.Describe()}"
+                     + "（连接串 windows_state/capabilities + 心跳帧同源上报）");
+
+        // ── 命令派发（Phase 3）──────────────────────────────────────────
+        // 截图 / 关机 / 解锁三种命令的**应答**从此由 Core 负责（CommandRouter）：
+        // 平台没有该能力时也要回一条明确的 error，而不是让网页端干等到超时。
+        // ⚠ 宿主**不要**再单独订阅 Core 的 ScreenshotRequested / ShutdownRequested /
+        //   UnlockRequested（会处理两遍、发两条应答）。
+        _router = new CommandRouter(Core, capabilities, Config.DeviceId);
+        _router.Attach(Core);
+        _router.ScreenshotHandled += OnScreenshotHandled;
 
         // ── 消息生命周期与 ACK 决策（Phase 2）──────────────────────────
         // 收到 → 归一 message_id → **本地落盘** → 发事件 → 交界面显示 → 等界面回报事实
@@ -714,7 +748,9 @@ public partial class App : Application
         if (IsHeadless)
         {
             AgentLog.Write("headless：尚无人登录，无法截图（页面请求）");
-            _host?.PushScreenshot(requestId, null, HeadlessScreenshotReason);
+            // 原因文案与「服务端请求截图」那条路同源（WindowsScreenshotProvider.HeadlessReason），
+            // 免得同一个意思在两处各写一份、哪天改一处漏一处。
+            _host?.PushScreenshot(requestId, null, WindowsScreenshotProvider.HeadlessReason);
             return;
         }
 
@@ -1023,53 +1059,40 @@ public partial class App : Application
         });
     }
 
-    /// <summary>headless（会话 0）下没桌面可截，统一用这句中文原因回过去。</summary>
-    private const string HeadlessScreenshotReason = "电脑已开机但尚无人登录，当前没有可截取的桌面";
-
-    private void OnScreenshotRequested(ScreenshotRequestFrame frame)
-    {
-        var requestId = frame.RequestId;
-
-        if (IsHeadless)
-        {
-            // 会话 0 没有桌面，截出来只会是黑屏。直接说明原因，
-            // 比回一张黑图让用户以为电脑坏了要好。
-            AgentLog.Write("headless：尚无人登录，无法截图");
-            _ = Core.SendScreenshotAsync(requestId, null, 0, 0, HeadlessScreenshotReason);
-            return;
-        }
-
-        _ = Task.Run(async () =>
-        {
-            var (base64, width, height) = ScreenCapture.CaptureJpeg();
-            var error = ScreenCapture.LastError;
-
-            // ① 回给服务端（网页端其他会话靠它看到图）
-            await Core.SendScreenshotAsync(requestId, base64, width, height, error);
-
-            // ② 顺手推给本地页面：壳模式下页面不连 /ws/web，收不到服务端的截图广播，
-            //    只回服务端的话「查看桌面」在那台电脑自己的界面上会一直转圈。
-            Dispatcher.Invoke(() => _host?.PushScreenshot(requestId, base64, error));
-        });
-    }
-
     /// <summary>
-    /// 网页端点了「关机」：本机执行。给一个托盘气泡提示，并留出几秒取消时间。
-    /// 这是设备管理能力 —— PC Agent 是受 Server 信任的家庭设备 Agent，不再二次确认。
+    /// 截图请求处理完了（成功、失败、本机不支持都算）→ 把结果**镜像给本地页面**。
+    ///
+    /// Phase 3 起「截哪张图、回什么应答」都在 Core 里（<see cref="CommandRouter"/> →
+    /// <see cref="WindowsScreenshotProvider"/>），宿主只剩这一件事：
+    /// 壳模式下页面**不连** <c>/ws/web</c>，收不到服务端广播的截图，
+    /// 只回服务端的话「查看桌面」在那台电脑自己的界面上会一直转圈
+    /// （原实现是在 <c>OnScreenshotRequested</c> 里顺手推的，行为等价）。
+    ///
+    /// headless（会话 0）没有窗口、更没有页面 —— 原实现在那个分支里也是直接 return，
+    /// 所以这里同样不推（推到不存在的页面上没有意义）。
     /// </summary>
-    private void OnShutdownRequested(ShutdownCommandFrame frame)
+    private void OnScreenshotHandled(ScreenshotHandledArgs args)
     {
-        // 帧里没带 delay_seconds（或不是数字）时用本机默认值 —— 原实现里这一句
-        // 就在 AgentClient 的 shutdown 分支里；Core 不认识本机默认值，所以按
-        // ShutdownCommandFrame.cs 的约定把它留在宿主。
-        var delaySeconds = frame.DelaySeconds ?? PowerControl.DefaultDelaySeconds;
+        if (IsHeadless)
+            return;
 
-        // 托盘气泡是 WinForms 组件，统一回到 UI 线程再动它
-        Dispatcher.Invoke(() => ExecuteShutdown(delaySeconds));
+        try
+        {
+            Dispatcher.Invoke(() => _host?.PushScreenshot(args.RequestId, args.Base64, args.Error));
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("推送截图给页面失败：" + ex.Message);
+        }
     }
 
     /// <summary>
-    /// 执行关机的唯一实现（服务端指令与页面请求共用）。
+    /// 执行关机的唯一实现（页面请求关机走它；服务端指令经 Core 的
+    /// <see cref="CommandRouter"/> → <see cref="WindowsPowerProvider"/> 也落到这里）。
+    ///
+    /// Phase 3 起它同时是**电源能力**的执行体（<c>Platform/WindowsPowerProvider.cs</c>
+    /// 包着它）：日志、托盘气泡、<c>event</c> 帧、给页面的中文说明全部逐字保留 ——
+    /// 这套东西页面请求那条路也在用，搬走就会动到那条路的行为。
     /// 返回 (是否已下发, 给界面看的中文说明)。
     /// </summary>
     private (bool Ok, string Detail) ExecuteShutdown(int delaySeconds)
@@ -1090,53 +1113,22 @@ public partial class App : Application
             }
 
             PowerControl.Shutdown(delaySeconds);
-            Core.SendOrQueue(new
-            {
-                type = "event",
-                kind = "shutdown",
-                detail = $"delay={delaySeconds}s",
-            }, "event");
+            Core.SendEvent("shutdown", $"delay={delaySeconds}s");
 
             return (true, $"已下发关机，{delaySeconds} 秒后执行（命令行 shutdown /a 可取消）");
         }
         catch (Exception ex)
         {
             AgentLog.Write("执行关机失败：" + ex.Message);
-            Core.SendOrQueue(new
-            {
-                type = "event",
-                kind = "shutdown_failed",
-                detail = ex.Message,
-            }, "event");
+            Core.SendEvent("shutdown_failed", ex.Message);
 
             return (false, "执行关机失败：" + ex.Message);
         }
     }
 
-    /// <summary>
-    /// 网页端发起的「远程解锁」请求（远程解锁 Phase 1）。
-    ///
-    /// 本阶段**不做真正的解锁**：凭据存储还没有，这里只把校验链走完并把应答
-    /// 回给服务端 —— 用来验证「归属校验 + 动作校验 + 时效 + 一次性令牌」整条链路。
-    /// 校验顺序与各应答码见 <see cref="UnlockGuard"/>。
-    ///
-    /// 没有界面操作，所以不需要切 Dispatcher；headless 实例同样能应答。
-    /// </summary>
-    private void OnUnlockRequested(UnlockRequestFrame frame)
-    {
-        // 请求体里的 target / action / expires_at / nonce 等字段的校验属既有 UnlockGuard
-        // （宿主，见 §8.12 的归属待拍板），Phase 1 不做搬运 —— 照 UnlockRequestFrame.cs
-        // 的约定继续读 CoreFrame.Raw 走原来那套逻辑。
-        var reply = UnlockGuard.Evaluate(frame.Raw, Config.DeviceId);
-        if (reply is null)
-        {
-            // 连 request_id 都没有的帧：没法应答，也没有 id 可以记进重放缓存
-            AgentLog.Write("✗ unlock_request 缺少 request_id，无法应答");
-            return;
-        }
-
-        Core.UnlockResult(reply.RequestId, reply.Status, reply.Reason);
-    }
+    // ⚠ 远程解锁的请求处理（原 OnUnlockRequested）在 Phase 3 搬进了 Core 的命令派发：
+    //   CommandRouter → WindowsUnlockGuard（包住既有 UnlockGuard，§8.12 归属仍待拍板）
+    //   → Core.UnlockResult。校验顺序、应答码、日志逐字未变，只是调用点从宿主移到了 Core。
 
     /// <summary>
     /// 会话状态变化（锁屏 / 解锁 / 登录 / 注销）→ 立刻上报一次，

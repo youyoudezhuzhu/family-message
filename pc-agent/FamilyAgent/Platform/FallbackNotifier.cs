@@ -1,4 +1,5 @@
 using System;
+using FamilyAgent.Core.Commands.Abstractions;
 using FamilyAgent.Core.Diagnostics;
 using WinForms = System.Windows.Forms;
 
@@ -19,8 +20,12 @@ namespace FamilyAgent.Platform;
 ///
 /// 托盘图标可能还不存在（headless 实例没有托盘；交互式实例在 <c>SetupTray()</c>
 /// 之前也可能没有）—— 那种情况如实返回 <c>false</c>，不要假装提醒过了。
+///
+/// Phase 3：本类实现 Core 的 <see cref="INotificationSink"/> —— 把「通知」正式登记为
+/// 一项平台能力（Android 侧将来实现它 = 系统通知）。**行为一字未改**，
+/// 只是宿主字段的类型从具体类换成了接口（<c>App._fallback</c>）。
 /// </summary>
-public sealed class FallbackNotifier
+public sealed class FallbackNotifier : INotificationSink
 {
     /// <summary>气泡停留时长（毫秒）。比关机提示（6000）长一点：消息要看得清。</summary>
     private const int BalloonMs = 8000;
@@ -40,6 +45,7 @@ public sealed class FallbackNotifier
     /// 用托盘气泡提醒一条消息。返回 true = 真的弹出去了；false = 没有可用的通知手段
     /// （调用方据此如实回报「无法显示」，不要谎报 <c>popup_displayed</c>）。
     /// </summary>
+    /// <inheritdoc />
     public bool Notify(string? senderName, string? content, string reason)
     {
         if (_tray() is null)

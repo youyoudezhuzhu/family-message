@@ -3,29 +3,11 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text.Json;
+using FamilyAgent.Core.Commands;
 using FamilyAgent.Core.Config;
 using FamilyAgent.Core.Diagnostics;
 
 namespace FamilyAgent;
-
-/// <summary>一条 <c>unlock_request</c> 的校验结论，也就是要回给服务端的应答内容。</summary>
-public sealed class UnlockReply
-{
-    public UnlockReply(string requestId, string status, string reason)
-    {
-        RequestId = requestId;
-        Status = status;
-        Reason = reason;
-    }
-
-    public string RequestId { get; }
-
-    /// <summary>armed | success | failed</summary>
-    public string Status { get; }
-
-    /// <summary>expired | replay | not_mine | bad_action | no_credential | cp_error | timeout | ok</summary>
-    public string Reason { get; }
-}
 
 /// <summary>
 /// 一次性解锁请求的本地校验（远程解锁 Phase 1）。
@@ -46,18 +28,23 @@ public static class UnlockGuard
     public const string ActionUnlock = "device.unlock";
 
     // ── 应答码（与 NAS 侧冻结的协议一致，勿改字面量）──────────────────
-    public const string StatusArmed = "armed";
-    public const string StatusSuccess = "success";
-    public const string StatusFailed = "failed";
+    //
+    // ⚠ Phase 3：字面量的**唯一权威定义**已上移到 Core 的 <see cref="UnlockReply"/>
+    //   （命令派发在 Core 里，它需要这些码来回答「本平台没有解锁实现」；见
+    //   docs/CORE-REFACTOR-PLAN.md §6 Phase 3）。这里保留同名常量只为不动既有引用，
+    //   值仍然是同一份 —— 两处再各写一遍字符串迟早会漂。
+    public const string StatusArmed = UnlockReply.StatusArmed;
+    public const string StatusSuccess = UnlockReply.StatusSuccess;
+    public const string StatusFailed = UnlockReply.StatusFailed;
 
-    public const string ReasonExpired = "expired";
-    public const string ReasonReplay = "replay";
-    public const string ReasonNotMine = "not_mine";
-    public const string ReasonBadAction = "bad_action";
-    public const string ReasonNoCredential = "no_credential";
-    public const string ReasonCpError = "cp_error";
-    public const string ReasonTimeout = "timeout";
-    public const string ReasonOk = "ok";
+    public const string ReasonExpired = UnlockReply.ReasonExpired;
+    public const string ReasonReplay = UnlockReply.ReasonReplay;
+    public const string ReasonNotMine = UnlockReply.ReasonNotMine;
+    public const string ReasonBadAction = UnlockReply.ReasonBadAction;
+    public const string ReasonNoCredential = UnlockReply.ReasonNoCredential;
+    public const string ReasonCpError = UnlockReply.ReasonCpError;
+    public const string ReasonTimeout = UnlockReply.ReasonTimeout;
+    public const string ReasonOk = UnlockReply.ReasonOk;
 
     /// <summary>重放缓存的保留时长。一次性令牌本身只活 30 秒，留 24 小时足够覆盖
     /// 「服务端重发同一 request_id」的场景，又不会让文件无限增长。</summary>

@@ -82,6 +82,35 @@ public sealed class MessageManager
     private readonly HashSet<long> _fallbackTried = new();
 
     /// <summary>
+    /// ACK 事实：<c>message_id → 最后一个真的交给传输层的 ack 状态</c>
+    /// （Phase 4 的「投递/ACK 事实记录」，<see cref="Report"/> 的唯一数据源）。
+    ///
+    /// ⚠ 与 <see cref="PendingAckQueue"/> 的区别：那里是**待办**（发出即移除，
+    ///   重启即清空），这里是**已办**（只增不改，用来回答「这条 ACK 了没、ACK 的什么」）。
+    ///   <c>popup_displayed</c> 之后再发 <c>read</c> 时以最新的为准 —— 四态问的是
+    ///   「走到哪一步了」，不是「发过几条」。
+    /// </summary>
+    private readonly Dictionary<long, string> _ackedStatus = new();
+
+    /// <summary>
+    /// 水位线（Phase 4）：本机已经"知道"的最大的服务端 <c>message_id</c>。
+    ///
+    /// 它回答的是「哪些历史是我以前就见过（或该算旧账）的」——
+    /// <see cref="Sync.HistoryBackfill.Plan"/> 只补投 <c>&gt; </c> 它的消息。
+    /// 三条路径会推进它：收到实时消息、补投一条、首次同步建立水位。
+    ///
+    /// 初值从本地库里取最大 <c>message_id</c>（<see cref="JsonlMessageStore"/> 跨重启存活），
+    /// 所以「进程重启后重连」不会把已经处理过的消息当新消息补一遍。
+    /// </summary>
+    private long _baseline;
+
+    /// <summary>false = 本地库为空且从未同步过 → 首次同步**只建水位线、不补投任何历史**（见 SyncService）。</summary>
+    private bool _watermarkKnown;
+
+    /// <summary>最近一条**实时**消息带的 <c>auto_close_seconds</c>（补投帧缺这个字段时的参照值）。</summary>
+    private int _lastAutoCloseSeconds;
+
+    /// <summary>
     /// 建一个消息管理器。
     /// <paramref name="sendAck"/> 是「把 ack 交给传输层」的方式（Windows 宿主传
     /// <c>(id, status) =&gt; Core.Ack(id, status)</c>）；它抛异常 = 这次没交出去，
@@ -91,6 +120,17 @@ public sealed class MessageManager
     {
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _sendAck = sendAck ?? throw new ArgumentNullException(nameof(sendAck));
+
+        // 水位初值 = 本地库里最大的 message_id（跨重启存活的那份记账）。
+        // 空库 → 水位未知 → 首次同步只建水位线（不会把「装之前的历史」当新消息补投）。
+        foreach (var record in _store.All())
+        {
+            if (record.MessageId > _baseline)
+                _baseline = record.MessageId;
+        }
+        _watermarkKnown = _baseline > 0;
+        if (_watermarkKnown)
+            AgentLog.Write($"[MSG] 本地已有 {_store.Count} 条记账，水位={_baseline}（重连只补投它之后的消息）");
     }
 
     /// <summary>
@@ -110,8 +150,46 @@ public sealed class MessageManager
     /// <summary>「已决策、还没交给传输层」的 ACK 队列。</summary>
     public PendingAckQueue PendingAcks => _pendingAcks;
 
+    /// <summary>水位线：本机已知的最大的 <c>message_id</c>（0 = 还不知道）。</summary>
+    public long Watermark
+    {
+        get { lock (_gate) { return _baseline; } }
+    }
+
+    /// <summary>
+    /// 水位是否已知。<c>false</c> = 本地库为空且从未同步过（新装客户端）——
+    /// 此时 <see cref="Sync.HistoryBackfill.Plan"/> 只建水位线、一条历史都不补投。
+    /// </summary>
+    public bool WatermarkKnown
+    {
+        get { lock (_gate) { return _watermarkKnown; } }
+    }
+
+    /// <summary>
+    /// 最近一条**实时**消息的 <c>auto_close_seconds</c>（没有收到过实时消息时为 0）。
+    ///
+    /// 用途：<c>history_response</c> 里**没有**这个字段（服务端 <c>group_history()</c>
+    /// 只给 <c>message_id/sender_name/content/created_at/direction</c>），
+    /// 补投时用本地最近一次的取值当参照 —— 这样补投出来的弹窗（若将来允许弹）
+    /// 会与实时消息一样自动关闭，而不是"永不关闭"。
+    /// </summary>
+    public int LastAutoCloseSeconds
+    {
+        get { lock (_gate) { return _lastAutoCloseSeconds; } }
+    }
+
     /// <summary>收到新消息（已落盘）→ 交给平台层显示。**取代原来宿主直连的连接层事件**（§3.3）。</summary>
     public event Action<MessageFrame>? MessageReceived;
+
+    /// <summary>
+    /// ★ Phase 4：**补投的历史消息**（只落盘 + 只进对话列表，见 <see cref="HandleBackfill"/>）。
+    ///
+    /// 与 <see cref="MessageReceived"/> 分开是刻意的 —— 平台层订阅这个事件时
+    /// **只能把它推进列表**（页面里那段对话流），不得弹全屏、不得回报任何显示事实。
+    /// 主管已定：补投的字段比实时帧少（没有 <c>auto_close_seconds</c>），
+    /// 弹窗的自动关闭时长会与实时不一致，且新装客户端会被一次灌进几十个全屏窗。
+    /// </summary>
+    public event Action<MessageFrame>? HistoryBackfilled;
 
     /// <summary>消息的本地生命周期变化（Received / Persisted / Displayed / NotifiedFallback / NotDisplayed / AckSent / Read）。</summary>
     public event Action<MessageDeliveryStateChangedArgs>? DeliveryStateChanged;
@@ -153,6 +231,11 @@ public sealed class MessageManager
         var now = DateTime.UtcNow;
         var id = frame.MessageId;
 
+        // 记下最近一条实时消息的 auto_close_seconds：补投帧缺这个字段时用它当参照
+        // （见 LastAutoCloseSeconds 与 HistoryBackfill.ToFrame）。
+        if (frame.AutoCloseSeconds is int autoClose)
+            lock (_gate) { _lastAutoCloseSeconds = autoClose; }
+
         // 归一 message_id：没有有效 id 的消息无法去重、也无法 ACK（ack 帧按 id 记账）
         if (id <= 0)
         {
@@ -177,11 +260,86 @@ public sealed class MessageManager
 
         var record = MessageRecord.FromFrame(frame, now);
         _store.Put(record);
+        AdvanceWatermark(id);                 // ★ 水位跟着实时消息走（补投只补它之后的）
         AgentLog.Write($"[MSG] 已落盘 message_id={id} state=persisted sender={record.SenderName}"
                      + $" ← {_store.Describe()}");
         RaiseState(id, DeliveryState.Persisted, "已落盘（进程崩溃也不会丢）");
 
         RaiseMessageReceived(frame);
+    }
+
+    /// <summary>
+    /// ★★ Phase 4 的补投入口：**只落盘 + 只进对话列表；绝不弹全屏、绝不发 ACK**。
+    ///
+    /// 主管已定的行为（docs/CORE-REFACTOR-PLAN.md §6 Phase 4 的两个理由）：
+    /// <list type="number">
+    ///   <item><c>group_history()</c> 返回的字段里**没有** <c>auto_close_seconds</c> ——
+    ///     补投若弹窗，自动关闭时长会与实时消息不一致，而为此改协议不值得；</item>
+    ///   <item>新装客户端本地库为空时，一次补投几十条 = 一装好就弹几十个全屏窗。</item>
+    /// </list>
+    ///
+    /// 实现上「不弹窗」不是靠约定，而是靠**走一条没有 <see cref="MessageReceived"/> 的路**：
+    /// 平台层只从 <see cref="HistoryBackfilled"/> 拿到它，而那个事件的订阅者只负责进列表。
+    ///
+    /// ★ 顺带修掉的正确性问题：以前补投若走 <see cref="HandleIncoming"/> 那条路，
+    ///   「没有显示订阅者 / 界面建不起来」时会落到 <see cref="NotifyDisplayUnavailable"/>，
+    ///   而它**无条件**发 <c>ack:device_received</c> —— 对一条历史消息而言，这条 ack 会在
+    ///   服务端**新建** <c>message_targets</c> 行（历史消息本来没有投递记账），
+    ///   凭空污染服务端的投递统计。本入口一个 ack 都不发，这个问题不复存在。
+    ///
+    /// 本地状态记 <see cref="DeliveryState.Backfilled"/>（终态）：它不是「待显示」，
+    /// 于是 <see cref="PendingForReplay"/> 不会重放它、<see cref="SweepDisplayTimeouts"/>
+    /// 不会为它触发托盘兜底提醒。
+    /// </summary>
+    public void HandleBackfill(MessageFrame frame)
+    {
+        if (frame is null)
+            return;
+
+        var id = frame.MessageId;
+        if (id <= 0)
+        {
+            // 无有效 id 的历史项在 HistoryBackfill.Plan 里已经被丢掉；这里只防御
+            AgentLog.Write("[MSG] 补投帧没有有效 message_id：无法去重，直接丢弃（不发 ACK、不进界面）");
+            return;
+        }
+
+        AdvanceWatermark(id);
+
+        var existing = _store.Get(id);
+        if (existing is not null)
+        {
+            // 本地已有：实时收到过 / 上一轮补投过 → 不重复落盘、不重复进列表、不发 ACK
+            AgentLog.Write($"[MSG] 补投 message_id={id} 本地已有（state={existing.State.ToStoreValue()}）"
+                         + "→ 去重：不重复进列表、不发 ACK");
+            RaiseState(id, existing.State, "补投去重（本地已有，不再进列表）");
+            return;
+        }
+
+        var now = DateTime.UtcNow;
+        var record = MessageRecord.FromFrame(frame, now).With(DeliveryState.Backfilled, now);
+        _store.Put(record);
+        MarkHandedToUi(id);                    // 事实：确实交给了界面（进列表），不是弹窗
+        AgentLog.Write($"[MSG] 补投已落盘 message_id={id} state=backfilled sender={record.SenderName}"
+                     + "（只进列表：不弹全屏、不发 ACK）" + $" ← {_store.Describe()}");
+        RaiseState(id, DeliveryState.Backfilled, "补投：只落盘/进列表，不弹全屏、不发 ACK");
+
+        var handler = HistoryBackfilled;
+        if (handler is null)
+        {
+            AgentLog.Write($"[MSG] 补投 message_id={id} 没有列表订阅者（已在本机库里，界面恢复后可见）");
+            return;
+        }
+
+        try
+        {
+            handler(frame);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write($"[MSG] 补投的列表订阅者抛异常（已忽略，不影响落盘）："
+                         + $"{ex.GetType().Name} {ex.Message}");
+        }
     }
 
     /// <summary>交给平台层显示；订阅者不存在或抛异常都按「无法显示」走终态（消息已经落盘，不会丢）。</summary>
@@ -308,6 +466,88 @@ public sealed class MessageManager
         SendAck(messageId, AckStatuses.Read, "用户已经看过");
     }
 
+    // ---------------- 水位线与四态（Phase 4）----------------
+
+    /// <summary>
+    /// 推进水位线到一个新的 <c>message_id</c>（幂等：只在更大时前进）。
+    ///
+    /// 收敛到一处的原因：水位有三个推进源（实时消息 / 补投一条 / 一次同步的合并结果），
+    /// 分散写就会漏掉「本机自己发的消息也要推进」这条 —— 那会让下次重连把它当新消息，
+    /// 于是补投自己的话、弹自己的窗。
+    /// </summary>
+    /// <returns>true = 水位真的前进了。</returns>
+    public bool AdvanceWatermark(long messageId)
+    {
+        if (messageId <= 0)
+            return false;
+
+        lock (_gate)
+        {
+            var moved = messageId > _baseline;
+            if (moved)
+                _baseline = messageId;
+            _watermarkKnown = true;          // 见过任何一条真实记账 ⇒ 水位就是"已知"的
+            return moved;
+        }
+    }
+
+    /// <summary>
+    /// 首次同步专用：**只建立水位线，一条历史都不补投**。
+    ///
+    /// 为什么需要它：新装客户端本地库为空，而 history 里是最近 50 条**装之前就发生过**的事。
+    /// 无条件补投 = 一装好就先"补"进几十条历史。走这条路的语义是
+    /// 「记住我看到旧世界的最高一条」，此后只补它之后的消息 —— 正好对应
+    /// 需求里的「补齐**未确认**消息」。
+    /// </summary>
+    public bool EstablishBaseline(long watermark)
+    {
+        var moved = AdvanceWatermark(watermark);
+        AgentLog.Write($"[MSG] 首次同步：只建立水位线 watermark={Watermark}"
+                     + (moved ? "（前进）" : "（无变化）") + "；不补投任何历史消息");
+        return moved;
+    }
+
+    /// <summary>
+    /// 一条消息的四态快照（需求 §8：已发送 / 已投递 / 已 ACK / 已显示）。
+    ///
+    /// 数据来源与边界（**本机不假装知道跨进程的事实**）：
+    /// <list type="bullet">
+    ///   <item><b>已发送</b>：本地库里有这条记账（<c>state ≥ Persisted</c>）—— 跨进程存活，最硬的事实；</item>
+    ///   <item><b>已投递</b>：本次会话里确实交给了界面（页面渲染 / 补投进列表）；</item>
+    ///   <item><b>已 ACK</b>：<c>ack</c> 帧真的交给了传输层（<see cref="SendAck"/> /
+    ///     <see cref="FlushPendingAcks"/> 的成功分支才记账；进程重启后这些事实清零，
+    ///     跨进程的 ACK 事实由服务端 <c>message_targets</c> 负责，本机不假装知道）；</item>
+    ///   <item><b>已显示</b>：界面确认画出来了 / 原生通知回落提醒过 / 用户已读 ——
+    ///     来自本地库的状态（跨进程存活）。</item>
+    /// </list>
+    /// </summary>
+    /// <param name="messageId">要问的那条消息。</param>
+    public DeliveryReport Report(long messageId)
+    {
+        var record = messageId > 0 ? _store.Get(messageId) : null;
+        var state = record?.State ?? DeliveryState.Received;
+
+        bool delivered, acked;
+        lock (_gate)
+        {
+            delivered = _handedToUi.Contains(messageId);
+            acked = _ackedStatus.ContainsKey(messageId);
+        }
+
+        var sent = record is not null && state >= DeliveryState.Persisted;
+        var displayed = state == DeliveryState.Displayed
+                        || state == DeliveryState.NotifiedFallback
+                        || state == DeliveryState.Read;
+
+        return new DeliveryReport(messageId, state, sent, delivered, acked, displayed);
+    }
+
+    /// <summary>已 ACK 事实里那条消息用的 ack 状态（没 ACK 过时为空串）—— 排查用。</summary>
+    public string AckedStatusOf(long messageId)
+    {
+        lock (_gate) { return _ackedStatus.TryGetValue(messageId, out var status) ? status : ""; }
+    }
+
     // ---------------- 重放与兜底 ----------------
 
     /// <summary>
@@ -395,7 +635,7 @@ public sealed class MessageManager
     }
 
     /// <summary>把「已决策但没交出去」的 ACK 补发一遍；返回成功交出去的条数（连接建立/心跳时调用）。</summary>
-    public int FlushPendingAcks() => _pendingAcks.Flush(_sendAck);
+    public int FlushPendingAcks() => _pendingAcks.Flush(HandOverAck);
 
     // ---------------- 内部 ----------------
 
@@ -457,7 +697,7 @@ public sealed class MessageManager
         var handed = false;
         try
         {
-            _sendAck(messageId, status);
+            HandOverAck(messageId, status);
             _pendingAcks.MarkSent(messageId, status);
             handed = true;
             AgentLog.Write($"[MSG] message_id={messageId} → ack:{status}（{why}）");
@@ -470,5 +710,19 @@ public sealed class MessageManager
 
         RaiseState(messageId, DeliveryState.AckSent,
             handed ? $"ack:{status}" : $"ack:{status}（待补发）");
+    }
+
+    /// <summary>
+    /// 把一条 ack **真的**交给传输层（Phase 4 的 ACK 事实记录点）。
+    ///
+    /// 成功时才记 <see cref="_ackedStatus"/> —— 它抛异常就是"没交出去"，
+    /// 由调用方决定是留在待发队列（<see cref="SendAck"/>）还是下次再试（<see cref="FlushPendingAcks"/>）。
+    /// 这样 <see cref="Report"/> 的「已 ACK」才等于「服务端真的可能收到了」，
+    /// 而不是「我们决定要发」。
+    /// </summary>
+    private void HandOverAck(long messageId, string status)
+    {
+        _sendAck(messageId, status);
+        lock (_gate) { _ackedStatus[messageId] = status; }
     }
 }

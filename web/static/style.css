@@ -886,6 +886,10 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   min-width: 0;
   max-width: min(72%, 560px);   /* 气泡不撑满整行，左右留白区分阵营 */
+  /* ★ 关键：flex 列容器默认 align-items: stretch —— 气泡会被拉到和
+     「昵称+时间」那一行一样宽，于是短消息后面拖出一长段空位（用户报过）。
+     按内容宽度收缩才像聊天软件。 */
+  align-items: flex-start;
 }
 .chat-row--out .chat-main { align-items: flex-end; }
 

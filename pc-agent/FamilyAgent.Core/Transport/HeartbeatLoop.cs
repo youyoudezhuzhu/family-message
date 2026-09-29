@@ -31,6 +31,7 @@ public sealed class HeartbeatLoop
     private readonly WebSocketTransport _transport;
     private readonly Outbox _outbox;
     private readonly IPlatformInfo _platform;
+    private readonly PlatformCapabilities _capabilities;
 
     /// <summary>最近一次收到心跳回执（含 <c>hello</c>，它也算「链路活着」的证据）。</summary>
     private DateTime _lastAckUtc = DateTime.UtcNow;
@@ -38,11 +39,18 @@ public sealed class HeartbeatLoop
     /// <summary>最近一次发出心跳。</summary>
     private DateTime _lastBeatUtc = DateTime.MinValue;
 
-    public HeartbeatLoop(WebSocketTransport transport, Outbox outbox, IPlatformInfo platform)
+    /// <param name="capabilities">
+    /// 本平台注册了哪些能力实现（Phase 3）—— 心跳里的 <c>capabilities</c> 由它推导，
+    /// 与连接串上的那个参数**同源**（都来自 <c>CapabilityReporter</c>），
+    /// 免得两处报出不一样的能力表。
+    /// </param>
+    public HeartbeatLoop(WebSocketTransport transport, Outbox outbox, IPlatformInfo platform,
+                         PlatformCapabilities capabilities)
     {
         _transport = transport;
         _outbox = outbox;
         _platform = platform;
+        _capabilities = capabilities;
     }
 
     /// <summary>
@@ -89,7 +97,8 @@ public sealed class HeartbeatLoop
                 if (now - _lastBeatUtc >= TimeSpan.FromSeconds(15))
                 {
                     _lastBeatUtc = now;
-                    await _transport.SendRawAsync(ws, BuildHeartbeatJson(_platform), ct).ConfigureAwait(false);
+                    await _transport.SendRawAsync(ws, BuildHeartbeatJson(_platform, _capabilities), ct)
+                                  .ConfigureAwait(false);
                 }
 
                 if (_outbox.Count > 0)
@@ -119,11 +128,15 @@ public sealed class HeartbeatLoop
     /// 状态每次现检测（<see cref="IPlatformInfo.SessionState"/> 的实现必须现算，不吃缓存）——
     /// 会话状态可能刚在这 15 秒里变过，报旧值会让网页端显示错的状态。
     /// </summary>
-    public static string BuildHeartbeatJson(IPlatformInfo platform) =>
+    /// <param name="capabilities">
+    /// Phase 3 起能力清单由「注册了哪些实现」推导（<see cref="PlatformCapabilities"/>）——
+    /// 不在当前平台上的能力**不会**出现在这一帧里，与连接串上的 <c>capabilities=</c> 同源。
+    /// </param>
+    public static string BuildHeartbeatJson(IPlatformInfo platform, PlatformCapabilities capabilities) =>
         JsonSerializer.Serialize(new
         {
             type = FrameTypes.Heartbeat,
             windows_state = platform.SessionState,
-            capabilities = DeviceCapabilities.Build(platform),
+            capabilities = DeviceCapabilities.Build(platform, capabilities),
         });
 }

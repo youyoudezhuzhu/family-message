@@ -191,6 +191,7 @@ html[data-view="settings"] #v-settings { display: flex; }
   display: flex; flex-direction: column; gap: var(--spacing-xs);
   min-width: 0;
   max-width: min(72%, 560px);
+  align-items: flex-start;   /* 气泡按内容宽度收缩，不拉伸到昵称行宽 */
 }
 .chat-row--out .chat-main { align-items: flex-end; }
 
