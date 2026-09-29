@@ -580,6 +580,123 @@ def main() -> int:
         print("  ⏭  未传 --db：跳过旧库迁移实测（用 `--db server/data/family.db` 跑一遍）")
 
     # ══════════════════════════════════════════════════════════════
+    section("6b. 换色选色：与旧色感知差异最大（本轮修复；纯函数 + 服务层）")
+    # ══════════════════════════════════════════════════════════════
+    # 背景（用户报「点重新分配颜色没反应」）：旧实现取「池子顺序第一个可用色」，
+    # 库里只有 1 条昵称时可用色 = 除自己外全部 → 永远取到 color_02，再点又回 color_01，
+    # 而这两个色的浅色圆点（#3D2273 / #252F6F）ΔE00 只有 7.5 —— 肉眼看不出来。
+    # 修法：候选里取与旧色 ΔE00 最大者（pool.pick_farthest_from），纯函数、可单测。
+
+    def _dot(hex_color: str, dark: bool = False) -> str:
+        """镜像客户端 §4.4 规则 1 的圆点色（浅色 mix 35% 黑 / 深色 mix 30% 白）。
+
+        ⚠ 只在**测试**里用：服务端不持有显示色表（那是客户端渲染职责）。
+        这里做一份是为了**交叉校验**「按基础色取最远」这个代理是否忠实于用户真正看到的颜色。
+        """
+        c = [int(hex_color[i:i + 2], 16) for i in (1, 3, 5)]
+        out = [v * 0.70 + 255 * 0.30 for v in c] if dark else [v * 0.65 for v in c]
+        return "#%02X%02X%02X" % tuple(max(0, min(255, round(v))) for v in out)
+
+    # ── 度量本身 ──
+    check("ΔE 度量自洽：ΔE00(黑,白) = ΔE76(黑,白) = 100.0、同色 = 0",
+          abs(pool.delta_e2000("#000000", "#FFFFFF") - 100.0) < 0.01
+          and abs(pool.delta_e76("#000000", "#FFFFFF") - 100.0) < 0.01
+          and pool.delta_e2000("#5E35B1", "#5E35B1") == 0.0)
+    check("ΔE00 对称：d(a,b) == d(b,a)",
+          pool.visual_distance("color_01", "color_13") == pool.visual_distance("color_13", "color_01"),
+          f"{pool.visual_distance('color_01', 'color_13'):.2f}")
+    check("visual_distance 是 Lab 距离、不是 RGB 欧氏距离（color_01↔color_02 = 9.2479）",
+          abs(pool.visual_distance("color_01", "color_02") - 9.2479) < 0.001,
+          f"{pool.visual_distance('color_01', 'color_02'):.4f}")
+    try:
+        pool.visual_distance("color_01", "gray")
+        check("未知逻辑色 ID（gray）→ KeyError（不静默按「距离 0」处理）", False, "居然没抛")
+    except KeyError as e:
+        check("未知逻辑色 ID（gray）→ KeyError（不静默按「距离 0」处理）", True, str(e))
+
+    # ── 单条昵称：候选 = 池中除自己外全部 → 必须挑最远的，不是池子第一个 ──
+    one = [c for c in POOL if c != "color_01"]
+    best = pool.pick_farthest_from("color_01", one)
+    d_best = pool.visual_distance("color_01", best)
+    check("单条昵称（旧色 color_01）→ 选到候选中 ΔE00 最大的 color_08，不是池子第一个 color_02",
+          best == "color_08"
+          and d_best == max(pool.visual_distance("color_01", c) for c in one),
+          f"选到 {best}（ΔE00 {d_best:.1f}）；池子第一个 color_02 只有 "
+          f"{pool.visual_distance('color_01', 'color_02'):.1f}")
+
+    old_c, new_c = "color_02", best                       # 旧算法给的色 vs 新算法给的色
+    base_old = (pool.delta_e76(pool.LOGICAL_COLORS["color_01"], pool.LOGICAL_COLORS[old_c]),
+                pool.visual_distance("color_01", old_c))
+    base_new = (pool.delta_e76(pool.LOGICAL_COLORS["color_01"], pool.LOGICAL_COLORS[new_c]),
+                pool.visual_distance("color_01", new_c))
+    dot_old = (pool.delta_e76(_dot(pool.LOGICAL_COLORS["color_01"]), _dot(pool.LOGICAL_COLORS[old_c])),
+               pool.delta_e2000(_dot(pool.LOGICAL_COLORS["color_01"]), _dot(pool.LOGICAL_COLORS[old_c])))
+    dot_new = (pool.delta_e76(_dot(pool.LOGICAL_COLORS["color_01"]), _dot(pool.LOGICAL_COLORS[new_c])),
+               pool.delta_e2000(_dot(pool.LOGICAL_COLORS["color_01"]), _dot(pool.LOGICAL_COLORS[new_c])))
+    print(f"    旧算法 color_01 ↔ {old_c}：基础色 ΔE76 {base_old[0]:.1f} / ΔE00 {base_old[1]:.1f}；"
+          f"浅色圆点 ΔE76 {dot_old[0]:.1f} / ΔE00 {dot_old[1]:.1f}")
+    print(f"    新算法 color_01 → {new_c}：基础色 ΔE76 {base_new[0]:.1f} / ΔE00 {base_new[1]:.1f}；"
+          f"浅色圆点 ΔE76 {dot_new[0]:.1f} / ΔE00 {dot_new[1]:.1f}")
+    check("新色比旧色的差异**明显变大**（基础色 ΔE00 ≥ 8×；用户看到的浅色圆点 ΔE00 ≥ 8×）",
+          base_new[1] >= 8 * base_old[1] and dot_new[1] >= 8 * dot_old[1],
+          f"基础 {base_old[1]:.1f} → {base_new[1]:.1f}（{base_new[1] / base_old[1]:.1f}×）；"
+          f"圆点 {dot_old[1]:.1f} → {dot_new[1]:.1f}（{dot_new[1] / dot_old[1]:.1f}×）")
+
+    # ── 「基础色代理」的忠实度 + 深色主题也要成立 ──
+    agree, worst_dark = 0, 1e9
+    for old in POOL:
+        cands = [c for c in POOL if c != old]
+        pick = pool.pick_farthest_from(old, cands)
+        by_dot = max(cands, key=lambda c: pool.delta_e2000(_dot(pool.LOGICAL_COLORS[old]),
+                                                           _dot(pool.LOGICAL_COLORS[c])))
+        agree += (pick == by_dot)
+        worst_dark = min(worst_dark, pool.delta_e2000(_dot(pool.LOGICAL_COLORS[old], True),
+                                                      _dot(pool.LOGICAL_COLORS[pick], True)))
+    check("「按基础色取最远」忠实于「按浅色圆点取最远」（16 个旧色里 15 个一致，与模块文档一致）",
+          agree == 15, f"一致 {agree}/16")
+    check("新算法在**深色**主题下同样一眼可辨（所有旧色里最小的圆点 ΔE00 ≥ 30；旧算法 7.5）",
+          worst_dark >= 30, f"最小 ΔE00 {worst_dark:.1f}")
+
+    # ── 确定性与边界 ──
+    check("确定性：候选顺序颠倒不影响结果（最大值唯一时不依赖顺序）",
+          pool.pick_farthest_from("color_01", one) == best
+          == pool.pick_farthest_from("color_01", list(reversed(one))))
+    _vd = pool.visual_distance
+    pool.visual_distance = lambda a, b: 5.0                # 造「全部同分」
+    try:
+        tie = pool.pick_farthest_from("color_01", ["color_09", "color_11", "color_13"])
+    finally:
+        pool.visual_distance = _vd
+    check("同分取迭代顺序靠前者（= COLOR_POOL 书写顺序，可复现）", tie == "color_09", f"选到 {tie}")
+    check("候选为空 → None（调用方据此抛 503，绝不回退同色）",
+          pool.pick_farthest_from("color_01", []) is None)
+    check("只有一个候选时没得挑，仍然返回它",
+          pool.pick_farthest_from("color_03", ["color_02"]) == "color_02")
+    check("旧色是脏数据（不在池里）→ 退回第一个候选，不抛异常",
+          pool.pick_farthest_from("gray", ["color_05", "color_06"]) == "color_05")
+
+    # ── 服务层集成：真写库、真换色 ──
+    wipe()
+    solo = nk.create("换个色试试")
+    seq = [solo["color"]]
+    for _ in range(3):
+        seq.append(nk.reassign_color(solo["nickname_id"])["color"])
+    steps = [pool.visual_distance(a, b) for a, b in zip(seq, seq[1:])]
+    check("服务层：单条昵称连换 3 次 → 每次都是新色，且每步 ΔE00 ≥ 60（旧算法 7.5）",
+          all(a != b for a, b in zip(seq, seq[1:])) and min(steps) >= 60,
+          " → ".join(seq) + f"（相邻 ΔE00 {['%.1f' % d for d in steps]}）")
+    check("……换完仍只占 1 个色位、库里仍 1 条 active（不泄漏颜色）",
+          len(active()) == 1 and len({r["color"] for r in active()}) == 1, f"{active()}")
+
+    wipe()
+    made15 = [nk.create(f"人{i}") for i in range(15)]
+    free = [c for c in POOL if c not in {m["color"] for m in made15}][0]
+    chg = nk.reassign_color(made15[0]["nickname_id"])
+    check(f"15 条 active（只剩 {free} 一个空闲色）→ 只能换到它，仍然换了（不原地不动）",
+          chg["color"] == free and chg["color"] != made15[0]["color"],
+          f"{made15[0]['color']} → {chg['color']}")
+
+    # ══════════════════════════════════════════════════════════════
     section("7. Phase 2：NAS API + 广播（真起测试实例，默认 18899）")
     # ══════════════════════════════════════════════════════════════
     if args.no_phase2:
@@ -1009,6 +1126,14 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          "与「乙」的 color_02 不撞）",
          st == 200 and r.get("color") not in (None, a.get("color"))
          and r.get("color") in used, f"{a.get('color')} → {r.get('color')} used={sorted(used)}")
+    try:
+        from nicknames import visual_distance as _vd2
+        d_gap = _vd2(a.get("color", ""), r.get("color", ""))
+    except Exception as e:                                    # noqa: BLE001
+        d_gap = -1.0
+        print(f"  ! 算 ΔE 失败：{type(e).__name__}: {e}")
+    push(f"……换到的色与旧色 ΔE00 = {d_gap:.1f} ≥ 60（一眼可辨；旧实现只会给出 color_02，ΔE00 9.2）",
+         d_gap >= 60, f"{a.get('color')} → {r.get('color')} ΔE00={d_gap:.1f}")
     st, body = _http(B, "POST", "/api/nicknames/99999/reassign-color")
     push("reassign-color 不存在的 id → 404 NICKNAME_NOT_FOUND",
          st == 404 and body.get("detail", {}).get("code") == "NICKNAME_NOT_FOUND")

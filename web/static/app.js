@@ -175,7 +175,12 @@ function go(page) {
   if (page === 'settings') enterSettings();
   else if (page === 'shot') renderShotPicks();
 
-  window.scrollTo({ top: 0 });
+  // 切页时把内容区滚回顶部。
+  // ★ 不能用 window.scrollTo：.main 现在是**固定高度的内部滚动容器**（style.css §4），
+  //   document 本身不滚了，调 window.scrollTo 等于什么都没做（切页后停在上一页的位置）。
+  //   到底滚哪个是可测的：看 window.scrollY 恒为 0、.main.scrollTop 才是那个会变的量。
+  const mainEl = $('main');
+  if (mainEl) mainEl.scrollTop = 0;
 }
 
 function loadPage() {
@@ -995,6 +1000,10 @@ function renderMessages(toEnd) {
   const fromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
   box.textContent = '';
   const list = chatOrder(state.messages);
+  // 空列表：整块列表容器一起藏起来（不是只藏空态）——
+  // 否则 flex:1 的列表和 flex:1 的空态会平分剩余空间，
+  // 「还没有消息」跑到半空、发送框也被顶上去（用户报的就是这个）。
+  box.hidden = list.length === 0;
   $('home-recent-empty').hidden = list.length > 0;
   $('home-msg-count').textContent = list.length ? `共 ${list.length} 条` : '';
   list.forEach((m) => box.appendChild(buildMsgEl(m)));

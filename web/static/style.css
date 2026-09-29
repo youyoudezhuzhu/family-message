@@ -155,10 +155,19 @@ code { font-family: var(--fluent-font-mono); font-size: 12px; }
 .nav-item__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── 主内容区 ────────────────────────────────────────────────── */
+/* ★ 固定高度的**内部滚动容器**（不是整页滚）。
+   为什么必须这样：首页要求「发送框钉在底部，没有消息时也贴底」——
+   只有当 .main 的高度是确定的，子级 `min-height: 100%` 才有参照物，
+   flex 才能把剩余空间分给消息列表、把发送卡片推到最下面。
+   ⚠ 连带的坑：document 从此不滚，`window.scrollTo()` 不再有效 ——
+   切页时改成滚 `.main`（web/static/app.js 的 showPage）。 */
 .main {
   grid-area: main; min-width: 0;
+  height: calc(100dvh - var(--titlebar-height));
+  overflow-y: auto;
   padding: var(--spacing-xl) var(--spacing-2xl) var(--spacing-3xl);
 }
+
 .page {
   max-width: var(--content-max); margin: 0 auto;
   display: flex; flex-direction: column; gap: var(--spacing-lg);
@@ -874,6 +883,24 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
    靠右只认「昵称 == 我的本地昵称」，不认 device_id —— 群聊里设备不是身份。 */
 .chat-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }
 .chat-list--compact { gap: var(--spacing-md); }
+
+/* ── 首页布局：发送框钉在底部（用户报「没有消息时发送框跑到页面中间」）──
+   三段接力，缺一段就回退成「发送卡片紧跟内容」：
+     · #page-home 撑满 .main 的高度（.main 是固定高度容器，见第 4 节）；
+     · 「家庭消息」这一段吃掉剩余空间（flex:1 + min-height:0 → 列表自己滚，
+       而不是把整页顶长）；
+     · 发送卡片固定尺寸，自然落在最下面。
+   消息为空时列表整块 hidden（app.js 切换），空态占同样的空间并垂直居中。 */
+#page-home { min-height: 100%; }
+.section--messages { flex: 1 1 auto; min-height: 0; }
+.section--messages .chat-scroll {
+  /* 首页的列表不再按 60dvh 封顶：空间由上面的 flex 分配，剩多少用多少 */
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: none;
+}
+.section--messages .empty { flex: 1 1 auto; }      /* 空态居中占满这一段 */
+.card--compose { flex: 0 0 auto; }
 
 /* 首页「家庭消息」：整条群聊流直接在首页滚，不再跳「消息」页。
    高度按视口给（dvh，手机上地址栏收起/展开时不会算错），底部留一点内边距

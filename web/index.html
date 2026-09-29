@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.17.1">
-<link rel="stylesheet" href="static/style.css?v=0.17.1">
-<link rel="stylesheet" href="static/shell.css?v=0.17.1">
+<link rel="stylesheet" href="static/tokens.css?v=0.18.0">
+<link rel="stylesheet" href="static/style.css?v=0.18.0">
+<link rel="stylesheet" href="static/shell.css?v=0.18.0">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -205,7 +205,7 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       <!-- 消息记录在前、发送框在后：像聊天应用一样从上往下读，输入框在底部。
            整条群聊流都渲染在这里（不再只放最近 3 条），容器自己可上下滚动，
            所以不需要「查看全部」跳到别的页面。 -->
-      <section class="section" aria-labelledby="t-recent">
+      <section class="section section--messages" aria-labelledby="t-recent">
         <div class="section__head">
           <h3 class="section__title" id="t-recent">家庭消息</h3>
           <span class="card__hint" id="home-msg-count"></span>
@@ -553,9 +553,9 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
 <!-- nickcolor.js：逻辑色 ID → 显示色（§4.4 映射表），chat.js / shell.js / app.js 共用 -->
-<script src="static/nickcolor.js?v=0.17.1"></script>
-<script src="static/chat.js?v=0.17.1"></script>
-<script src="static/shell.js?v=0.17.1"></script>
-<script src="static/app.js?v=0.17.1"></script>
+<script src="static/nickcolor.js?v=0.18.0"></script>
+<script src="static/chat.js?v=0.18.0"></script>
+<script src="static/shell.js?v=0.18.0"></script>
+<script src="static/app.js?v=0.18.0"></script>
 </body>
 </html>
