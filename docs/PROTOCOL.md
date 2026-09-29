@@ -91,8 +91,8 @@
 | `history_response` | `request_id` `device_id` `messages[]` | 历史补齐 |
 | `unlock_request` | `request_id` `device_id` `action` `nonce` `expires_at` | 远程解锁：一次性令牌 |
 | `unlock_result_ack` | `request_id` `status` `reason` | 解锁应答被拒时的回执（如 `rejected/not_mine`） |
-| `nickname_list_response` | `nicknames[]` `pool_version` | 昵称整表（点对点应答，全量 `active`） |
-| `nickname_list_sync` | `nicknames[]` `pool_version` | 昵称整表（广播，与上同形） |
+| `nickname_list_response` | `nicknames[]` `pool_version` `color_table[]` | 昵称整表（点对点应答，全量 `active`）；**v0.19** 起 `color_table` 带**权威颜色表** `[{color_id,hex}]`（客户端色表以它为准） |
+| `nickname_list_sync` | `nicknames[]` `pool_version` `color_table[]` | 昵称整表（广播，与上同形） |
 | `nickname_created` | `nickname{}` | 有昵称被新建 |
 | `nickname_updated` | `nickname{}` | 昵称改名 / 被服务端修订 |
 | `nickname_color_changed` | `nickname{}` | 「重新分配颜色」的结果 |

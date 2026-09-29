@@ -783,6 +783,10 @@ def _nickname_list_frame(kind: str) -> dict:
         "type": kind,
         "nicknames": nick_svc.list("active"),
         "pool_version": color_svc.pool_version(),      # v0.19：跟着色表变（客户端据此重拉）
+        # ★ v0.19：整表帧带**权威颜色表** —— 设备端 / PC 壳（经宿主转发）据此认色，
+        #   内置表只做首屏兜底；空表 = 按空处理（客户端保留手上那份）。
+        "color_table": [{"color_id": c["color_id"], "hex": c["hex"]}
+                        for c in color_svc.rows("active")],
     }
 
 
