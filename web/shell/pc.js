@@ -496,17 +496,58 @@
     sel.value = items.indexOf(cur) >= 0 ? cur : items[0];
   }
 
-  function onSenderChange() {
-    var main = $(BARS.client.sender);
-    var v = main ? main.value : '';
+  /** 事件来源 → 是哪个回复栏（'client' / 'popup'）。
+      两个回复栏（client / popup）**共用同一个 change handler**（见 bindUI），
+      所以值必须从**触发事件的那条下拉**取：写死读 client 那条，在 popup 形态下
+      会把隐藏着的旧身份**再发一遍**（客户端界面纹丝不动、宿主的选用状态也没变）。
+      没有事件来源（程序化调用 / 老路径）时退回「当前形态的下拉」，
+      settings 形态下两个回复栏都在 DOM 里、都不该被当成身份来源 → 退 client。 */
+  function senderBarOf(ev) {
+    var t = (ev && (ev.currentTarget || ev.target)) || null;
+    if (t && t.id) {
+      for (var k in BARS) { if (Object.prototype.hasOwnProperty.call(BARS, k) && BARS[k].sender === t.id) return k; }
+    }
+    return (S.view === 'popup') ? 'popup' : 'client';
+  }
+
+  /** 把「我以后用谁的名义」的本地乐观状态先落到界面上（两个下拉 + 身份 + 气泡）。
+      选用是纯本地动作，但**不能只靠宿主推回 host.nickname 才动**：
+      离线 / 宿主不应答时界面就「选了没反应」。这里先把界面按新选择重画，
+      宿主随后推来的整份状态仍然是权威值（会覆盖回去）。 */
+  function applyNickSelectionLocally(v) {
+    /* ① 两个下拉一起回写（值一样才不回写，避免把用户正在滚动的列表重置） */
+    Object.keys(BARS).forEach(function (k) {
+      var sel = $(BARS[k].sender);
+      if (sel && sel.value !== v) sel.value = v;
+    });
+    if (!nickOn()) return;
+
+    /* ② 身份乐观更新：id 变了、显示名从昵称表里取（拿不到就不猜，只回写下拉） */
+    var id = (v === '') ? null : parseInt(v, 10);
+    if (id !== null && isNaN(id)) return;
+    var row = (id === null) ? null : nickById(id);
+    if (id !== null && !row) return;
+
+    S.nick.current = row
+      ? { nickname_id: Number(row.nickname_id), display_name: String(row.display_name || ''),
+          color: row.color, is_local_temp: false }
+      : { nickname_id: null, display_name: localTempName(), color: NICK_LOCAL_TEMP_ID, is_local_temp: true };
+
+    syncNickIdentity();                                   // myName + 两个消息列表重画
+    if (S.view === 'settings') renderNickBlock();         // 设置页的「当前名义」卡也跟手
+  }
+
+  function onSenderChange(ev) {
+    var which = senderBarOf(ev);            // ★ 按事件来源取值，不写死 client
+    var sel = $(BARS[which].sender);
+    var v = sel ? sel.value : '';
 
     if (nickOn()) {
       /* 选用昵称 = **纯本地动作**（唯一能离线的，§5.2）：只发一次 web.nickname_select，
          不上传、不广播、不影响别人。'' = 切回灰临时 —— 显式传 null，
          桥靠「带没带这个字段」区分「切回灰临时」与「坏帧」。 */
       post({ type: 'web.nickname_select', nickname_id: (v === '') ? null : parseInt(v, 10) });
-      var other = $(BARS.popup.sender);
-      if (other && other.value !== v) other.value = v;
+      applyNickSelectionLocally(v);         // 本地立刻跟手（不再等宿主推回）
       return;
     }
 
@@ -804,7 +845,16 @@
        「选用」= 纯本地动作（离线也能做）；新建 / 改名 / 删除 / 重新分配颜色都是
        **全局操作**，必须在线，离线的四个入口一律置灰并明示原因（不排队、不补发）。 */
 
-  function nickHint(text, kind) { setHint('settings-nick-hint', text, kind); }
+  /** 昵称块的一句话提示。
+      ★ 同时写到「**当前形态可见**」的那一行：设置页那行在弹窗 / 客户端形态下是隐藏的，
+      用户点了改名 / 换色后（或弹窗被新消息顶上来之后）失败文案必须仍然看得见。 */
+  function nickHint(text, kind) {
+    setHint('settings-nick-hint', text, kind);
+    if (S.view !== 'settings') {
+      var bar = BARS[S.view] || BARS.client;
+      setHint(bar.hint, text, kind);
+    }
+  }
 
   /** 管理操作此刻能不能做（服务端连上了吗）。false → 四个入口置灰 + 明示原因。 */
   function nickCanManage() { return !!(S.nick && S.nick.canManage); }
@@ -847,19 +897,100 @@
     return b;
   }
 
+  /* ── 管理操作的 pending 生命周期（新建 / 改名 / 换色 / 删除）───────────────
+     宿主回的 <c>host.nickname_result</c> 只说明「请求被接受了吗」，**不是「改成功了吗」**
+     （App.OnNicknameRequested 的注释：真正的成功判据是服务端随后推来的整份状态
+     `host.nickname`，失败则是 `host.nickname_error`）。
+
+     ⚠ 老实现的两个病：
+       ① 收到 accepted 回执就把 8s 看门狗 `clearTimeout` 了 —— 而那时**还没有**任何
+          权威结果，于是提示永远停在「等待服务端应答…」（真机 bug：改名后既不成功也不失败）。
+       ② 成功一路上**没有任何文案落地**（只有「新建」靠名字反查报了成功）。
+     现在：看门狗**保留到有权威结果为止**；权威整份状态一到就用 resolveNickPending()
+     判定成功并落文案；错误帧一到就落失败文案（撞名尤其要看得见）。 */
+  var NICK_OP_TIMEOUT = 8000;
+
+  /** 把「这次操作等的是什么」记下来（判定成功要用：改的名字 / 改前的颜色 / 删的 id） */
+  function beginNickOp(kind, msg) {
+    var id = (msg.nickname_id === null || msg.nickname_id === undefined) ? null : Number(msg.nickname_id);
+    var row = (id === null) ? null : nickById(id);
+    var wanted = msg.display_name ? String(msg.display_name) : '';
+
+    S.nickPending = {
+      kind: kind,
+      id: id,
+      want: wanted,                                  // rename / create 期望出现的名字
+      label: (row && row.display_name) ? String(row.display_name) : (wanted || '该昵称'),
+      color: row ? row.color : null,                 // 换色：颜色**变了**才算成功
+    };
+    S.nickBusy = true;
+
+    if (S.nickTimer) clearTimeout(S.nickTimer);
+    S.nickTimer = setTimeout(function () {
+      S.nickTimer = null;
+      S.nickBusy = false;
+      var p = S.nickPending;
+      S.nickPending = null;
+      if (!p) return;
+      /* 看门狗兜底：**绝不永远挂着** —— 如实说没等到结果，并给出下一步 */
+      nickHint('还没收到服务端的应答（' + nickOpPastLabel(p) + '）：可能没生效。点「刷新」可以看最新状态。', 'error');
+    }, NICK_OP_TIMEOUT);
+  }
+
+  /** 一次操作的过去式说法（兜底文案用） */
+  function nickOpPastLabel(p) {
+    if (p.kind === 'rename') return '改为「' + p.want + '」';
+    if (p.kind === 'create') return '新建「' + p.want + '」';
+    if (p.kind === 'reassign_color') return '给「' + p.label + '」换颜色';
+    if (p.kind === 'delete') return '删除「' + p.label + '」';
+    return '这次操作';
+  }
+
+  /** 操作有了结论（成功 / 失败 / 超时）→ 清 pending + 停看门狗 */
+  function endNickOp() {
+    if (S.nickTimer) { clearTimeout(S.nickTimer); S.nickTimer = null; }
+    S.nickBusy = false;
+    S.nickPending = null;
+  }
+
+  /** 整份权威状态到了 → 判定挂着的操作成不成功；成功就落文案 + 收尾。
+      判不准（服务端还没处理完 / 名字撞了但还没回错误帧）就返回 false，交给看门狗兜底。 */
+  function resolveNickPending() {
+    var p = S.nickPending;
+    if (!p) return false;
+
+    var row = (p.id === null) ? null : nickById(p.id);
+    var text = '';
+
+    if (p.kind === 'rename') {
+      if (row && p.want && String(row.display_name || '') === p.want)
+        text = '已改名为「' + p.want + '」（全局生效，其他机器上的名字也变了）';
+    } else if (p.kind === 'create') {
+      if (p.want && nickByName(p.want))
+        text = '已创建「' + p.want + '」（已入库，所有人可见）';
+    } else if (p.kind === 'reassign_color') {
+      if (row && p.color && row.color && row.color !== p.color)
+        text = '已换一个新颜色（全局生效）';
+    } else if (p.kind === 'delete') {
+      if (p.id !== null && !row) text = '已删除「' + p.label + '」（历史消息原样保留）';
+    } else if (p.kind === 'refresh') {
+      /* 刷新没有「增量」可判：整份状态到了就是刷到了 */
+      text = '昵称列表已刷新（' + S.nick.list.length + ' 条活跃昵称）';
+    }
+
+    if (!text) return false;
+    endNickOp();
+    nickHint(text, 'ok');
+    return true;
+  }
+
   /** 发一次昵称操作。回的是「请求被接受了吗」，**真正的成功判据是服务端随后回的帧**。 */
   function opNick(kind, payload) {
     if (!nickOn()) return;
     var msg = { type: 'web.nickname_' + kind };
     Object.keys(payload || {}).forEach(function (k) { msg[k] = payload[k]; });
 
-    S.nickBusy = true;
-    if (S.nickTimer) clearTimeout(S.nickTimer);
-    S.nickTimer = setTimeout(function () {
-      S.nickTimer = null;
-      S.nickBusy = false;
-      nickHint('没收到宿主的回执，稍后再试一次', 'error');
-    }, 8000);
+    beginNickOp(kind, msg);      // 看门狗 + 判定依据（**不再**被 accepted 回执清掉）
     post(msg);
   }
 
@@ -1015,11 +1146,10 @@
       notice: String(d.notice || ''),
     };
 
-    // 刚新建成功（整表里出现了那个名字）→ 清输入框 + 报一句
+    // 刚新建成功（整表里出现了那个名字）→ 清输入框（提示文案由 resolveNickPending 落）
     if (S.nickPendingName && nickByName(S.nickPendingName)) {
       var input = $('nick-new-name');
       if (input) input.value = '';
-      nickHint('已创建「' + S.nickPendingName + '」', 'ok');
       S.nickPendingName = null;
     }
 
@@ -1028,27 +1158,33 @@
 
     buildSenderSelects();                         // 下拉跟着换（含「我的名义」）
     if (S.view === 'settings') fillSettings();
+    /* ★ 权威整份状态到了 → 把挂着的管理操作判定成成功并落文案（改名尤其需要：
+       否则提示永远停在宿主那句「等待服务端应答…」）。 */
+    resolveNickPending();
     if (S.nick.notice) nickHint(S.nick.notice, 'warn');   // 「你用的昵称已被删除，已切回…」
   }
 
   function onNicknameResult(d) {
     if (!d || typeof d !== 'object') return;
-    if (S.nickTimer) { clearTimeout(S.nickTimer); S.nickTimer = null; }
-    S.nickBusy = false;
 
     if (d.accepted === true) {
+      /* ★ 只是「请求被**宿主**接受了」，不是「改成功了」：
+         看门狗**不能**在这里清掉（老实现在这里 clearTimeout → 提示永远挂在
+         「等待服务端应答…」，真机 bug）。真正的收尾在 resolveNickPending()
+         （权威整份状态到了）或 onNicknameError（服务端拒绝）或看门狗超时。 */
       nickHint(String(d.detail || '') || '已发出，等待服务端应答…', '');
       return;
     }
+
     // 被拒（离线 / 本地校验不过）：如实说原因，绝不假装成功（§5.2）
+    endNickOp();
     nickHint(String(d.detail || '') || (d.offline ? nickOfflineReason() : '操作没成功'), 'error');
     if (S.view === 'settings') renderNickBlock();
   }
 
   function onNicknameError(d) {
     if (!d || typeof d !== 'object') return;
-    if (S.nickTimer) { clearTimeout(S.nickTimer); S.nickTimer = null; }
-    S.nickBusy = false;
+    endNickOp();                        // ★ 失败也要**收尾**（看门狗停、pending 清）
 
     var code = String(d.code || '');
     var message = String(d.message || '服务端拒绝了这次操作');
@@ -1071,10 +1207,21 @@
         };
         box.hidden = false;
         nickHint('重名会被拒绝：可以直接选用已有的那条。', 'warn');
+        refreshNickRowsOnError();
         return;
       }
     }
-    nickHint(message, 'error');
+    /* 服务端的拒绝理由必须**看得见**（撞名 409 NAME_TAKEN / 池满 / 找不到…）：
+       文案走 nickHint（设置页 + 当前形态可见的那一行）。 */
+    nickHint(code ? (message + '（' + code + '）') : message, 'error');
+    refreshNickRowsOnError();
+  }
+
+  /** 失败后把列表刷回服务端的真实名字（改名失败时输入框里还留着用户敲的新名字）。
+      ★ 不看当前形态：设置页那一块在弹窗 / 客户端形态下是**隐藏**的，但它仍在 DOM 里，
+      留着「用户敲过的新名字」会让切回设置页时先看到一眼假的成功态。 */
+  function refreshNickRowsOnError() {
+    renderNickBlock();
   }
 
   /* ── 宿主 → 页面 ─────────────────────────────────────────── */
