@@ -99,7 +99,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_nicknames_color_active ON nicknames(color) 
 
 ## 8. 颜色：逻辑色 ID 入库，显示色由客户端算（默认 31 色 + 灰）
 
-- 池子（**逻辑色 ID，顺序即分配优先级**）：**v0.19.1 起 31 个**（`color_01`…`color_31`）——
+- 池子（**逻辑色 ID，顺序即分配优先级**）：**v0.19.1 起 32 个**（`color_01`…`color_32`）——
   前 15 个是 Material 400 系（浅），后 16 个是 800/900 系（深）。**权威**见 `server/nicknames.py` 的
   `LOGICAL_COLORS` 与表 `nickname_palette`（网页端可增删）；池上限 **64**（随 `GET /api/nicknames/colors` 下发）。
   ⚠ 别在文档里再抄一份 HEX 清单（改一次配色就要同步一处，v0.19.1 已经踩过）。

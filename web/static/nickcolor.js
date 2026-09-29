@@ -32,7 +32,7 @@
     color_17: '#D84315', color_18: '#E65100', color_19: '#F57F17', color_20: '#2E7D32',
     color_21: '#558B2F', color_22: '#00695C', color_23: '#00838F', color_24: '#1565C0',
     color_25: '#283593', color_26: '#4527A0', color_27: '#6A1B9A', color_28: '#AD1457',
-    color_29: '#4E342E', color_30: '#37474F', color_31: '#004D40',
+    color_29: '#4E342E', color_30: '#37474F', color_31: '#004D40', color_32: '#29B6F6',
     gray: '#8A8A8A',           // 本地临时昵称（不在池里，第 17 个 ID）
   };
 

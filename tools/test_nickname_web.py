@@ -787,7 +787,7 @@ def main() -> int:
             custom = (body.get("color") or {}).get("color_id")
             ver = body.get("color_pool_version")
             check("（前置）服务端加一个自定义色 #0FA3B1",
-                  st == 201 and custom == "color_32", f"{st} {body}")
+                  st == 201 and custom == "color_33", f"{st} {body}")
             st, body = http(on.base, "POST", "/api/nicknames", {"display_name": "服务端的色"})
             nid = (body.get("nickname") or {}).get("nickname_id")
             st2, _ = http(on.base, "POST", f"/api/nicknames/{nid}/color", {"color_id": custom})
@@ -797,24 +797,24 @@ def main() -> int:
             pageG, errsG = open_page(G, on.base)
             stateG = pageG.evaluate("""() => ({
                 has: FMNickColor.hasServerTable(), v: FMNickColor.tableVersion(),
-                ids: FMNickColor.tableIds().length, hex: FMNickColor.base('color_32'),
+                ids: FMNickColor.tableIds().length, hex: FMNickColor.base('color_33'),
             })""")
             exp_active = len(http(on.base, "GET", "/api/nicknames/colors?status=active")[1]["colors"])
             check(f"★ 页面启动就拉了服务端色表（认得出 / 版本一致 / {exp_active} 个色）",
                   stateG["has"] and stateG["v"] == ver and stateG["ids"] == exp_active, json.dumps(stateG))
-            check("★ 自定义色按**服务端 HEX** 渲染（内置表里没有 color_32 —— 走兜底会变灰）",
+            check("★ 自定义色按**服务端 HEX** 渲染（内置表里没有 color_33 —— 走兜底会变灰）",
                   stateG["hex"] == "#0FA3B1", json.dumps(stateG))
             go_settings(pageG)
             grows = [r for r in row_colors(pageG) if r["name"] == "服务端的色"]
             check("……昵称行色点用的就是它（服务端表优先，不是灰兜底）",
-                  bool(grows) and grows[0]["colorId"] == "color_32",
+                  bool(grows) and grows[0]["colorId"] == "color_33",
                   json.dumps(grows, ensure_ascii=False))
             shot(pageG, "12-color-table-from-server")
 
             # 广播：页面开着，服务端再加一个色 → 免刷新跟到
             st, body = http(on.base, "POST", "/api/nicknames/colors", {"hex": "#7B1FA2"})
             pageG.wait_for_function(f"() => FMNickColor.tableIds().length >= {exp_active + 1}", timeout=8000)
-            afterG = pageG.evaluate("() => ({v: FMNickColor.tableVersion(), hex: FMNickColor.base('color_33')})")
+            afterG = pageG.evaluate("() => ({v: FMNickColor.tableVersion(), hex: FMNickColor.base('color_34')})")
             check(f"★ 服务端加色 → color_table_changed 广播 → 页面**免刷新**重拉（{exp_active + 1} 个色 / 版本跟进）",
                   afterG["hex"] == "#7B1FA2" and afterG["v"] == body.get("color_pool_version"),
                   json.dumps(afterG))

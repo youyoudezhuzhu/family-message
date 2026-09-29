@@ -228,7 +228,7 @@ def main() -> int:
 
     # ★ v0.19（docs/COLOR-TABLE-PLAN.md）：色表变成**数据**（表 nickname_palette，网页端可增删），
     #   所以 nicknames.color 那个写死 16 个 ID 的**枚举 CHECK 必须去掉** —— 留着就永远加不了新色。
-    #   换成**形状 CHECK** `color_NN`：拦住乱值与 'gray'，但放行 color_32 及以后。
+    #   换成**形状 CHECK** `color_NN`：拦住乱值与 'gray'，但放行 color_33 及以后。
     ddl = conn.execute("SELECT sql FROM sqlite_master WHERE type='table'"
                        " AND name='nicknames'").fetchone()[0]
     check("color 用**形状** CHECK（color_NN），不再写死 16 个 ID 的枚举",
@@ -248,8 +248,8 @@ def main() -> int:
 
     check("形状 CHECK 仍然挡住 'gray' / 'red' / 'color_x1'（灰不进共享昵称，§3.2.1）",
           _color_rejected("gray") and _color_rejected("red") and _color_rejected("color_x1"))
-    check("★ color_32 现在能进 nicknames.color（v0.19 之前会被枚举 CHECK 拒绝）",
-          not _color_rejected("color_32"))
+    check("★ color_33 现在能进 nicknames.color（v0.19 之前会被枚举 CHECK 拒绝）",
+          not _color_rejected("color_33"))
 
     pal = conn.execute("SELECT color_id, hex, sort, status FROM nickname_palette"
                        " ORDER BY sort").fetchall()
@@ -1358,14 +1358,14 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          and any(c["used_by"] for c in cols), json.dumps(cols[0], ensure_ascii=False))
 
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "#0FA3B1"})
-    push("POST /api/nicknames/colors → 201：新 ID = color_32（只增）、版本 +1 = 2",
-         st == 201 and body.get("color", {}).get("color_id") == "color_32"
+    push("POST /api/nicknames/colors → 201：新 ID = color_33（只增）、版本 +1 = 2",
+         st == 201 and body.get("color", {}).get("color_id") == "color_33"
          and body.get("color", {}).get("hex") == "#0FA3B1"
          and body.get("color_pool_version") == 2, f"{st} {body}")
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "#0fa3b1"})
-    push("同色值（小写）→ 409 COLOR_ALREADY_EXISTS，且带既有的 color_32",
+    push("同色值（小写）→ 409 COLOR_ALREADY_EXISTS，且带既有的 color_33",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_ALREADY_EXISTS"
-         and body["detail"].get("existing_color_id") == "color_32", f"{st} {body}")
+         and body["detail"].get("existing_color_id") == "color_33", f"{st} {body}")
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "rgb(15, 163, 177)"})
     push("RGB 写法归一后同色 → 也是 409（查重口径统一大写）",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_ALREADY_EXISTS", f"{st} {body}")
@@ -1377,14 +1377,14 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
     st, body = _http(B, "POST", "/api/nicknames", {"display_name": "配色测试"})
     cid = body.get("nickname", {}).get("nickname_id")
     push("（前置）建一个昵称专门用来测「指定颜色」", st == 201 and bool(cid), f"{st} {body}")
-    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_32"})
+    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_33"})
     push("★ POST /api/nicknames/{id}/color → 200：人为指定的颜色立刻生效",
-         st == 200 and body.get("nickname", {}).get("color") == "color_32", f"{st} {body.get('nickname')}")
+         st == 200 and body.get("nickname", {}).get("color") == "color_33", f"{st} {body.get('nickname')}")
     st, body = _http(B, "GET", "/api/nicknames")
     mine = [n for n in body["nicknames"] if n["nickname_id"] == cid]
-    push("……真落库（GET /api/nicknames 里就是 color_32）",
-         bool(mine) and mine[0]["color"] == "color_32", json.dumps(mine, ensure_ascii=False))
-    st, _ = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_32"})
+    push("……真落库（GET /api/nicknames 里就是 color_33）",
+         bool(mine) and mine[0]["color"] == "color_33", json.dumps(mine, ensure_ascii=False))
+    st, _ = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_33"})
     push("指定成同一个色 → 幂等 200（不报错、不广播）", st == 200, f"{st}")
     others = [n for n in _http(B, "GET", "/api/nicknames")[1]["nicknames"] if n["nickname_id"] != cid]
     st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": others[0]["color"]})
@@ -1399,18 +1399,18 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          st == 422 and body.get("detail", {}).get("code") == "INVALID_COLOR_ID", f"{st} {body}")
 
     # ── 停用（只停止分配，不删行）──
-    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_32")
+    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_33")
     push("停用**正在被用**的色 → 409 COLOR_IN_USE（不是静默停掉）",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_IN_USE", f"{st} {body}")
     _http(B, "POST", f"/api/nicknames/{cid}/reassign-color")       # 先把它换走
-    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_32")
-    push("★ DELETE /api/nicknames/colors/color_32 → 200：status=retired、版本 +1 = 3",
+    st, body = _http(B, "DELETE", "/api/nicknames/colors/color_33")
+    push("★ DELETE /api/nicknames/colors/color_33 → 200：status=retired、版本 +1 = 3",
          st == 200 and body.get("color", {}).get("status") == "retired"
          and body.get("color_pool_version") == 3, f"{st} {body}")
     st, body = _http(B, "GET", "/api/nicknames/colors?status=retired")
     push("……已停用的是「行还在」而不是删行（?status=retired 能列出来）",
-         st == 200 and [c["color_id"] for c in body["colors"]] == ["color_32"], f"{st} {body}")
-    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_32"})
+         st == 200 and [c["color_id"] for c in body["colors"]] == ["color_33"], f"{st} {body}")
+    st, body = _http(B, "POST", f"/api/nicknames/{cid}/color", {"color_id": "color_33"})
     push("指定一个已停用的色 → 409 COLOR_RETIRED",
          st == 409 and body.get("detail", {}).get("code") == "COLOR_RETIRED", f"{st} {body}")
     st, body = _http(B, "DELETE", "/api/nicknames/colors/nope")
@@ -1421,16 +1421,16 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          st == 404 and body.get("detail", {}).get("code") == "COLOR_NOT_FOUND", f"{st} {body}")
 
     st, body = _http(B, "POST", "/api/nicknames/colors", {"hex": "#010203"})
-    push("★ **ID 不复用**：停用 color_32 后加新色拿到 color_33（历史消息颜色不会被顶掉，§2.1）",
-         st == 201 and body.get("color", {}).get("color_id") == "color_33", f"{st} {body}")
+    push("★ **ID 不复用**：停用 color_33 后加新色拿到 color_34（历史消息颜色不会被顶掉，§2.1）",
+         st == 201 and body.get("color", {}).get("color_id") == "color_34", f"{st} {body}")
     st, body = _http(B, "POST", "/api/nicknames/colors", {"rgb": [171, 205, 239]})
-    push("rgb=[171,205,239] → 201 color_34 / #ABCDEF（版本 5）",
-         st == 201 and body.get("color", {}).get("color_id") == "color_34"
+    push("rgb=[171,205,239] → 201 color_35 / #ABCDEF（版本 5）",
+         st == 201 and body.get("color", {}).get("color_id") == "color_35"
          and body.get("color", {}).get("hex") == "#ABCDEF"
          and body.get("color_pool_version") == 5, f"{st} {body}")
     # 收尾：把临时加的两色停掉，可用色回到内置数（后面的池满用例依赖这个数）
-    st17, _ = _http(B, "DELETE", "/api/nicknames/colors/color_33")
-    st18, body18 = _http(B, "DELETE", "/api/nicknames/colors/color_34")
+    st17, _ = _http(B, "DELETE", "/api/nicknames/colors/color_34")
+    st18, body18 = _http(B, "DELETE", "/api/nicknames/colors/color_35")
     st19, body19 = _http(B, "GET", "/api/nicknames/colors?status=active")
     push(f"收尾：停掉临时加的两色 → **可用**色回到内置数 {len(pool.BUILTIN_COLORS)} 个（版本 7；已停用的 3 个仍能列出来）",
          (st17, st18) == (200, 200) and len(body19["colors"]) == len(pool.BUILTIN_COLORS)
