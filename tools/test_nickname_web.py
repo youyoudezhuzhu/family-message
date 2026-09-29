@@ -508,6 +508,15 @@ def main() -> int:
                     break
                 pageB.wait_for_timeout(40)
             dt = (time.time() - t0) * 1000
+            # ★ 发起端 A 的更新走 **HTTP 响应**，B/C 走 **WS 广播**：响应偶尔比广播晚几毫秒，
+            #   所以再等一次「三端收敛」（最多 3s），避免这条断言在慢机器上假红。
+            t1 = time.time()
+            while time.time() - t1 < 3:
+                afterA = row_colors(pageA)[0]["dot"]
+                afterB = row_colors(pageB)[0]["dot"]
+                if afterA == afterB:
+                    break
+                pageA.wait_for_timeout(50)
             afterA = row_colors(pageA)[0]["dot"]
             afterB = row_colors(pageB)[0]["dot"]
             afterC = row_colors(pageC)[0]["dot"]
@@ -795,6 +804,165 @@ def main() -> int:
                   json.dumps(afterG))
             check("……G 段零控制台报错", not errsG, str(errsG[:3]))
             G.close()
+
+            # ── H. ★ v0.19 P3：色表管理界面（加 / 停用 / 选色）────────────────
+            section("★ H 色表管理界面（v0.19 P3：加 / 停用 / 逐昵称选色）")
+            reset_library(on, keep=0)
+            st_b, before = http(on.base, "GET", "/api/nicknames/colors?status=active")
+            n_before = len(before["colors"])
+            http(on.base, "POST", "/api/nicknames", {"display_name": "界面甲"})
+            http(on.base, "POST", "/api/nicknames", {"display_name": "界面乙"})
+            H = browser.new_context(viewport={"width": 1400, "height": 1000})
+            pageH, errsH = open_page(H, on.base)
+            go_settings(pageH)
+
+            def chips():
+                return pageH.evaluate("""() => Array.from(document.querySelectorAll('#color-grid .color-chip')).map(c => ({
+                    id: c.dataset.colorId, used: c.classList.contains('color-chip--used'),
+                    retired: c.classList.contains('color-chip--retired'),
+                    dot: getComputedStyle(c.querySelector('.color-chip__dot')).backgroundColor,
+                    delDisabled: (function () { var d = c.querySelector('.color-chip__del'); return d ? d.disabled : null; })(),
+                    delTitle: (function () { var d = c.querySelector('.color-chip__del'); return d ? d.title : ''; })(),
+                }))""")
+
+            def rowsH():
+                return pageH.evaluate("""() => Array.from(document.querySelectorAll('#names-list .name-row')).map(r => ({
+                    id: r.dataset.nickId, name: (r.querySelector('.name-row__input') || {}).value || '',
+                    swatchTag: (r.querySelector('.name-row__swatch') || {}).tagName || '',
+                    colorId: (function () { var s = r.querySelector('.name-row__swatch'); return s ? s.dataset.colorId : ''; })(),
+                }))""")
+
+            c0 = chips()
+            check(f"★ 色块区把整份色表画出来（{n_before} 格，每格带 color_id、色点是算出来的显示色）",
+                  len(c0) == n_before and all(c["id"].startswith("color_") for c in c0)
+                  and all(c["dot"] not in ("rgb(138, 138, 138)", "") for c in c0),
+                  f"{len(c0)} 格 / 首格 {c0[0]['dot']}")
+            used0 = [c for c in c0 if c["used"]]
+            check("★ 正在被昵称用着的格子：标「在用」+ 删除按钮置灰 + 写明谁在用",
+                  len(used0) == 2 and all(c["delDisabled"] is True and "正在用它" in c["delTitle"]
+                                          for c in used0),
+                  json.dumps(used0[:2], ensure_ascii=False))
+
+            # —— 加颜色：HEX 一条路
+            pageH.fill("#color-new", "#C2185B")
+            pageH.click("#color-add-btn")
+            pageH.wait_for_function(
+                f"() => document.querySelectorAll('#color-grid .color-chip').length === {n_before + 1}",
+                timeout=8000)
+            c1 = chips()
+            check("★ 加颜色（填 HEX → 添加）：多出一格，且是服务端分配的新 ID",
+                  len(c1) == n_before + 1 and c1[-1]["id"].startswith("color_") and not c1[-1]["retired"],
+                  f"{len(c1)} 格 / 新格 {c1[-1]['id']}")
+            check("……计数文案跟着走", f"可用 {n_before + 1}" in pageH.inner_text("#color-count"),
+                  pageH.inner_text("#color-count"))
+            st_c, srv_c = http(on.base, "GET", "/api/nicknames/colors?status=active")
+            check("……服务端真落库（可用色 +1）", st_c == 200 and len(srv_c["colors"]) == n_before + 1,
+                  f'{st_c} {len(srv_c["colors"])} 个')
+            shot(pageH, "13-color-table-desktop")
+
+            # —— 非法 / 重复：就地报错，不静默
+            pageH.fill("#color-new", "不是颜色")
+            pageH.click("#color-add-btn")
+            pageH.wait_for_timeout(500)
+            hint = pageH.evaluate("() => { var e = document.getElementById('color-hint');"
+                                  " return { hidden: e.hidden, text: e.textContent }; }")
+            check("★ 非法色值 → 输入框下面**就地报错**（不静默，也没多加一格）",
+                  hint["hidden"] is False and "格式不对" in hint["text"]
+                  and pageH.evaluate("() => document.querySelectorAll('#color-grid .color-chip').length")
+                  == n_before + 1, json.dumps(hint, ensure_ascii=False))
+            pageH.fill("#color-new", "#c2185b")            # 同一个色，只是小写
+            pageH.click("#color-add-btn")
+            pageH.wait_for_timeout(500)
+            hint2 = pageH.evaluate("() => document.getElementById('color-hint').textContent")
+            check("★ 重复颜色（大小写不同也算同一个）→ 提示「已经在表里」",
+                  "已经在表里" in (hint2 or ""), str(hint2))
+
+            # —— 逐昵称选色：点行首色点 → 弹窗 → 选一个空闲色
+            r0 = rowsH()
+            target = next(r for r in r0 if r["name"] == "界面甲")
+            check("（前置）昵称行的色点已经是按钮（点它选颜色）", target["swatchTag"] == "BUTTON", target)
+            pageH.click(f'#names-list .name-row[data-nick-id="{target["id"]}"] .name-row__swatch')
+            pageH.wait_for_selector("#dlg-color.is-visible", timeout=6000)
+            picks = pageH.evaluate("""() => Array.from(document.querySelectorAll('#color-picker-grid .color-pick')).map(b => ({
+                id: b.dataset.colorId, disabled: b.disabled,
+                current: b.classList.contains('color-pick--current') }))""")
+            check("★ 点色点打开选色弹窗：列出可用色、当前色标出、别人占着的置灰",
+                  len(picks) == n_before + 1 and sum(1 for p in picks if p["current"]) == 1
+                  and any(p["disabled"] for p in picks),
+                  json.dumps([p for p in picks if p["disabled"]][:2], ensure_ascii=False))
+            # 等淡入动画跑完再截（否则截到半透明的弹窗）
+            pageH.wait_for_timeout(400)
+            shot(pageH, "14-color-picker-dialog")
+            free = next(p["id"] for p in picks if not p["disabled"] and not p["current"])
+            pageH.click(f'#color-picker-grid .color-pick[data-color-id="{free}"]')
+            pageH.wait_for_timeout(800)
+            after = next(r for r in rowsH() if r["name"] == "界面甲")
+            check("★ 选一个空闲色 → 立刻生效（弹窗关闭 + 行上色点换成它）",
+                  after["colorId"] == free
+                  and pageH.evaluate("() => document.getElementById('dlg-color').classList.contains('is-open')")
+                  is False, f'{target["colorId"]} → {after["colorId"]}')
+            st_n, body_n = http(on.base, "GET", "/api/nicknames?status=active")
+            got = [n["color"] for n in body_n["nicknames"] if n["display_name"] == "界面甲"]
+            check("……服务端真落库（GET /api/nicknames 就是它）", got == [free], str(got))
+
+            # —— 弹窗里的「随机换一个」= 原来的换色
+            pageH.click(f'#names-list .name-row[data-nick-id="{target["id"]}"] .name-row__swatch')
+            pageH.wait_for_selector("#dlg-color.is-visible", timeout=6000)
+            pageH.click("#color-dlg-random")
+            pageH.wait_for_timeout(900)
+            rnd = next(r for r in rowsH() if r["name"] == "界面甲")
+            check("弹窗里「随机换一个」→ 颜色变了（≠ 刚指定的那个）",
+                  rnd["colorId"] != free and rnd["colorId"].startswith("color_"),
+                  f'{free} → {rnd["colorId"]}')
+
+            # —— 停用：加一个没人用的色 → 停用它
+            st_x, x = http(on.base, "POST", "/api/nicknames/colors", {"hex": "#455A64"})
+            xid = (x.get("color") or {}).get("color_id")
+            pageH.wait_for_function(
+                f"() => !!document.querySelector('#color-grid .color-chip[data-color-id=\"{xid}\"]')",
+                timeout=8000)
+            pageH.click(f'#color-grid .color-chip[data-color-id="{xid}"] .color-chip__del')
+            pageH.wait_for_selector("#dlg-confirm.is-visible", timeout=6000)
+            pageH.click("#confirm-ok")
+            pageH.wait_for_timeout(800)
+            ret = [c for c in chips() if c["id"] == xid]
+            check("★ 停用一个没人用的颜色 → 该格变「已停用」（虚线 + 没有删除按钮）",
+                  bool(ret) and ret[0]["retired"] is True and ret[0]["delDisabled"] is None,
+                  json.dumps(ret, ensure_ascii=False))
+            # 停用后再开一次弹窗：已停用的色不该出现在可选列表里
+            pageH.click('#names-list .name-row .name-row__swatch')
+            pageH.wait_for_selector("#dlg-color.is-visible", timeout=6000)
+            check(f"……已停用的 {xid} 不进选色弹窗",
+                  pageH.evaluate(f"""() => !document.querySelector('#color-picker-grid .color-pick[data-color-id="{xid}"]')"""),
+                  xid)
+            pageH.click("#color-dlg-cancel")
+            pageH.wait_for_timeout(300)
+
+            # —— 窄屏 + 暗色（都要过）
+            pageH.set_viewport_size({"width": 375, "height": 820})
+            pageH.wait_for_timeout(400)
+            geo = pageH.evaluate("""() => { var g = document.getElementById('color-grid');
+                var c = document.getElementById('card-nicknames');
+                return { gridOverflow: g.scrollWidth - g.clientWidth,
+                         cardR: c.getBoundingClientRect().right,
+                         chips: document.querySelectorAll('#color-grid .color-chip').length }; }""")
+            check("窄屏 375：色块区不横向溢出、卡片不出视口",
+                  geo["gridOverflow"] <= 1 and geo["cardR"] <= 377 and geo["chips"] >= n_before,
+                  json.dumps(geo))
+            pageH.evaluate("() => document.getElementById('color-block').scrollIntoView({block: 'center'})")
+            pageH.wait_for_timeout(350)
+            shot(pageH, "15-color-table-narrow-375")
+            pageH.set_viewport_size({"width": 1400, "height": 1000})
+            pageH.evaluate("() => applyMode('dark', true)")
+            pageH.wait_for_timeout(400)
+            dark_dot = pageH.evaluate("""() => { var d = document.querySelector('#color-grid .color-chip__dot');
+                return d ? getComputedStyle(d).backgroundColor : ''; }""")
+            check("暗色下色块区照常（色点是深色主题变体）", bool(dark_dot), dark_dot)
+            pageH.evaluate("() => document.getElementById('color-block').scrollIntoView({block: 'center'})")
+            pageH.wait_for_timeout(350)
+            shot(pageH, "16-color-table-dark")
+            check("……H 段零控制台报错", not errsH, str(errsH[:3]))
+            H.close()
 
             # ── 断网 / 服务不可达：网页端不崩、不本地生效 ─────────────────
             section("G' 断网（服务不可达）时昵称管理失败并提示，不本地生效")

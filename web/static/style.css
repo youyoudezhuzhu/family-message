@@ -714,6 +714,12 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 /* 我正在用的那条：只加一圈描边，不动布局（窄屏也不多一个换行点） */
 .name-row--using { border-color: var(--fluent-color-primary); }
 .name-row__swatch { width: 10px; height: 10px; flex: 0 0 10px; border-radius: var(--radius-circle); }
+/* ★ v0.19：色点现在是个**按钮**（点它给这个昵称选颜色）——外观还是 10px 圆点，
+   用 padding 把可点区域放大到 ~22px（手机上好点，不改变行高）。 */
+button.name-row__swatch { padding: 0; border: none; cursor: pointer;
+  box-shadow: 0 0 0 6px transparent; }
+button.name-row__swatch:hover { box-shadow: 0 0 0 6px var(--fluent-fill-subtle-hover); }
+button.name-row__swatch:focus-visible { outline: 2px solid var(--fluent-color-primary); outline-offset: 2px; }
 .name-row__input {
   flex: 1; min-width: 0; height: 32px;
   border: none; background: transparent;
@@ -727,6 +733,45 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 @media (max-width: 480px) {
   .name-row__actions { gap: 2px; }
   .name-row__actions .btn--sm { padding: 0 var(--spacing-sm); }
+}
+
+/* ── 颜色表（v0.19：色表是数据，网页端可增删；docs/COLOR-TABLE-PLAN.md §3.4）── */
+.color-block { margin-top: var(--spacing-lg); padding-top: var(--spacing-md);
+  border-top: 1px solid var(--fluent-color-border-subtle); }
+.color-block__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--spacing-sm); }
+.color-block__count { font: var(--font-caption); color: var(--fluent-color-text-secondary); }
+.color-grid { display: flex; flex-wrap: wrap; gap: var(--spacing-xs); margin-top: var(--spacing-sm); }
+.color-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px;
+  border: 1px solid var(--fluent-card-stroke); border-radius: var(--radius-large);
+  background: var(--fluent-color-surface-secondary);
+  font: var(--font-caption); color: var(--fluent-color-text-secondary); }
+.color-chip__dot { width: 12px; height: 12px; flex: 0 0 12px; border-radius: var(--radius-circle);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); }
+.color-chip__id { white-space: nowrap; }
+/* 正在被某个昵称用着：加一圈主色描边 + 常规字色（并写明是谁在用） */
+.color-chip--used { border-color: var(--fluent-color-primary); color: var(--fluent-color-text); }
+/* 已停用：虚线 + 划掉（行还在，只是不再参与分配） */
+.color-chip--retired { opacity: .55; border-style: dashed; }
+.color-chip--retired .color-chip__id { text-decoration: line-through; }
+.color-chip__del { width: 20px; height: 20px; padding: 0; border: none; background: transparent;
+  color: var(--fluent-color-text-secondary); border-radius: var(--radius-circle);
+  font: var(--font-caption); line-height: 1; cursor: pointer; }
+.color-chip__del:hover:not(:disabled) { background: var(--fluent-fill-subtle-hover); }
+.color-chip__del:disabled { color: var(--fluent-color-text-disabled); cursor: not-allowed; }
+.color-chip__del .icon { width: 14px; height: 14px; }
+/* 选色弹窗（复用 .dialog 视觉语言） */
+.dialog--color { width: min(520px, 100%); }
+.color-grid--picker { max-height: 44vh; overflow: auto; }
+.color-pick { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border: 1px solid var(--fluent-card-stroke); border-radius: var(--radius-large);
+  background: var(--fluent-color-surface); color: var(--fluent-color-text);
+  font: var(--font-caption); cursor: pointer; }
+.color-pick:hover:not(:disabled) { background: var(--fluent-fill-control-hover); }
+.color-pick--current { border-color: var(--fluent-color-primary); font-weight: 600; }
+.color-pick--taken, .color-pick:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 480px) {
+  .color-chip, .color-pick { padding: 4px 6px; }
+  .color-block .row--end { flex-wrap: wrap; }
 }
 
 /* 昵称卡片里的说明行（额度提示 / 错误 / 空态引导） */

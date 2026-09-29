@@ -406,6 +406,26 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
         <p class="nick-note" id="nick-quota" hidden></p>
         <div class="nick-conflict" id="nick-conflict" hidden></div>
         <div id="names-list" style="margin-top:var(--spacing-md)"></div>
+
+        <!-- ══ 颜色表（v0.19：色表是数据，可自己增删；docs/COLOR-TABLE-PLAN.md §3.4）══
+             每格一个色块：写「谁在用」，正被用的不能停用（按钮置灰 + 说明）。
+             点昵称行左边的**色点**＝给那个昵称指定颜色（弹出选色）。 -->
+        <div class="color-block" id="color-block">
+          <div class="color-block__head">
+            <span class="field-label">颜色表</span>
+            <span class="color-block__count" id="color-count"></span>
+          </div>
+          <div class="color-grid" id="color-grid"></div>
+          <div class="row row--end" style="margin-top:var(--spacing-sm)">
+            <div class="field grow">
+              <label class="field-label" for="color-new">加颜色</label>
+              <input class="text-input" id="color-new" maxlength="24"
+                     placeholder="#0FA3B1 或 rgb(15,163,177)">
+            </div>
+            <button class="btn btn--secondary" id="color-add-btn" type="button">添加</button>
+          </div>
+          <p class="nick-note" id="color-hint" hidden></p>
+        </div>
       </section>
     </section>
 
@@ -453,6 +473,28 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
     <div class="dialog__actions">
       <button class="btn btn--secondary" id="confirm-cancel">取消</button>
       <button class="btn btn--primary" id="confirm-ok">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 选颜色（v0.19：给某个昵称指定色表里的颜色）═══════════════════ -->
+<div class="scrim" id="dlg-color" role="dialog" aria-modal="true" aria-labelledby="color-dlg-title">
+  <div class="dialog dialog--color">
+    <div class="dialog__head">
+      <svg class="icon" aria-hidden="true"><use href="#i-settings"/></svg>
+      <h2 class="dialog__title" id="color-dlg-title">选颜色</h2>
+      <button class="icon-btn" type="button" id="color-dlg-close" aria-label="关闭">
+        <svg class="icon icon--sm" aria-hidden="true"><use href="#i-dismiss"/></svg>
+      </button>
+    </div>
+    <div class="dialog__body">
+      <p id="color-dlg-sub"></p>
+      <div class="color-grid color-grid--picker" id="color-picker-grid"></div>
+      <p class="nick-note" id="color-dlg-hint" hidden></p>
+    </div>
+    <div class="dialog__actions">
+      <button class="btn btn--secondary" id="color-dlg-random" type="button">随机换一个</button>
+      <button class="btn btn--primary" id="color-dlg-cancel" type="button">取消</button>
     </div>
   </div>
 </div>

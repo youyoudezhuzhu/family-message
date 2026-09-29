@@ -1283,15 +1283,22 @@ async function loadNicknames() {
 
 /** ★ v0.19：拉服务端**颜色表**并让本地以它为准（内置表只做首屏兜底）。
 
-    谁调：① bootConsole（启动就拉一次）；② 收到 `color_table_changed` 广播后重拉。
+    谁调：① bootConsole（启动就拉一次）；② 收到 `color_table_changed` 广播后重拉；
+          ③ 增删颜色 / 指定颜色后（幂等，广播也会来一次）。
+    拉的是 `status=all`（界面要显示已停用的那些），但**只把可用的**交给渲染表
+    （停用的色不再参与显示色计算，选中它服务端会 409）。
     拿到就重画（昵称行色点 / 设置页 / 消息里的头像底色都按新表重算，因为显示色是现算的）。
     拉不到 → 保留手上那份（内置表或上次的表），**绝不清空**，只提示一次。 */
 async function loadColorTable() {
   if (!window.FMNickColor) return false;
   try {
-    const r = await api('/api/nicknames/colors?status=active');
-    const okSet = FMNickColor.setTable(r && r.colors, r && r.color_pool_version);
+    const r = await api('/api/nicknames/colors?status=all');
+    const rows = (r && Array.isArray(r.colors)) ? r.colors : [];
+    const act = rows.filter((c) => c && c.status === 'active');
+    const okSet = FMNickColor.setTable(act, r && r.color_pool_version);
     if (typeof (r && r.color_pool_version) === 'number') nickPoolVersion = r.color_pool_version;
+    if (rows.length) nickColorRows = rows;        // ★ v0.19：色表 UI 用（含已停用）
+    renderColorTable();
     if (okSet) {
       redrawNicks();
       renderMessages(isLogAtBottom());      // 老消息的快照色也要按新表重算
@@ -1482,11 +1489,15 @@ function nickRowEl(n) {
   row.className = 'name-row' + (selectedNickId() === n.nickname_id ? ' name-row--using' : '');
   row.dataset.nickId = String(n.nickname_id);
 
-  const sw = document.createElement('span');
+  const sw = document.createElement('button');
+  sw.type = 'button';
   sw.className = 'name-row__swatch';
   sw.style.background = nickDisplay('dot', n.color);   // 显示色 = §4.4 按主题算出来的圆点变体
   sw.dataset.colorId = n.color;                        // 逻辑色 ID 只进 data 属性，不参与排版
-  sw.title = `颜色：${n.color}`;
+  // ★ v0.19：点色点 = 给这个昵称**指定**颜色（弹窗里也能随机换）—— 不新增按钮，窄屏也放得下
+  sw.title = `颜色：${n.color}（点它给「${n.display_name}」选颜色）`;
+  sw.setAttribute('aria-label', `给「${n.display_name}」选颜色`);
+  sw.onclick = () => openColorPicker(n);
 
   const input = document.createElement('input');
   input.className = 'name-row__input';
@@ -1676,6 +1687,187 @@ async function deleteNick(n) {
     dropNickname({ nickname_id: n.nickname_id, display_name: n.display_name });
   } catch (e) {
     snack('删除失败：' + nickErrText(e), { error: true });
+  }
+}
+
+/* ── 颜色表 UI（v0.19：色表是数据，网页端可增删；docs/COLOR-TABLE-PLAN.md §3.4）
+   · 色块区：每格写「谁在用」，正被用的不能停用；底部一行加颜色（HEX / RGB 都收）。
+   · 选色：点昵称行的**色点** → 弹窗列出可用色（别人占着的置灰）→ 点一个就指定；
+           弹窗里保留「随机换一个」（= 原来的换色）。 ────────────────────── */
+
+/** 从服务端拉到的整份色表（含 retired；服务端 rows() 的字段原样） */
+let nickColorRows = [];
+
+/** 画色块区：状态、谁在用、能否停用都在这一处决定（不在别处重复判断）。 */
+function renderColorTable() {
+  const grid = $('color-grid');
+  const count = $('color-count');
+  const block = $('color-block');
+  if (!grid || !count || !block) return;
+  block.hidden = !nickEnabled;                    // 开关关闭时整块不出现（老路径照旧）
+  if (!nickEnabled) return;
+
+  const act = nickColorRows.filter((c) => c.status === 'active');
+  const used = act.filter((c) => c.in_use).length;
+  count.textContent = `可用 ${act.length} / 上限 32 · 在用 ${used}/${NICK_MAX_ACTIVE}`;
+
+  grid.textContent = '';
+  nickColorRows.forEach((c) => {
+    const chip = document.createElement('div');
+    chip.className = 'color-chip'
+      + (c.status === 'retired' ? ' color-chip--retired' : '')
+      + (c.in_use ? ' color-chip--used' : '');
+    chip.dataset.colorId = c.color_id;
+
+    const dot = document.createElement('span');
+    dot.className = 'color-chip__dot';
+    dot.style.background = nickDisplay('dot', c.color_id);   // 显示色按当前主题现算
+
+    const id = document.createElement('span');
+    id.className = 'color-chip__id';
+    id.textContent = c.color_id.replace('color_', '');
+    id.title = `${c.color_id} · ${c.hex}`;
+
+    chip.append(dot, id);
+
+    if (c.status === 'active') {
+      const who = (c.used_by || []).map((u) => u.display_name).join('、');
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'color-chip__del';
+      del.textContent = '×';
+      del.disabled = !!c.in_use;
+      del.title = c.in_use
+        ? `${who} 正在用它，先给它换个颜色再停用`
+        : `停用 ${c.color_id}（行保留，已发的消息颜色不变）`;
+      del.setAttribute('aria-label', del.title);
+      del.onclick = () => retireNickColor(c);
+      chip.appendChild(del);
+    }
+    grid.appendChild(chip);
+  });
+}
+
+/** 就地提示（色表区底部）：错误留在输入框下面，**不静默** */
+function colorHint(text, error = true) {
+  const el = $('color-hint');
+  if (!el) return;
+  el.hidden = !text;
+  el.className = 'nick-note' + (error ? ' nick-note--error' : '');
+  el.textContent = text || '';
+}
+
+async function addNickColor() {
+  const input = $('color-new');
+  if (!input) return;
+  const v = (input.value || '').trim();
+  if (!v) return;
+  colorHint('');
+  try {
+    const r = await api('/api/nicknames/colors', {
+      method: 'POST', body: JSON.stringify({ hex: v }),
+    });
+    input.value = '';
+    await loadColorTable();                       // 广播也会来一次，这里先对齐（幂等）
+    snack(`已加入颜色 ${(r && r.color && r.color.hex) || v}`);
+  } catch (e) {
+    if (e.code === 'COLOR_ALREADY_EXISTS') {
+      colorHint(`这个颜色已经在表里了（${e.existing_color_id || '见色块区'}）`);
+    } else if (e.code === 'INVALID_COLOR_HEX') {
+      colorHint('颜色格式不对：支持 #0FA3B1、0FA3B1、#0F3、rgb(15,163,177)');
+    } else if (e.code === 'COLOR_POOL_FULL') {
+      colorHint(e.message || '颜色表已满');
+    } else {
+      colorHint('加颜色失败：' + nickErrText(e));
+    }
+  }
+}
+
+async function retireNickColor(row) {
+  if (row.in_use) {
+    const who = (row.used_by || []).map((u) => u.display_name).join('、');
+    snack(`${row.color_id} 正被「${who}」用着，先给它换个颜色`, { error: true });
+    return;
+  }
+  const ok = await confirmDialog({
+    title: `停用 ${row.color_id}？`,
+    body: `这个颜色（${row.hex}）会从可选列表里去掉：新昵称不会再分到它，`
+        + `但**已经发过的消息保持当时的颜色**（颜色 ID 不会被回收给别的颜色用）。`,
+    okText: '停用',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/nicknames/colors/${row.color_id}`, { method: 'DELETE' });
+    await loadColorTable();
+    snack(`已停用 ${row.color_id}`);
+  } catch (e) {
+    if (e.code === 'COLOR_IN_USE') snack('这个颜色正被别的昵称用着', { error: true });
+    else snack('停用失败：' + nickErrText(e), { error: true });
+    loadColorTable();                             // 表可能被别的端改了 → 重新对齐
+  }
+}
+
+/** 当前正在给它选颜色的那个昵称（弹窗用） */
+let pickerNick = null;
+
+function openColorPicker(n) {
+  pickerNick = n;
+  const dlg = $('dlg-color');
+  if (!dlg) return;
+  $('color-dlg-sub').textContent = `给「${n.display_name}」指定颜色（全局：所有在用的机器一起变）`;
+  colorPickerHint('');
+  const grid = $('color-picker-grid');
+  grid.textContent = '';
+  nickColorRows.filter((c) => c.status === 'active').forEach((c) => {
+    const others = (c.used_by || []).filter((u) => u.nickname_id !== n.nickname_id)
+      .map((u) => u.display_name);
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'color-pick'
+      + (c.color_id === n.color ? ' color-pick--current' : '')
+      + (others.length ? ' color-pick--taken' : '');
+    b.dataset.colorId = c.color_id;
+    const dot = document.createElement('span');
+    dot.className = 'color-chip__dot';
+    dot.style.background = nickDisplay('dot', c.color_id);
+    const label = document.createElement('span');
+    label.textContent = c.color_id.replace('color_', '')
+      + (others.length ? `（${others.join('、')}）` : '');
+    b.append(dot, label);
+    b.disabled = others.length > 0;               // 别人占着的选不了（服务端也会 409）
+    b.onclick = () => applyColorPick(c.color_id, b);
+    grid.appendChild(b);
+  });
+  openDialog(dlg, grid.querySelector('.color-pick--current') || grid.querySelector('.color-pick'));
+}
+
+function colorPickerHint(text) {
+  const el = $('color-dlg-hint');
+  if (!el) return;
+  el.hidden = !text;
+  el.className = 'nick-note nick-note--error';
+  el.textContent = text || '';
+}
+
+async function applyColorPick(colorId, btn) {
+  if (!pickerNick) return;
+  const n = pickerNick;
+  if (btn) btn.disabled = true;
+  try {
+    const r = await api(`/api/nicknames/${n.nickname_id}/color`, {
+      method: 'POST', body: JSON.stringify({ color_id: colorId }),
+    });
+    if (r && r.nickname) upsertNickname(r.nickname);
+    closeDialog($('dlg-color'));
+    snack(`「${n.display_name}」的颜色已改成 ${colorId}`);
+  } catch (e) {
+    if (btn) btn.disabled = false;
+    if (e.code === 'COLOR_IN_USE') colorPickerHint('这个颜色正被别的昵称用着，换一个吧');
+    else if (e.code === 'COLOR_RETIRED') colorPickerHint('这个颜色已停用');
+    else if (e.code === 'COLOR_NOT_FOUND') colorPickerHint('这个颜色已经不在表里了');
+    else colorPickerHint('指定失败：' + nickErrText(e));
+    loadColorTable();                             // 表可能被别的端改了 → 重新对齐
   }
 }
 
@@ -2198,6 +2390,21 @@ $('content').addEventListener('keydown', (e) => {
 
 $('btn-settings').onclick = () => go('settings');
 $('name-add').onclick = addName;
+// ★ v0.19：颜色表（加颜色）+ 选色弹窗（点昵称行的色点打开）
+$('color-add-btn').onclick = addNickColor;
+$('color-new').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); addNickColor(); }
+});
+$('color-dlg-close').onclick = () => closeDialog($('dlg-color'));
+$('color-dlg-cancel').onclick = () => closeDialog($('dlg-color'));
+$('color-dlg-random').onclick = () => {
+  const n = pickerNick;
+  closeDialog($('dlg-color'));
+  if (n) reassignNickColor(n);                    // 「随机换一个」= 原来的换色
+};
+$('dlg-color').addEventListener('click', (e) => {   // 点遮罩空白处 = 关
+  if (e.target === $('dlg-color')) closeDialog($('dlg-color'));
+});
 $('name-new').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') { e.preventDefault(); addName(); }
 });
