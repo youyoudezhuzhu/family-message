@@ -571,7 +571,6 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 
 /* ── 7. 设备 ─────────────────────────────────────────────────── */
 .dev-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--spacing-md); }
-.dev-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--spacing-md); }
 .dev, .tile {
   display: flex; flex-direction: column; gap: var(--spacing-sm);
   padding: var(--spacing-lg);
@@ -923,7 +922,7 @@ button.name-row__swatch:focus-visible { outline: 2px solid var(--fluent-color-pr
      只把昵称收窄一点给输入框让位；真正挤不下时（≤640）才允许换行，
      见文件末尾的 640 断点。 */
   .compose__sender { width: 132px; flex: 0 0 auto; }
-  .dev-grid, .dev-strip { grid-template-columns: 1fr; }
+  .dev-grid { grid-template-columns: 1fr; }
   .dev__acts .btn { flex: 1 1 calc(50% - var(--spacing-sm)); }
   .xm-form .combo { flex: 1 1 100%; }
   .xm-row__acts { width: 100%; }

@@ -803,9 +803,24 @@ public partial class WebHostWindow : Window
     /// 置顶重申定时器只在 Popup 形态跑：窗口形态下不退它会让对话/设置窗口永远压在
     /// 别的程序前面，而且每 3 秒抢一次焦点。
     /// </summary>
-    internal void ApplyWindowMode(WindowMode mode)
+    internal void ApplyWindowMode(WindowMode mode, bool force = false)
     {
         var wasVisible = IsVisible;
+
+        // ★ v0.19.2（用户实测「切界面有概率导致窗口最小化」）：
+        //   ShowClient() / ShowSettings() 每次切视图都会调到这里，而下面是
+        //   `Hide() → 改 WindowStyle / ShowInTaskbar / WindowState → Show()`。
+        //   问题在 **ShowInTaskbar 与 WindowStyle 的 setter 会重建窗口**（Win32 的硬性要求：
+        //   任务栏归属 / 边框样式只能在窗口重建时改），而**在隐藏状态下重建**会让
+        //   WindowState 被系统复位成 Minimized —— 这条复位是在 Show() **之后**才被处理的，
+        //   所以表现为「切视图偶发最小化」，且日志里没有任何异常。
+        //   修法：**形态没变就别碰窗口**（视图切换只该过桥，不该重建窗口）。
+        if (!force && mode == _mode && wasVisible)
+        {
+            AgentLog.Write($"窗口形态未变（{mode}），跳过窗口重建（只切视图）");
+            return;
+        }
+
         _mode = mode;
         // ⚠ 这里**不碰** Bridge.Mode：窗口形态（_mode）和页面视图（_shellMode）是两件事。
         //    以前在这里顺手把 Bridge.Mode 设成 popup/console，结果「一改窗口形态，
@@ -886,7 +901,28 @@ public partial class WebHostWindow : Window
             AgentLog.Write("切换窗口模式失败：" + ex.Message);
         }
 
-        if (wasVisible) Show();
+        if (wasVisible)
+        {
+            Show();
+
+            // ★ 真改了形态（popup ↔ window）时窗口刚刚被重建过：那条「复位成 Minimized」的
+            //   消息排在 Show() 之后才被处理，所以显示完再兜一次（异步 = 晚于重建消息）。
+            Dispatcher.BeginInvoke((Action)RestoreIfMinimized, DispatcherPriority.Background);
+        }
+    }
+
+    /// <summary>
+    /// 窗口被系统复位成最小化时拉回来。
+    ///
+    /// 只在**真的改了窗口形态**之后兜底 —— 切视图不再碰窗口（见 ApplyWindowMode 的 v0.19.2 注释）。
+    /// 幂等、无副作用：不是最小化就什么都不做。
+    /// </summary>
+    private void RestoreIfMinimized()
+    {
+        if (WindowState != WindowState.Minimized)
+            return;
+        AgentLog.Write("窗口被系统复位成最小化 → 还原（ShowInTaskbar / WindowStyle 重建窗口的副作用）");
+        WindowState = WindowState.Normal;
     }
 
     /// <summary>
@@ -1020,7 +1056,8 @@ public partial class WebHostWindow : Window
     private void OnWindowLoaded(object sender, RoutedEventArgs e)
     {
         // 加载后再确认一次形态：XAML 里的初始 WindowStyle 只是占位值
-        ApplyWindowMode(_mode);
+        // （force: true —— 这是「必须覆盖 XAML 占位值」的场合，与切视图走的路径不同）
+        ApplyWindowMode(_mode, force: true);
     }
 
     private void OnWindowClosing(object? sender, CancelEventArgs e)

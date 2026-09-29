@@ -9,7 +9,6 @@
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
 <link rel="stylesheet" href="static/tokens.css?v=0.19.1">
 <link rel="stylesheet" href="static/style.css?v=0.19.1">
-<link rel="stylesheet" href="static/shell.css?v=0.19.1">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -23,47 +22,6 @@
   } catch (e) {}
 })();
 </script>
-<!-- 是不是跑在 WebView2 壳里（真壳会注入 window.chrome.webview；
-     命令行调试用 ?shell=1）。必须在这一步就定下来，见下面的 <style>。 -->
-<script>
-(function () {
-  try {
-    var q = new URLSearchParams(location.search);
-    if ((window.chrome && window.chrome.webview) || q.get('shell') === '1') {
-      document.documentElement.setAttribute('data-shell', '1');
-    }
-  } catch (e) {}
-})();
-</script>
-<!-- ══ 壳模式的关键首屏样式（内联，不走外链）═══════════════════════════
-     壳启动时先给一个**中性的加载态**：底色与正文字色跟主题一致，居中的
-     品牌标记 + 「正在启动…」。它必须是内联的 —— 万一 shell.css 还没到
-     （或服务端静态资源出问题），这一屏也得是对的，不能闪白/闪错布局。
-     层级 70：低于 Dialog(80)，这样「需要访问口令」之类的对话框能盖在它上面。
-     剩下的壳样式（全屏弹窗等）在 static/shell.css 里。 -->
-<style>
-html[data-shell="1"] { background: var(--fluent-color-background, #F3F3F3); }
-.shell-boot { display: none; }
-html[data-shell="1"] .shell-boot {
-  position: fixed; inset: 0; z-index: 70;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: var(--spacing-md, 12px);
-  background: var(--fluent-color-background, #F3F3F3);
-  color: var(--fluent-color-text, #1A1A1A);
-  font: var(--font-body, 400 14px/20px system-ui, sans-serif);
-  text-align: center; padding: var(--spacing-xl, 24px);
-}
-html[data-shell="1"] .shell-boot .brand-mark {
-  width: 36px; height: 36px; border-radius: var(--radius-medium, 6px);
-  display: flex; align-items: center; justify-content: center;
-  background: var(--fluent-color-primary-tint, #EFF6FC);
-  color: var(--fluent-color-primary, #0F6CBD);
-}
-html[data-shell="1"] .shell-boot .brand-mark .icon { width: 20px; height: 20px; }
-html[data-shell="1"] .shell-boot__title { font: 600 20px/28px var(--fluent-font-family, system-ui); }
-html[data-shell="1"] .shell-boot__hint { color: var(--fluent-color-text-secondary, #5C5C5C); }
-html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 4px); }
-</style>
 </head>
 <body>
 
@@ -110,16 +68,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
     <symbol id="i-navigation" viewBox="0 0 24 24"><path d="M2.75254 17.9997H21.2525C21.6668 17.9997 22.0025 18.3355 22.0025 18.7497C22.0025 19.1294 21.7204 19.4432 21.3543 19.4928L21.2525 19.4997H2.75254C2.33832 19.4997 2.00254 19.1639 2.00254 18.7497C2.00254 18.37 2.28469 18.0562 2.65077 18.0065L2.75254 17.9997H21.2525H2.75254ZM2.75254 11.5027H21.2525C21.6668 11.5027 22.0025 11.8385 22.0025 12.2527C22.0025 12.6324 21.7204 12.9462 21.3543 12.9959L21.2525 13.0027H2.75254C2.33832 13.0027 2.00254 12.6669 2.00254 12.2527C2.00254 11.873 2.28469 11.5592 2.65077 11.5095L2.75254 11.5027H21.2525H2.75254ZM2.75168 5.00293H21.2517C21.6659 5.00293 22.0017 5.33872 22.0017 5.75293C22.0017 6.13263 21.7195 6.44642 21.3535 6.49608L21.2517 6.50293H2.75168C2.33746 6.50293 2.00168 6.16714 2.00168 5.75293C2.00168 5.37323 2.28383 5.05944 2.64991 5.00978L2.75168 5.00293H21.2517H2.75168Z"/></symbol>
   </defs>
 </svg>
-
-<!-- ══ 壳模式：启动加载态（WebView2 壳的第一屏）═══════════════════════
-     中性、居中、不闪白：等 host.hello 告诉页面该显示「全屏弹窗」还是「控制台」。
-     只在壳模式下可见（样式内联在 <head>，见上面的说明）；浏览器模式永远不显示。 -->
-<div class="shell-boot" id="shell-boot" role="status" aria-live="polite">
-  <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg></span>
-  <span class="shell-boot__title">家庭消息</span>
-  <span class="shell-boot__hint" id="shell-boot-hint">正在启动…</span>
-  <span class="progress-ring" aria-hidden="true"></span>
-</div>
 
 <div class="app-shell" id="app-shell">
 
@@ -490,102 +438,14 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 <!-- ══ Toast 容器（Fluent MessageBar 风格）══════════════════════ -->
 <div class="toast-host" id="snackbar-host" role="status" aria-live="polite"></div>
 
-<!-- ══ 壳模式 · 全屏消息弹窗（mode=popup）══════════════════════════════
-     浏览器模式永远不显示（默认 hidden）；壳模式下由 shell.js 揭开。
-     三条规矩：正文是视觉焦点、没有第二个密码框、不引入 Material。 -->
-<div class="shell-popup" id="shell-popup" hidden>
-  <header class="popup-bar">
-    <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg></span>
-    <span class="popup-bar__title">家庭消息</span>
-    <span class="popup-bar__spacer"></span>
-    <span class="popup-bar__conn">
-      <span class="presence" id="popup-dot"></span>
-      <span id="popup-conn-text">连接中…</span>
-    </span>
-  </header>
 
-  <div class="popup-stage" id="popup-stage">
-    <div class="popup-stack" id="popup-stack"></div>
-    <div class="popup-empty" id="popup-empty">
-      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
-      <span class="popup-empty__title">没有新消息</span>
-      <span class="popup-empty__hint">家里人发来留言时，会立刻弹到这一屏上。</span>
-    </div>
-  </div>
 
-  <footer class="popup-actions">
-    <div class="popup-reply">
-      <div class="combo" id="popup-sender" aria-label="以谁的名义回复"></div>
-      <div class="field">
-        <input class="text-input" id="popup-reply-text" maxlength="2000" placeholder="回复一句，回车发送">
-      </div>
-      <button class="icon-btn icon-btn--primary" id="popup-reply-send" aria-label="发送回复" title="发送回复">
-        <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
-      </button>
-    </div>
-    <div class="popup-actions__row">
-      <span class="popup-actions__hint" id="popup-reply-hint" role="status" aria-live="polite"></span>
-      <button class="btn btn--primary btn--lg" id="popup-ok">
-        <svg class="btn__icon" aria-hidden="true"><use href="#i-check"/></svg>
-        <span>知道了</span>
-      </button>
-    </div>
-  </footer>
-</div>
-
-<!-- ══ 壳模式 · PC 消息客户端（mode=client）═════════════════════════════
-     PC 端是**纯群聊客户端**：只有「群聊消息流 + 回复栏」，没有任何侧边栏/导航，
-     也没有设备管理入口（设备页只在 NAS 网页端显示，网页端才是全功能版本）。
-     消息流来自共享空间（GET /api/messages），不按设备拉。
-     跟全屏弹窗（mode=popup）是**同一套视觉语言** —— 消息沿用 .popup-msg--lead
-     （最新一条大字）/.popup-msg--prev（更早的单行字幕），回复栏沿用 .popup-reply，
-     响应与提示沿用 .popup-actions__hint，只是装在一个普通窗口里。
-     两处刻意的差异：
-       · 没有「知道了」（那是弹窗强提醒的语义，消息已经在看板上了）
-       · 顶栏显示这台电脑自己的名字（只读标识，不是设备管理入口）
-     浏览器模式永远不显示（默认 hidden），只在壳里由 shell.js 揭开。 -->
-<div class="shell-client" id="shell-client" hidden>
-  <header class="popup-bar client-bar">
-    <span class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#i-chat-filled"/></svg></span>
-    <span class="popup-bar__title">家庭消息</span>
-    <span class="client-bar__id" id="client-device" title="这台电脑在服务端登记的名字"></span>
-    <span class="popup-bar__spacer"></span>
-    <span class="popup-bar__conn">
-      <span class="presence" id="client-dot"></span>
-      <span id="client-conn-text">连接中…</span>
-    </span>
-  </header>
-
-  <div class="popup-stage client-stage" id="client-stage">
-    <div class="popup-stack client-stack chat-list" id="client-stack"></div>
-    <div class="popup-empty client-empty" id="client-empty">
-      <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
-      <span class="popup-empty__title" id="client-empty-title">正在读取消息记录…</span>
-      <span class="popup-empty__hint" id="client-empty-hint"></span>
-    </div>
-  </div>
-
-  <footer class="popup-actions client-actions">
-    <div class="popup-reply">
-      <div class="combo" id="client-sender" aria-label="以谁的名义回复"></div>
-      <div class="field">
-        <input class="text-input" id="client-reply-text" maxlength="2000" placeholder="回复一句，回车发送">
-      </div>
-      <button class="icon-btn icon-btn--primary" id="client-reply-send" aria-label="发送回复" title="发送回复">
-        <svg class="icon" aria-hidden="true"><use href="#i-send"/></svg>
-      </button>
-    </div>
-    <div class="client-actions__row">
-      <span class="popup-actions__hint" id="client-reply-hint" role="status" aria-live="polite"></span>
-    </div>
-  </footer>
-</div>
-
-<!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<!-- nickcolor.js：逻辑色 ID → 显示色（§4.4 映射表），chat.js / shell.js / app.js 共用 -->
+<!-- nickcolor.js：逻辑色 ID → 显示色（§4.4 映射表），chat.js / app.js 共用
+     ★ v0.19.2：原来还加载 static/shell.js（"网页端支持 WebView2 壳模式"那一半）——
+     PC 端早就改成加载 exe 自带的 shell/app.html 了，浏览器控制台也不再进壳，
+     那个文件与这里的三处钩子一起删掉（943 行死代码）。 -->
 <script src="static/nickcolor.js?v=0.19.1"></script>
 <script src="static/chat.js?v=0.19.1"></script>
-<script src="static/shell.js?v=0.19.1"></script>
 <script src="static/app.js?v=0.19.1"></script>
 </body>
 </html>

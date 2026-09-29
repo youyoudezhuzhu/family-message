@@ -90,7 +90,7 @@ def main() -> int:
     with sync_playwright() as pw:
         b = pw.chromium.launch()
 
-        # ═══ 网页端：首页（发送区）═══
+        # ═══ 网页端：消息页（发送区）═══
         ctx, pg = web_page(b, "home")
         d = pg.evaluate("""() => ({
           has_targets: !!document.querySelector('#targets'),

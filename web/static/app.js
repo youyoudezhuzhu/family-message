@@ -29,16 +29,6 @@
  *   左昵称下拉 · 中输入框（占满中间最宽）· 右发送。输入框改单行 <input>，
  *   裸回车即发送（组字中的回车不算，见文件末尾的事件绑定）；
  *   请求体、API 路径、字段校验一律没动。
- *
- * 追加（WebView2 壳模式，纯分支，不动上面任何东西）：
- *   PC 端改成「WebView2 壳加载这个页面」，同一个网页既能当浏览器控制台，
- *   也能当原生应用界面（含全屏消息弹窗）。壳的判定、桥协议、弹窗视图全在
- *   static/shell.js；本文件只加了三处极小的钩子（都在壳模式下才生效）：
- *     · boot()        壳里先走 FM_SHELL.start()：加载态 → web.ready → 等 host.hello
- *     · connectWS()   壳里不再连 /ws/web（宿主持有 WebSocket），实时帧由桥喂给
- *                     handleServerFrame()（原 onmessage 的处理逻辑，帧格式完全一致）
- *     · renderNameSelectors()  壳里顺带同步弹窗里的「以谁的名义回复」
- *   浏览器模式下这三处都不触发，行为与改动前逐字节等价。
  */
 
 /* 消息状态：群聊模型下只有一种 —— 已发送。
@@ -500,14 +490,6 @@ async function bootConsole() {
 
 async function boot() {
   applyMode(loadMode(), false);
-
-  // 壳模式（PC 端 WebView2 壳加载这个页面）：先给中性的加载态、发 web.ready，
-  // 等宿主 host.hello 说清是「全屏弹窗」还是「控制台」再决定渲染哪套界面。
-  // 浏览器模式完全不走这条分支 —— 见 static/shell.js。
-  if (window.FM_SHELL && window.FM_SHELL.enabled) {
-    return window.FM_SHELL.start(bootConsole);
-  }
-
   await bootConsole();
 }
 
@@ -1053,11 +1035,6 @@ function setConn(on) {
 }
 
 function connectWS() {
-  // 壳模式：宿主持有 WebSocket（断线重连/离线队列都在它那边），页面**不再**连
-  // /ws/web —— 否则同一条消息会进来两份。实时事件改走桥，由 shell.js 分流到
-  // 下面这个 handleServerFrame()，帧格式与之完全一致。
-  if (window.FM_SHELL && window.FM_SHELL.enabled) return;
-
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}${BASE}/ws/web`);
   ws.onopen = () => setConn(true);
@@ -1392,8 +1369,6 @@ function renderNameSelectors() {
     buildSelect($('sender-sel'), items, cur == null ? '' : String(cur),
                 (v) => selectNick(v === '' ? null : Number(v)));
   }
-  // 壳模式：全屏弹窗里那个「以谁的名义回复」的下拉也要跟着改
-  if (window.FM_SHELL && window.FM_SHELL.enabled) window.FM_SHELL.syncNames();
 }
 
 /** 选择昵称 = **纯本地动作**：不上传、不广播、不影响别的浏览器（§5.2） */

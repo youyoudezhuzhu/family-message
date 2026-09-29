@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""首页布局验证：**消息记录在前、发送框在后**（像聊天应用，输入框在底部）。
+"""消息页布局验证：**消息记录在前、发送框在后**（像聊天应用，输入框在底部）。
 
 判据不是「看着像」，是 DOM 与几何两个可证的事实：
   · document 顺序：`#home-recent` 所在的 section 排在 `#t-compose` 所在的 card 之前
@@ -51,7 +51,7 @@ SEED = [("妈妈", "今晚几点回来？我把菜先洗上了"),
 
 
 async def _keep_device_online(stop: threading.Event) -> None:
-    """占着一条设备长连接，首页「在线设备」才不是空态。"""
+    """占着一条设备长连接（v0.19.2 起首页不再有「在线设备」区，这里只为让设备页有数据）。"""
     dev = "dev_shot_layout"
     url = f"{WS}/ws/device/{dev}?" + urlencode({
         "token": "", "name": "书房电脑", "type": "pc",
@@ -85,7 +85,7 @@ def seed():
 
 # ── 断言 ────────────────────────────────────────────────────────────
 def assert_order(page, tag):
-    print(f"\n[{tag}] 首页顺序")
+    print(f"\n[{tag}] 消息页顺序")
     order = page.evaluate("""() => {
         const recent = document.querySelector('#home-recent');
         const compose = document.querySelector('#t-compose');
@@ -102,7 +102,7 @@ def assert_order(page, tag):
           rows: document.querySelectorAll('#home-recent .chat-row').length,
         };
     }""")
-    check(order is not None, "首页找到 #home-recent 与 #t-compose")
+    check(order is not None, "消息页找到 #home-recent 与 #t-compose")
     if not order:
         return
     check(order["domFollowing"],

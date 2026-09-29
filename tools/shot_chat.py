@@ -151,14 +151,14 @@ def main() -> int:
         shoot(pg, "web-messages-dark")
         pg.evaluate("() => { document.documentElement.setAttribute('data-theme','light'); }")
 
-        # ═══ 网页端首页「最近消息」 ═══
+        # ═══ 网页端「消息」页（v0.19.1 起导航从「首页」改名）═══
         pg.evaluate("() => { const n = document.querySelector('[data-page=home]'); if (n) n.click(); }")
         pg.wait_for_timeout(900)
         d2 = probe(pg, '#home-recent')
-        print("\n═══ 网页端首页「最近消息」═══")
+        print("\n═══ 网页端「消息」页（家庭消息）═══")
         for k, v in d2.items():
             print(f"  {k} = {v}")
-        print(f"  {'✅' if d2.get('has_bubble') else '❌'} 首页也用的同一套气泡")
+        print(f"  {'✅' if d2.get('has_bubble') else '❌'} 消息页也用的同一套气泡")
         shoot(pg, "web-home-recent-light")
         ctx.close()
 
