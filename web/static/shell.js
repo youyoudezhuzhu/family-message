@@ -674,7 +674,16 @@
     }
   }
 
+  /** 昵称小圆点的颜色：优先问 app.js 的昵称字典（NAS 下发的**逻辑色 ID** →
+      §4.4 映射表按主题算显示色）；查不到才退回哈希色（老消息 / 开关关闭）。 */
   function nickColorOf(name) {
+    try {
+      var r = window.FMNickResolver;
+      if (r && typeof r.colorIdForName === 'function') {
+        var id = r.colorIdForName(name);
+        if (id) return r.dot(id);
+      }
+    } catch (_) {}
     if (typeof window.nickColor === 'function') return window.nickColor(name);
     return '#90CAF9';
   }
@@ -686,7 +695,16 @@
     var v = host && host._value;
     if (v && list.indexOf(v) >= 0) return v;
     var last = S.hostName || '';
-    if (!last) { try { last = localStorage.getItem('fm.lastSender') || ''; } catch (_) {} }
+    if (!last) {
+      // 共享昵称开着时 localStorage 里存的是 nickname_id（不是名字）→ 让 app.js 换成显示名，
+      // 免得「上次以谁的名义回复」在壳里失效（Phase 4 会把它接到 PC 本地配置上）。
+      var r = window.FMNickResolver;
+      if (r && typeof r.enabled === 'function' && r.enabled() && typeof r.currentName === 'function') {
+        last = r.currentName() || '';
+      } else {
+        try { last = localStorage.getItem('fm.lastSender') || ''; } catch (_) {}
+      }
+    }
     return list.indexOf(last) >= 0 ? last : list[0];
   }
 
@@ -703,6 +721,15 @@
   }
 
   function rememberSenderOf(v) {
+    // 共享昵称开着时：存进去的必须是 **nickname_id**（这是「当前昵称」的唯一落点），
+    // 让 app.js 自己把名字翻成 id —— 壳里绝不再往 localStorage 写名字（§5.6.3 第 4 条）。
+    try {
+      var r = window.FMNickResolver;
+      if (r && typeof r.enabled === 'function' && r.enabled() && typeof r.selectByName === 'function') {
+        r.selectByName(v);
+        return;
+      }
+    } catch (_) {}
     if (typeof window.rememberSender === 'function') window.rememberSender(v);
     else { try { localStorage.setItem('fm.lastSender', v || ''); } catch (_) {} }
   }

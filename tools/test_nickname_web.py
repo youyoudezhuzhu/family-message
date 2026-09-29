@@ -1,0 +1,825 @@
+#!/usr/bin/env python3
+"""共享昵称系统 **Phase 3（网页端）** 的真机验收 + 截图。
+
+覆盖 docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 3 的判据：
+
+  A 逻辑色渲染   页面上的圆点 / 头像底 / 头像字色逐行对得上 §4.4 的映射表（浅 / 深主题各一遍）
+  B 昵称列表页   空库空态（不假造昵称）/ 添加 / 撞名 409 引导「直接选用它？」/ 换色 / 删除
+  C 额度提示     14 条 →「共享昵称颜色即将用尽（14/16）」；16 条 → 满额文案 + 入口置灰（直连仍 503）
+  D 5 个广播     三个浏览器上下文同时在线：A 改色 → B / C **不刷新**即变色（记耗时）
+  E 当前昵称     本地（localStorage 的 fm.lastSender = nickname_id）；fm.names 不再被读写
+  F 新浏览器     灰色临时昵称「默认用户」+ 灰 `gray`，且**也能发消息**
+  G 兜底         未知逻辑色 ID → 灰兜底且 style 里不出现非法值；断网 / 开关关闭仍正常
+  H 窄屏         375px 手机宽度下昵称卡片不重叠、不溢出
+
+⚠ 只用**测试实例**（18899 / 18897），**生产 18801 绝不被碰**（脚本里硬拒）。
+
+用例隔离约定（每个用例自己造前置状态，绝不依赖前一个用例的残留）：
+  ① 起实例前先确认端口没人应答（`Srv.port_is_open`）——残留实例带着上一次的库（可能已满额），
+     复用它会让「满额置灰」看起来像产品 bug，其实是串了别人的状态。
+  ② 需要空库 / 指定条数的用例，自己用 `reset_library()`（走 DELETE API 清库、归还颜色）造前置；
+     `reset_library()` 之后第一条新建必拿 color_01。
+  ③ 前置本身也**断言**出来（`X 前置：…`），别让用例悄悄依赖顺序。
+  ④ 页面上的 async 函数（`deleteNick` 之类内部 await 确认对话框的）必须用 `ffire()` 调用：
+     Playwright 的 evaluate 会 await 返回的 Promise，直接 evaluate = 死锁。
+  ⑤ 满额 16/16 时 `#name-new` / `#name-add` 置灰是**产品的正确行为**，测试要迁就它（自备未满额前置），
+     不许为它改产品。
+
+⚠ 只改 web/ 下的东西；本脚本不改 server/ 与 pc-agent/。
+
+用法：
+    /vol1/@apphome/hermes-agent/data/venv/bin/python tools/test_nickname_web.py
+    … --keep            保留临时目录（排查）
+    … --no-shots        不截图（只断言）
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from playwright.sync_api import sync_playwright
+
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
+SERVER_DIR = ROOT / "server"
+DOCS = ROOT / "docs"
+PORT_ON, PORT_OFF = 18899, 18897
+PROD_PORT = 18801
+ENROLL = "FAMILY-TEST-TOKEN"
+
+results: list[tuple[str, bool, str]] = []
+
+
+def check(name: str, ok: bool, detail: str = "") -> bool:
+    results.append((name, ok, detail))
+    print(f"  {'✅' if ok else '❌'} {name}" + (f"   {detail}" if detail else ""))
+    return ok
+
+
+def section(title: str) -> None:
+    print(f"\n── {title} " + "─" * max(0, 62 - len(title)))
+
+
+def eq_hex_vs_rgb(want_hex: str, got_rgb: str) -> bool:
+    m = re.match(r"rgba?\((\d+),\s*(\d+),\s*(\d+)", got_rgb or "")
+    if not m:
+        return False
+    got = "#%02X%02X%02X" % (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    return got.upper() == want_hex.upper()
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 测试实例（临时目录 + 临时配置；端口硬拒 18801）
+# ══════════════════════════════════════════════════════════════════════
+class Srv:
+    def __init__(self, tmp: Path, port: int, enabled: bool):
+        assert port != PROD_PORT, "拒绝使用生产端口 18801"
+        self.port, self.enabled = port, enabled
+        self.dir = tmp / ("on" if enabled else "off")
+        self.data = self.dir / "data"
+        self.data.mkdir(parents=True, exist_ok=True)
+        self.cfg = self.dir / "config.yaml"
+        self.cfg.write_text(
+            f"data_dir: {self.data}\n"
+            f"server: {{host: 127.0.0.1, port: {port}, public_url: ''}}\n"
+            "web: {password: '', session_hours: 720}\n"
+            f"device: {{enroll_token: {ENROLL}, auto_register: true, offline_after_seconds: 45}}\n"
+            "message: {popup_auto_close_seconds: 0, max_targets: 20, history_limit: 30}\n"
+            f"nickname: {{enabled: {'true' if enabled else 'false'}, color_pool_version: 1}}\n",
+            encoding="utf-8")
+        self.log_path = self.dir / "server.log"
+        self.proc: subprocess.Popen | None = None
+        self._f = None
+
+    @property
+    def base(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    @property
+    def db(self) -> Path:
+        return self.data / "family.db"
+
+    def port_is_open(self) -> bool:
+        """端口上已经有人在应答？→ 说明有**残留的 / 别人的**实例，绝不复用。
+
+        复用会让用例读到上一次跑剩的库（很可能已经满额 16/16 → #name-new 被产品置灰），
+        症状看起来像「产品坏了」，其实是**用例串了别人的状态**（本次隔离问题的元凶）。
+        """
+        import socket
+        with socket.socket() as s:
+            s.settimeout(0.4)
+            return s.connect_ex(("127.0.0.1", self.port)) == 0
+
+    def start(self, timeout: float = 25.0) -> None:
+        if self.port_is_open():
+            raise RuntimeError(
+                f"端口 {self.port} 已被占用：多半是上次跑崩 / 被打断后残留的测试实例。"
+                f"它带着上一次的库（可能已满额），复用它 = 用例之间串状态。先 kill 干净再跑。")
+        env = dict(os.environ, FM_CONFIG=str(self.cfg), FM_PORT=str(self.port),
+                   TRIM_SERVICE_PORT=str(self.port), PYTHONUNBUFFERED="1")
+        self._f = open(self.log_path, "wb")
+        self.proc = subprocess.Popen([sys.executable, str(SERVER_DIR / "run.py")],
+                                     cwd=str(SERVER_DIR), env=env,
+                                     stdout=self._f, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+        end = time.time() + timeout
+        while time.time() < end:
+            if self.proc.poll() is not None:
+                raise RuntimeError(f"实例秒退 exit={self.proc.returncode}\n{self.read_log()[-900:]}")
+            try:
+                st, _ = http(self.base, "GET", "/healthz", timeout=2)
+                if st == 200:
+                    return
+            except Exception:
+                pass
+            time.sleep(0.25)
+        raise RuntimeError(f"实例 {timeout}s 没起来\n{self.read_log()[-900:]}")
+
+    def stop(self) -> bool:
+        """停实例，返回**端口是否已释放**（实例是 start_new_session 起的，父进程被打断会变孤儿）。"""
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait(timeout=5)
+        if self._f:
+            self._f.close()
+            self._f = None
+        end = time.time() + 5
+        while time.time() < end and self.port_is_open():
+            time.sleep(0.2)
+        return not self.port_is_open()
+
+    def read_log(self) -> str:
+        try:
+            return self.log_path.read_text(errors="replace")
+        except Exception:
+            return ""
+
+
+def http(base: str, method: str, path: str, body=None,
+         timeout: float = 8.0) -> tuple[int, Any]:
+    req = urllib.request.Request(base + path, method=method)
+    data = None
+    if body is not None:
+        data = json.dumps(body, ensure_ascii=False).encode()
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, data=data, timeout=timeout) as r:
+            raw = r.read().decode() or "null"
+            return r.status, json.loads(raw)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode() or "null"
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {"_raw": raw}
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 用例隔离工具（每个用例自己造前置状态，绝不依赖前一个用例的残留）
+# ══════════════════════════════════════════════════════════════════════
+def ffire(page, expr: str) -> None:
+    """执行页面上的 async 函数，但**不等它的 Promise**。
+
+    Playwright 的 evaluate 会 await 返回的 Promise（已实测确认）。
+    像 `deleteNick(n)` 这种内部 `await confirmDialog(...)` 的函数，等它就是死锁：
+    对话框要等测试点「删除」，而测试在等 evaluate 返回。
+    """
+    page.evaluate(f"() => {{ void ({expr}); }}")
+
+
+def active_names(base: str) -> list[dict]:
+    """当前活跃昵称（name / id / color），给前置准备与断言共用。"""
+    st, body = http(base, "GET", "/api/nicknames?status=active")
+    assert st == 200, (st, body)
+    return body["nicknames"]
+
+
+def reset_library(srv: "Srv", page=None, keep: int = 0, wait_ms: int = 400) -> list[str]:
+    """把共享昵称库清到只剩 keep 条（默认全清），让用例自己从已知状态起步。
+
+    归还颜色 → 池子回到起点（`pick_first_available` 取到的第一条必是 color_01）。
+    """
+    names = [n["display_name"] for n in active_names(srv.base)]
+    for n in active_names(srv.base)[keep:]:
+        st, b = http(srv.base, "DELETE", f"/api/nicknames/{n['nickname_id']}")
+        assert st in (200, 204), (st, b)
+    if page is not None:
+        page.evaluate("() => loadNicknames()")      # 广播之外的兜底整表同步
+        page.wait_for_timeout(wait_ms)
+    return names
+
+
+def ensure_add_enabled(srv: "Srv", page, keep: int = 10) -> bool:
+    """保证「添加」入口可用（未满额）——满额是产品的正确行为，但用例不该依赖它。"""
+    if not page.is_enabled("#name-new"):
+        reset_library(srv, page, keep=keep)
+    return page.is_enabled("#name-new")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# 页面工具
+# ══════════════════════════════════════════════════════════════════════
+def ws_recorder(ctx) -> list[dict]:
+    """记录这个上下文收到的全部昵称帧（证明 5 个广播都到了浏览器）。"""
+    frames: list[dict] = []
+
+    def on_page(page):
+        def on_ws(ws):
+            def on_frame(payload):
+                if isinstance(payload, str) and payload.startswith("{"):
+                    try:
+                        d = json.loads(payload)
+                    except Exception:
+                        return
+                    if str(d.get("type", "")).startswith("nickname"):
+                        frames.append(d)
+            ws.on("framereceived", lambda p: on_frame(getattr(p, "payload", p)))
+        page.on("websocket", on_ws)
+
+    ctx.on("page", on_page)
+    return frames
+
+
+def open_page(ctx, base: str):
+    page = ctx.new_page()
+    page.set_default_timeout(12000)
+    errs: list[str] = []
+    page.on("pageerror", lambda e: errs.append(str(e)))
+    page.goto(base + "/", wait_until="load")
+    page.wait_for_function("() => !!window.FMNickResolver", timeout=15000)
+    page.wait_for_timeout(350)
+    return page, errs
+
+
+def go_settings(page):
+    page.evaluate("() => go('settings')")
+    page.wait_for_selector("#page-settings:not([hidden])")
+    page.wait_for_timeout(120)
+
+
+def go_home(page):
+    # 发送区在主页（#page-home）；在设置页上 #content 是 hidden 的，fill 会超时
+    page.evaluate("() => go('home')")
+    page.wait_for_selector("#page-home:not([hidden])")
+    page.wait_for_timeout(120)
+
+
+def row_colors(page) -> list[dict]:
+    """设置页每一行：逻辑色 ID（data 属性） + 色点实际渲染色 + 名字。"""
+    return page.evaluate("""() => Array.from(document.querySelectorAll('#names-list .name-row')).map(r => {
+        const sw = r.querySelector('.name-row__swatch');
+        const inp = r.querySelector('.name-row__input');
+        return {
+          id: r.dataset.nickId,
+          colorId: sw.dataset.colorId,
+          dot: getComputedStyle(sw).backgroundColor,
+          name: (inp && inp.value) || '',
+          using: r.classList.contains('name-row--using'),
+        };
+      })""")
+
+
+def msg_colors(page) -> list[dict]:
+    """消息行：头像底 + 头像字色 + 名字（页面上真正渲染出来的颜色）。"""
+    return page.evaluate("""() => Array.from(document.querySelectorAll('#home-recent .chat-row')).map(r => {
+        const av = r.querySelector('.chat-avatar');
+        const nm = r.querySelector('.chat-name');
+        return {
+          name: nm ? nm.textContent : '',
+          bg: getComputedStyle(av).backgroundColor,
+          fg: getComputedStyle(av).color,
+          letter: av.textContent,
+        };
+      })""")
+
+
+def combo_state(page, host_id: str = 'sender-sel') -> dict:
+    return page.evaluate("""(id) => {
+        const host = document.getElementById(id);
+        const btn = host.querySelector('.combo__btn');
+        const sw = btn.querySelector('.combo__swatch');
+        /* 共享昵称路径：按钮里有色块（§4.4 规则 4「色块 + 常规字色」）；
+           老路径（开关关闭 / 本地哈希昵称）：没有色块，颜色落在 label 的字色上（逐像素回退）。 */
+        const label = btn.querySelector('span:not(.combo__swatch)');
+        return {
+          value: host._value,
+          label: btn.textContent.trim(),
+          swatch: sw ? getComputedStyle(sw).backgroundColor : getComputedStyle(label).color,
+        };
+      }""", host_id)
+
+
+# ══════════════════════════════════════════════════════════════════════
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--keep", action="store_true")
+    ap.add_argument("--no-shots", action="store_true")
+    args = ap.parse_args()
+
+    tmp = Path(tempfile.mkdtemp(prefix="fm-nick-p3-"))
+    shots: list[Path] = []
+
+    def shot(page, name: str) -> None:
+        if args.no_shots:
+            return
+        p = DOCS / f"nickname-{name}.png"
+        page.screenshot(path=str(p), full_page=False)
+        shots.append(p)
+        print(f"     📷 {p.name}")
+
+    on = Srv(tmp, PORT_ON, True)
+    off = Srv(tmp, PORT_OFF, False)
+    print(f"═══ 共享昵称 Phase 3（网页端）验收 ═══\n  临时目录：{tmp}")
+
+    try:
+        on.start()
+        print(f"  测试实例（开关开）：{on.base}   ← 生产 18801 未触碰")
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+
+            # ── F. 空库 + 新浏览器 = 灰色「默认用户」，且能发消息 ──────────
+            section("F 新浏览器：灰色临时昵称「默认用户」（空库不假造任何昵称）")
+            reset_library(on)          # 自备前置：先清库，不假设实例天生是干净的
+            A = browser.new_context(viewport={"width": 1280, "height": 900})
+            framesA = ws_recorder(A)
+            pageA, errsA = open_page(A, on.base)
+
+            st, body = http(on.base, "GET", "/api/nicknames?status=active")
+            check("空库 GET /api/nicknames 返回空数组（不建任何行）", st == 200 and body.get("nicknames") == [], f"{st} {body}")
+
+            combo = combo_state(pageA)
+            check("新浏览器发送区显示灰色「默认用户」", "默认用户" in combo["label"], combo["label"])
+            want = pageA.evaluate("() => FMNickColor.dot('gray', 'light')")
+            check("该灰点是 §4.4 的灰兜底色（浅色 #5A5A5A）",
+                  eq_hex_vs_rgb("#5A5A5A", combo["swatch"]), f"{combo['swatch']} vs {want}")
+
+            # 发一条消息（灰临时）
+            go_home(pageA)
+            pageA.fill("#content", "我是新浏览器，还没选昵称")
+            pageA.click("#btn-send")
+            pageA.wait_for_timeout(600)
+            mc = msg_colors(pageA)
+            check("灰临时也能发消息（消息行出现）", len(mc) >= 1 and mc[-1]["name"] == "默认用户",
+                  f"{mc[-1] if mc else None}")
+            if mc:
+                g_bg = pageA.evaluate("() => FMNickColor.display('avatarBg', 'gray')")
+                check("灰临时消息头像底 = gray 的 §4.4 头像底（#717171）",
+                      eq_hex_vs_rgb(g_bg, mc[-1]["bg"]), f"{mc[-1]['bg']} vs {g_bg}")
+                check("灰临时消息头像字色 = 白字（底↔字 ≥4.5）",
+                      eq_hex_vs_rgb("#FFFFFF", mc[-1]["fg"]), mc[-1]["fg"])
+            go_settings(pageA)
+            check("空库空态文案（不假造昵称）",
+                  pageA.inner_text("#names-list").strip() == "还没有昵称，先添加一个吧。",
+                  pageA.inner_text("#names-list").strip())
+            check("空态时新建入口可用", pageA.is_enabled("#name-add"))
+            shot(pageA, "01-empty-gray-temp")
+
+            # ── E. 输入长度上限 32（自备干净前置：清库 → 未满额 → 输入框可用）──
+            section("E 昵称长度：前端校验 32（与 NAS 一致）")
+            go_settings(pageA)
+            reset_library(on, pageA)   # 32 字符用例与额度无关，必须自己清干净，
+                                       # 绝不依赖前一个用例跑完剩下的额度状态（满额会让输入框按产品行为置灰）
+            check("E 前置：库空 + 新建入口可用（未满额，输入框没被产品置灰）",
+                  row_colors(pageA) == [] and pageA.is_enabled("#name-new"),
+                  f"rows={len(row_colors(pageA))} enabled={pageA.is_enabled('#name-new')}")
+            ml = pageA.get_attribute("#name-new", "maxlength")
+            check("输入框 maxlength=32", ml == "32", f"maxlength={ml}")
+            pageA.fill("#name-new", "长" * 40)
+            v = pageA.input_value("#name-new")
+            check("实际输入被截到 32 个字符（逐字比对）", v == "长" * 32 and len(v) == 32, f"len={len(v)}")
+            pageA.fill("#name-new", "")
+
+            # ── B. 添加 / 撞名 / 换色 / 删除 ──────────────────────────────
+            section("B 昵称列表页（全局管理）")
+            reset_library(on, pageA)   # 自备前置：空池才能断言「第一色 = color_01」
+            check("B 前置：库空（颜色池从 color_01 起步）", row_colors(pageA) == [], str(row_colors(pageA)))
+            pageA.fill("#name-new", "妈妈")
+            pageA.click("#name-add")
+            pageA.wait_for_timeout(700)
+            rows = row_colors(pageA)
+            check("添加「妈妈」后列表出现一行", len(rows) == 1 and rows[0]["name"] == "妈妈", str(rows))
+            check("颜色来自 NAS 的逻辑色 ID（第一色 color_01）",
+                  bool(rows) and rows[0]["colorId"] == "color_01", rows[0]["colorId"] if rows else "")
+            want_dot = pageA.evaluate("() => FMNickColor.dot('color_01', 'light')")
+            check("色点渲染 = §4.4 color_01 浅色圆点（#3D2273）",
+                  bool(rows) and eq_hex_vs_rgb("#3D2273", rows[0]["dot"]), f"{rows[0]['dot'] if rows else ''}")
+            reloaded = False
+            check("新建后自动选用它（当前昵称 = 妈妈）",
+                  "妈妈" in combo_state(pageA)["label"], combo_state(pageA)["label"])
+
+            # 撞名
+            pageA.fill("#name-new", "妈妈")
+            pageA.click("#name-add")
+            pageA.wait_for_selector("#nick-conflict:not([hidden])", timeout=6000)
+            ctext = pageA.inner_text("#nick-conflict")
+            check("撞名 → 提示「已存在，直接选用它？」", "已存在，直接选用它？" in ctext, ctext.replace("\n", " | "))
+            st, body = http(on.base, "GET", "/api/nicknames?status=active")
+            check("撞名不新增行（服务端仍只有 1 条）", len(body.get("nicknames", [])) == 1,
+                  f"{[n['display_name'] for n in body.get('nicknames', [])]}")
+            shot(pageA, "02-conflict-existing")
+            pageA.click(".nick-conflict__actions .btn--primary")   # 点一下 = 选用
+            pageA.wait_for_timeout(400)
+            check("点「选用它」= 选中该昵称（冲突条消失）",
+                  pageA.is_hidden("#nick-conflict") and "妈妈" in combo_state(pageA)["label"],
+                  combo_state(pageA)["label"])
+
+            # 发一条以「妈妈」名义的消息（验证回显颜色）
+            go_home(pageA)
+            pageA.fill("#content", "今晚七点开饭")
+            pageA.click("#btn-send")
+            pageA.wait_for_timeout(600)
+            mc = msg_colors(pageA)
+            mom = [m for m in mc if m["name"] == "妈妈"]
+            bg = pageA.evaluate("() => FMNickColor.display('avatarBg', 'color_01')")
+            fg = pageA.evaluate("() => FMNickColor.display('avatarFg', 'color_01')")
+            check("发送后回显颜色正确（头像底 = color_01 的 §4.4 头像底 #5E35B1）",
+                  bool(mom) and eq_hex_vs_rgb(bg, mom[-1]["bg"]), f"{mom[-1]['bg'] if mom else None} vs {bg}")
+            check("头像字色 = color_01 的 §4.4 字色（白字）",
+                  bool(mom) and eq_hex_vs_rgb("#FFFFFF", mom[-1]["fg"]), f"{mom[-1]['fg'] if mom else None}")
+            shot(pageA, "03-list-with-message")
+
+            # ── D. 三个浏览器上下文同时在线：改名 / 改色 / 删除 → 免刷新同步 ──
+            section("D 三个浏览器同时在线：广播免刷新实时同步")
+            go_settings(pageA)      # 改色要点的按钮在设置页
+            # 前置（显式造，不靠隐式顺序）：改色要池子里还有空色 → 库里必须不是满额
+            if len(row_colors(pageA)) != 1:
+                reset_library(on, pageA)
+                http(on.base, "POST", "/api/nicknames", {"display_name": "妈妈"})
+                pageA.wait_for_timeout(700)
+                go_settings(pageA)
+            check("D 前置：库里恰好 1 条活跃昵称 + 新建入口可用（额度充足）",
+                  len(row_colors(pageA)) == 1 and pageA.is_enabled("#name-new"),
+                  f"{len(row_colors(pageA))} rows")
+            B = browser.new_context(viewport={"width": 1280, "height": 900})
+            C = browser.new_context(viewport={"width": 390, "height": 844})   # 手机宽度
+            framesB, framesC = ws_recorder(B), ws_recorder(C)
+            pageB, errsB = open_page(B, on.base)
+            pageC, errsC = open_page(C, on.base)
+            for p in (pageB, pageC):
+                go_settings(p)
+            check("B 打开即拿到同一份列表（整表同步）",
+                  [r["name"] for r in row_colors(pageB)] == ["妈妈"], str(row_colors(pageB)))
+            check("C（手机宽度）也是同一份列表",
+                  [r["name"] for r in row_colors(pageC)] == ["妈妈"], str(row_colors(pageC)))
+            check("B / C 的三端颜色一致（同一逻辑色 ID）",
+                  row_colors(pageB)[0]["dot"] == row_colors(pageC)[0]["dot"] == row_colors(pageA)[0]["dot"],
+                  f"{row_colors(pageB)[0]['dot']}")
+
+            # A 改色（自备前置：B 手里至少得有一条历史消息，否则「历史消息跟着变色」无从谈起）
+            if not msg_colors(pageB):
+                go_home(pageA)
+                pageA.fill("#content", "改色前先垫一条消息")
+                pageA.click("#btn-send")
+                pageA.wait_for_timeout(700)
+                go_settings(pageA)
+            beforeA = row_colors(pageA)[0]["dot"]
+            beforeB = row_colors(pageB)[0]["dot"]
+            beforeC = row_colors(pageC)[0]["dot"]
+            beforeB_msg = msg_colors(pageB)
+            t0 = time.time()
+            pageA.click("#names-list .name-row .icon-btn")     # 重新分配颜色
+            changed = False
+            while time.time() - t0 < 6:
+                if row_colors(pageB)[0]["dot"] != beforeB and row_colors(pageC)[0]["dot"] != beforeC:
+                    changed = True
+                    break
+                pageB.wait_for_timeout(40)
+            dt = (time.time() - t0) * 1000
+            afterA = row_colors(pageA)[0]["dot"]
+            afterB = row_colors(pageB)[0]["dot"]
+            afterC = row_colors(pageC)[0]["dot"]
+            check("A 改色 → B / C **不刷新**即变色", changed,
+                  f"A {beforeA}→{afterA} | B {beforeB}→{afterB} | C {beforeC}→{afterC}")
+            check("三端变色后仍然一致", afterA == afterB == afterC, f"{afterA} == {afterB} == {afterC}")
+            check("1 秒内到达（实测耗时）", dt < 1000, f"{dt:.0f} ms")
+            check("A 的新色确实换了一个逻辑色 ID（不是同一个）",
+                  row_colors(pageA)[0]["colorId"] != "color_01", row_colors(pageA)[0]["colorId"])
+            afterB_msg = msg_colors(pageB)
+            check("B 的历史消息头像也跟着变色（同一逻辑色 ID 的显示色，无需刷新）",
+                  bool(beforeB_msg) and bool(afterB_msg) and beforeB_msg[-1]["bg"] != afterB_msg[-1]["bg"],
+                  f"{beforeB_msg[-1]['bg'] if beforeB_msg else None} → {afterB_msg[-1]['bg'] if afterB_msg else None}")
+            shot(pageA, "04-realtime-A-after-recolor")
+            shot(pageB, "05-realtime-B-no-reload")
+            shot(pageC, "06-realtime-C-phone-no-reload")
+
+            # A 改名 → B/C（旧名自取，不写死；后面「消息快照冻结」用它断言）
+            old_name = row_colors(pageA)[0]["name"]
+            pageA.fill("#names-list .name-row .name-row__input", "母亲")
+            pageA.evaluate("() => document.querySelector('#names-list .name-row__input')"
+                           ".dispatchEvent(new Event('change'))")
+            t0 = time.time()
+            ok_rn = False
+            while time.time() - t0 < 6:
+                if [r["name"] for r in row_colors(pageB)] == ["母亲"]:
+                    ok_rn = True
+                    break
+                pageB.wait_for_timeout(40)
+            check("A 改名 → B 免刷新即见新名（nickname_updated）", ok_rn, f"{(time.time()-t0)*1000:.0f} ms")
+            check("改名不改颜色（逻辑色 ID 与色点不变）",
+                  row_colors(pageB)[0]["colorId"] == row_colors(pageA)[0]["colorId"],
+                  row_colors(pageB)[0]["colorId"])
+            check("历史消息仍显示当时的名字（消息快照冻结，不会被改名追着改）",
+                  any(m["name"] == old_name for m in msg_colors(pageB))
+                  and not any(m["name"] == "母亲" for m in msg_colors(pageB)),
+                  f"old={old_name!r} msgs={[m['name'] for m in msg_colors(pageB)]}")
+
+            # ── G. 未知逻辑色 ID → 灰兜底 ─────────────────────────────────
+            section("G 未知 / 脏逻辑色 ID（如 color_99）→ 灰兜底，style 里不出现非法值")
+            # 自备前置：拿**当前真实那一行**的 id / 名字去伪造脏帧，不假设 id 一定是 1
+            dirty_id, dirty_name = int(row_colors(pageA)[0]["id"]), row_colors(pageA)[0]["name"]
+            pageA.evaluate("""(a) => handleServerFrame({type:'nickname_color_changed',
+                nickname:{nickname_id:a.id, display_name:a.name, color:'color_99', status:'active'}})""",
+                {"id": dirty_id, "name": dirty_name})
+            pageA.wait_for_timeout(200)
+            dirty = row_colors(pageA)[0]
+            want_gray = pageA.evaluate("() => FMNickColor.dot('gray', 'light')")
+            check("脏 ID 那一行仍然渲染成灰（不崩、不当成有效色）",
+                  eq_hex_vs_rgb("#5A5A5A", dirty["dot"]), f"{dirty['dot']}")
+            bad_style = pageA.evaluate("""() => {
+                const out = [];
+                document.querySelectorAll('#names-list *').forEach(el => {
+                  const s = el.getAttribute('style') || '';
+                  if (s.includes('color_99') || s.includes('color_0')) out.push(s);
+                });
+                return out;
+              }""")
+            check("style 里不出现逻辑色 ID 原串 / HEX（R2：绝不把收到的字符串塞进 CSS）",
+                  bad_style == [], str(bad_style))
+            check("未知 ID 的兜底 = gray 的显示色", eq_hex_vs_rgb(want_gray, dirty["dot"]), want_gray)
+            # 恢复：让服务端整表同步把它校正回来
+            pageA.evaluate("() => loadNicknames()")
+            pageA.wait_for_timeout(400)
+            check("整表同步把本地脏缓存校正回来（nickname_list_sync / GET）",
+                  row_colors(pageA)[0]["colorId"].startswith("color_"),
+                  row_colors(pageA)[0]["colorId"])
+
+            # ── 深色主题：同一逻辑色 ID 换主题变体 ─────────────────────────
+            section("A 深色主题下的映射表（同一逻辑色 ID → 深色圆点变体）")
+            go_settings(pageA)
+            light_row = row_colors(pageA)[0] if row_colors(pageA) else None   # 浅色基准现取，不借上个用例的变量
+            pageA.evaluate("() => { localStorage.setItem('fm.mode','dark'); applyMode('dark', true); }")
+            pageA.wait_for_timeout(300)
+            dark_rows = row_colors(pageA)
+            check("换成深色主题后色点按深色变体重画（与浅色不同）",
+                  bool(light_row) and bool(dark_rows) and dark_rows[0]["dot"] != light_row["dot"],
+                  f"light {light_row['dot'] if light_row else None} → dark {dark_rows[0]['dot'] if dark_rows else None}")
+            shot(pageA, "07-dark-theme")
+
+            # ── H. 窄屏不重叠 ─────────────────────────────────────────────
+            section("H 手机窄屏（375px）昵称卡片不重叠、不溢出")
+            N = browser.new_context(viewport={"width": 375, "height": 812})
+            pageN, errsN = open_page(N, on.base)
+            go_settings(pageN)
+            pageN.wait_for_timeout(200)
+            if not row_colors(pageN):        # 自备前置：窄屏用例至少要有一行可量
+                http(on.base, "POST", "/api/nicknames", {"display_name": "窄屏测试"})
+                pageN.wait_for_timeout(700)
+                go_settings(pageN)
+            geom = pageN.evaluate("""() => Array.from(document.querySelectorAll('#names-list .name-row')).map(r => {
+                const q = (s) => { const e = r.querySelector(s); const b = e.getBoundingClientRect();
+                                   return {l: b.left, r: b.right, w: b.width}; };
+                return { row: {l: r.getBoundingClientRect().left, r: r.getBoundingClientRect().right},
+                         scrollW: r.scrollWidth, clientW: r.clientWidth,
+                         input: q('.name-row__input'), first: q('.name-row__actions .icon-btn'),
+                         last: q('.name-row__actions .icon-btn:last-child'), h: r.getBoundingClientRect().height };
+              })""")
+            ok_narrow = len(geom) >= 1 and all(   # len>=1：空数组会让 all() 假通过
+                g["scrollW"] <= g["clientW"] + 1                      # 不溢出
+                and g["row"]["r"] <= 376                              # 不出视口
+                and g["input"]["r"] <= g["first"]["l"] + 1            # 输入框不与按钮重叠
+                and g["first"]["r"] <= g["last"]["l"] + 1
+                and g["h"] <= 48                                      # 仍是单行（没被挤成两行）
+                for g in geom)
+            check("窄屏行内不重叠 / 不溢出 / 不换行", ok_narrow, json.dumps(geom, ensure_ascii=False))
+            card = pageN.evaluate("""() => { const c = document.getElementById('card-nicknames');
+                const b = c.getBoundingClientRect(); return {l: b.left, r: b.right, w: b.width}; }""")
+            check("昵称卡片不超出 375px 视口", card["l"] >= 0 and card["r"] <= 377, json.dumps(card))
+            shot(pageN, "08-narrow-375")
+
+            # ── C. 额度提示（14 / 16）─────────────────────────────────────
+            section("C 额度提示：14 条起提示、16 条满额并置灰新建入口")
+            go_settings(pageA)
+            reset_library(on, pageA)   # 自备前置：从 0 造到 14，不依赖前面剩了几条
+            check("C 前置：库已清空（14 / 16 都从白纸开始数）", row_colors(pageA) == [], str(row_colors(pageA)))
+            for i in range(14):
+                st, b = http(on.base, "POST", "/api/nicknames", {"display_name": f"测试昵称{i+1:02d}"})
+                assert st == 201, (st, b)
+            pageA.wait_for_timeout(900)
+            check("C 造数真实生效（服务端 14 条活跃）", len(active_names(on.base)) == 14,
+                  str(len(active_names(on.base))))
+            q = pageA.inner_text("#nick-quota").strip()
+            check("14 条 →「共享昵称颜色即将用尽（14/16）」（真实计数）",
+                  q == "共享昵称颜色即将用尽（14/16）", q)
+            check("14/16 时列表真是 14 行（不是文案跟计数脱节）", len(row_colors(pageA)) == 14,
+                  str(len(row_colors(pageA))))
+            shot(pageA, "09-quota-14")
+
+            for i in range(14, 16):
+                st, b = http(on.base, "POST", "/api/nicknames", {"display_name": f"测试昵称{i+1:02d}"})
+                assert st == 201, (st, b)
+            pageA.wait_for_timeout(900)
+            q = pageA.inner_text("#nick-quota").strip()
+            check("16 条 → 满额文案（逐字）",
+                  q == "已达到共享昵称上限，请删除不再使用的昵称后再添加。", q)
+            check("满额时「添加」入口置灰", not pageA.is_enabled("#name-add"))
+            st, b = http(on.base, "POST", "/api/nicknames", {"display_name": "第17个"})
+            check("绕过 UI 直连 POST 仍是 503 NO_AVAILABLE_COLOR",
+                  st == 503 and b.get("detail", {}).get("code") == "NO_AVAILABLE_COLOR", f"{st} {b}")
+            shot(pageA, "10-quota-full")
+
+            # ── 删除 → 颜色回池（nickname_removed 广播）───────────────────
+            nid = int(row_colors(pageA)[-1]["id"])
+            # ⚠ deleteNick 是 async 且内部 await confirmDialog：直接 evaluate 会等它的 Promise（对话框没人点）= 死锁。
+            #   必须 fire-and-forget，等对话框真出现再点「删除」。
+            ffire(pageA, f"deleteNick(nickById.get({nid}))")
+            try:
+                pageA.wait_for_selector("#dlg-confirm.is-visible", timeout=5000)
+                dlg_ok = True
+            except Exception as e:
+                dlg_ok = False
+                print(f"     ⚠ 确认对话框没出现：{type(e).__name__}")
+            check("删除前弹出确认对话框（危险操作不静默执行）", dlg_ok)
+            if dlg_ok:
+                pageA.click("#confirm-ok")
+            pageA.wait_for_timeout(900)
+            check("删除后列表少一行（三端同步）",
+                  len(row_colors(pageA)) == 15 and len(row_colors(pageB)) == 15,
+                  f"A={len(row_colors(pageA))} B={len(row_colors(pageB))}")
+            q = pageA.inner_text("#nick-quota").strip()
+            check("删掉一条后额度回到 15/16 提示", q == "共享昵称颜色即将用尽（15/16）", q)
+            check("满额置灰解除（入口又能用）", pageA.is_enabled("#name-add"))
+            check("删除真落库（服务端 15 条活跃）", len(active_names(on.base)) == 15,
+                  str(len(active_names(on.base))))
+
+            # ── E. 当前昵称存在本地（fm.lastSender = nickname_id）；fm.names 不再读写 ──
+            section("E 当前昵称：本地存的必须是 nickname_id；fm.names 不再读写")
+            ls = pageA.evaluate("""() => { const o = {};
+                for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); o[k] = localStorage.getItem(k); }
+                return o; }""")
+            check("localStorage 里只有 fm.* 这几个键，没有 fm.names", "fm.names" not in ls, str(list(ls)))
+            # 前置（显式造，绝不靠顺序）：先真的选一条现有昵称 → 刷新 → 再看本地存的是什么。
+            # 前面的额度用例把库清空过，选中项随之失效、fm.lastSender 被清掉是**产品的正确行为**，
+            # 所以这里不能拿「上一条用例残留的选中项」当断言对象（那是用例串状态，不是产品 bug）。
+            first = active_names(on.base)[0]          # 自取：后面断言用它的名字，不写死「母亲」
+            nid, pick_name = first["nickname_id"], first["display_name"]
+            pageA.evaluate(f"() => selectNick({nid})")   # selectNick 是同步函数，evaluate 不会挂
+            pageA.wait_for_timeout(200)
+            check("E 前置：已显式选中一条活跃昵称（本地有东西可查）",
+                  pageA.evaluate("() => localStorage.getItem('fm.lastSender')") == str(nid), str(nid))
+            pageA.reload(wait_until="load")
+            pageA.wait_for_function("() => !!window.FMNickResolver", timeout=15000)
+            pageA.wait_for_timeout(500)
+            last = pageA.evaluate("() => localStorage.getItem('fm.lastSender')")
+            check("fm.lastSender 存的是 nickname_id（纯数字，不是旧的名字）",
+                  bool(re.fullmatch(r"\d+", last or "")), repr(last))
+            check("选择后 fm.lastSender 写入该 id",
+                  pageA.evaluate("() => localStorage.getItem('fm.lastSender')") == str(nid),
+                  str(pageA.evaluate("() => localStorage.getItem('fm.lastSender')")))
+            pageA.reload(wait_until="load")
+            pageA.wait_for_function("() => !!window.FMNickResolver", timeout=15000)
+            pageA.wait_for_timeout(500)
+            check("刷新后仍记得这个选择（id → 显示名）",
+                  pick_name in combo_state(pageA)["label"],
+                  f"want {pick_name!r} got {combo_state(pageA)['label']!r}")
+            check("刷新后 fm.lastSender 仍是 id",
+                  re.fullmatch(r"\d+", pageA.evaluate("() => localStorage.getItem('fm.lastSender')") or ""),
+                  repr(pageA.evaluate("() => localStorage.getItem('fm.lastSender')")))
+
+            # 一次性迁移：老值（名字）能对上 → 换成 id；对不上 → 未选
+            pageA.evaluate("(v) => localStorage.setItem('fm.lastSender', v)", pick_name)
+            pageA.reload(wait_until="load")
+            pageA.wait_for_function("() => !!window.FMNickResolver", timeout=15000)
+            pageA.wait_for_timeout(700)
+            check("迁移：老值（名字）能对上 → 自动换成 nickname_id",
+                  bool(re.fullmatch(r"\d+", pageA.evaluate("() => localStorage.getItem('fm.lastSender')") or ""))
+                  and pick_name in combo_state(pageA)["label"],
+                  repr(pageA.evaluate("() => localStorage.getItem('fm.lastSender')")))
+            pageA.evaluate("() => localStorage.setItem('fm.lastSender', '查无此人')")
+            pageA.reload(wait_until="load")
+            pageA.wait_for_function("() => !!window.FMNickResolver", timeout=15000)
+            pageA.wait_for_timeout(700)
+            check("迁移：对不上 → 回到「未选」（灰临时「默认用户」）",
+                  pageA.evaluate("() => localStorage.getItem('fm.lastSender')") == ""
+                  and "默认用户" in combo_state(pageA)["label"],
+                  repr(pageA.evaluate("() => localStorage.getItem('fm.lastSender')")))
+
+            # ── 广播帧清单：5 个事件都真的到过浏览器 ───────────────────────
+            section("D' 5 个广播事件都到过浏览器（帧类型清点）")
+            got = {f["type"] for f in framesA + framesB + framesC}
+            want5 = {"nickname_created", "nickname_updated", "nickname_removed",
+                     "nickname_color_changed", "nickname_list_sync"}
+            check("5 个昵称广播事件全部收到", want5 <= got, f"收到 {sorted(got)}")
+            hexes = [f for f in framesA + framesB + framesC
+                     if "#" in json.dumps(f, ensure_ascii=False)]
+            check("广播载荷里没有任何 HEX（颜色只走逻辑色 ID）", not hexes,
+                  str(hexes[:1]))
+
+            # ── 断网 / 服务不可达：网页端不崩、不本地生效 ─────────────────
+            section("G' 断网（服务不可达）时昵称管理失败并提示，不本地生效")
+            go_settings(pageA)
+            # 自备前置：这个用例要点「添加」，满额时输入框按产品行为是置灰的（不是产品坏了）
+            check("G' 前置：新建入口可用（未满额）", ensure_add_enabled(on, pageA),
+                  f"rows={len(row_colors(pageA))}")
+            saved = [r["name"] for r in row_colors(pageA)]
+            pageA.route("**/api/nicknames**", lambda route: route.abort())
+            pageA.fill("#name-new", "断网建的")
+            pageA.click("#name-add")
+            pageA.wait_for_selector(".toast", timeout=6000)
+            toasts = pageA.eval_on_selector_all(".toast", "els => els.map(e => e.textContent)")
+            check("断网新建 → 明确提示（必须在线）",
+                  any("新建失败" in t for t in toasts), str(toasts))
+            check("断网时列表**不本地生效**（行数没变）",
+                  [r["name"] for r in row_colors(pageA)] == saved, str(saved[:3]))
+            pageA.unroute("**/api/nicknames**")
+
+            for page, errs, who in ((pageA, errsA, "A"), (pageB, errsB, "B"), (pageC, errsC, "C")):
+                check(f"{who} 页面无 JS 运行时错误", errs == [], str(errs[:2]))
+            browser.close()
+
+        # ── 回退开关：nickname.enabled=false ────────────────────────────
+        section("G'' 开关关闭（nickname.enabled=false）：回到本机老路径，页面照常")
+        on.stop()
+        off.start()
+        print(f"  测试实例（开关关）：{off.base}")
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch()
+            ctx = browser.new_context(viewport={"width": 1280, "height": 900})
+            page, errs = open_page(ctx, off.base)
+            check("/api/config 不含 nickname_enabled（字段缺失 = false）",
+                  page.evaluate("() => !!state.config.nickname_enabled") is False)
+            check("FMNickResolver 报告「未启用」（前端走老路径）",
+                  page.evaluate("() => FMNickResolver.current().enabled") is False)
+            combo = combo_state(page)
+            check("发送区回到本机名字（默认「我」）", combo["label"] == "我", combo["label"])
+            hash_dot = page.evaluate("() => nickColor('我')")
+            check("老路径的颜色仍是本地哈希色（逐像素回退）",
+                  eq_hex_vs_rgb(hash_dot, combo["swatch"]), f"{combo['swatch']} vs {hash_dot}")
+            go_settings(page)
+            check("设置页仍是本机昵称列表（老 UI 可用）", row_colors(page)[0]["name"] == "我",
+                  str(row_colors(page)))
+            go_home(page)      # ⚠ #content 在 #page-home 里，设置页上是 hidden 的：不切回来 fill 必定 12s 超时
+            page.fill("#content", "开关关闭时照常发消息")
+            page.click("#btn-send")
+            page.wait_for_timeout(600)
+            check("开关关闭时仍能发消息", len(msg_colors(page)) >= 1, str(msg_colors(page)[-1:]))
+            check("开关关闭时页面无 JS 错误", errs == [], str(errs[:2]))
+            shot(page, "11-disabled-fallback")
+            browser.close()
+        off.stop()
+
+        # ── 库里的颜色全是逻辑色 ID（grep 不到 HEX）──────────────────────
+        section("★ 落地检查：库里只有逻辑色 ID")
+        conn = sqlite3.connect(f"file:{on.db}?mode=ro", uri=True)
+        try:
+            cols = [r[0] for r in conn.execute("SELECT color FROM nicknames")]
+            shapes = {re.sub(r"\d+", "NN", c) for c in cols}
+        finally:
+            conn.close()
+        check("nicknames.color 全是 color_NN 形状（无 HEX / 无 gray）",
+              shapes <= {"color_NN"}, str(sorted(shapes)))
+
+    except BaseException as e:                    # 用例自己抛异常（超时 / 崩）也要把汇总行打出来：
+        print(traceback.format_exc())             # Ctrl-C 照样走 finally，不留下孤儿实例
+        if not isinstance(e, KeyboardInterrupt):
+            check(f"★ 用例执行未意外中断（{type(e).__name__}）", False, str(e).strip().splitlines()[0][:160])
+
+    finally:
+        released = on.stop() and off.stop()          # 实例是 start_new_session 起的，必须确认端口真放掉了
+        if not released:
+            print("  ⚠ 测试实例没能在 5s 内释放端口（18899 / 18897），请自查是否还有残留进程")
+        if not args.keep:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    bad = [r for r in results if not r[1]]
+    print(f"\n═══ 结果：{len(results) - len(bad)}/{len(results)} 通过 ═══")
+    if bad:
+        print("失败项：")
+        for n, _, d in bad:
+            print(f"  ❌ {n}   {d}")
+    if shots:
+        print("截图：")
+        for p in shots:
+            print(f"  {p}")
+    print(f"临时目录：{tmp}")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

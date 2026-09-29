@@ -9,6 +9,7 @@ using System.Windows.Media;
 using System.Windows.Navigation;
 using System.Windows.Threading;
 using FamilyAgent.Core.Diagnostics;
+using FamilyAgent.Core.Nicknames;
 using Microsoft.Web.WebView2.Core;
 // WinForms 只借用它的 Screen（问「当前显示器的工作区是多少物理像素」）——
 // 与 App.xaml.cs / FallbackNotifier.cs 一样用别名，避免和 WPF 的同名类型打架。
@@ -143,6 +144,16 @@ public partial class WebHostWindow : Window
     public Func<IReadOnlyList<(JsonElement Message, int AutoClose)>>? ReplaySource { get; set; }
 
     /// <summary>
+    /// 共享昵称状态的来源（App 注入，照 <see cref="ReplaySource"/> 的写法）。
+    ///
+    /// 页面（尤其设置视图）要显示「当前昵称 + 色点 + 列表」，而这些数据的权威在
+    /// Core 的 <c>NicknameService</c> 里（App 持有）—— 壳只在页面就绪 / 进设置视图时
+    /// 来这里取一份推过去（docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4 的 <c>host.nickname</c>）。
+    /// 为 null 或返回 null = 昵称还没接进来（推不了，页面走既有路径）。
+    /// </summary>
+    public Func<NicknameService?>? NicknameSource { get; set; }
+
+    /// <summary>
     /// WebView2 这条腿是不是**确定**不可用（缺 Runtime，已退到 WPF 提示页）。
     /// 宿主据此把这条消息直接交给原生通知回落，而不是白等页面就绪。
     /// </summary>
@@ -242,7 +253,10 @@ public partial class WebHostWindow : Window
         {
             Bridge.PostMode();
             if (mode == "settings")
+            {
                 PushRuntime();       // 设置视图要读的运行时信息（版本 / 路径 / 自启…）
+                PushNicknamesFromSource();
+            }
             return;
         }
 
@@ -256,6 +270,33 @@ public partial class WebHostWindow : Window
     /// 需求：界面上要能直接看到版本号，省得再出现「跑的是哪一版」的困惑。
     /// </summary>
     public void PushRuntime() => Bridge.PostRuntime(_runtimeVersion);
+
+    /// <summary>
+    /// 把共享昵称的**整份状态**推给页面（<c>host.nickname</c>，docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4）。
+    ///
+    /// 一趟给全：当前选用（<c>nickname_id</c> 为空 = 灰临时）/ 全量活跃昵称 / 是否可用 /
+    /// 离线原因 / 一次性提示。载荷里**只有逻辑色 ID**（<c>color_0x</c> / <c>gray</c>），
+    /// 一个 HEX 都没有 —— 显示色由页面自己按主题算（§4.4）。
+    /// </summary>
+    public void PushNickname(NicknameService nicknames) => Bridge.PostNickname(nicknames);
+
+    /// <summary>
+    /// 从 <see cref="NicknameSource"/> 取一份推过去；还没接进来（Source 为空）时静默跳过 ——
+    /// 页面拿不到 <c>host.nickname</c> 时会走今天的本地昵称路径，行为与改造前一致。
+    /// </summary>
+    private void PushNicknamesFromSource()
+    {
+        try
+        {
+            var svc = NicknameSource?.Invoke();
+            if (svc is not null)
+                PushNickname(svc);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("推送昵称给页面失败（不影响其它推送）：" + ex.Message);
+        }
+    }
 
     /// <summary>连接状态变化 → 转给页面（顶栏状态点）。</summary>
     public void SetConnection(bool connected, string detail)
@@ -402,6 +443,7 @@ public partial class WebHostWindow : Window
         Bridge.PostMode();
         if (_shellMode == "settings")
             PushRuntime();          // 首屏就停在设置视图时，把它要的运行时信息一起给全
+        PushNicknamesFromSource();  // 昵称整份状态（弹窗右侧上色 + 设置页昵称块都要）
         FlushQueued();
 
         // ★ Phase 2：页面就绪后补齐「还没显示过」的消息（含**进程重启前**遗留的）。
@@ -473,7 +515,10 @@ public partial class WebHostWindow : Window
             {
                 Bridge.PostMode();
                 if (_shellMode == "settings")
+                {
                     PushRuntime();
+                    PushNicknamesFromSource();
+                }
                 return;
             }
 
@@ -593,7 +638,10 @@ public partial class WebHostWindow : Window
             // 已经在本地面上了：只把状态刷一遍，不重新导航（会丢状态、闪白）
             Bridge.PostMode();
             if (_shellMode == "settings")
+            {
                 PushRuntime();
+                PushNicknamesFromSource();
+            }
             return;
         }
 

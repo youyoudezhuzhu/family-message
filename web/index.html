@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.16.0">
-<link rel="stylesheet" href="static/style.css?v=0.16.0">
-<link rel="stylesheet" href="static/shell.css?v=0.16.0">
+<link rel="stylesheet" href="static/tokens.css?v=0.17.0">
+<link rel="stylesheet" href="static/style.css?v=0.17.0">
+<link rel="stylesheet" href="static/shell.css?v=0.17.0">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -387,20 +387,24 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
         </div>
       </section>
 
-      <section class="card">
+      <section class="card" id="card-nicknames">
         <div class="card__head">
-          <h3 class="card__title">发送昵称</h3>
+          <h3 class="card__title">昵称</h3>
         </div>
         <p class="setting-group__desc">
-          昵称只是显示名称，不是登录账号。同一个昵称会被当成同一个人 —— 消息前面的颜色标记也按昵称分配，换浏览器要重新设置。
+          昵称和颜色由 NAS 统一管理，所有设备共用同一份：改名、重新分配颜色、删除都是全局操作，
+          正在用这个名字的机器会一起变。而「我现在用哪个」只存在这个浏览器里 —— 换浏览器要再选一次，
+          没选也能发消息（显示为灰色的「默认用户」）。
         </p>
         <div class="row row--end">
           <div class="field grow">
             <label class="field-label" for="name-new">新昵称</label>
-            <input class="text-input" id="name-new" placeholder="例如：妈妈" maxlength="16">
+            <input class="text-input" id="name-new" placeholder="例如：妈妈" maxlength="32">
           </div>
           <button class="btn btn--primary" id="name-add">添加</button>
         </div>
+        <p class="nick-note" id="nick-quota" hidden></p>
+        <div class="nick-conflict" id="nick-conflict" hidden></div>
         <div id="names-list" style="margin-top:var(--spacing-md)"></div>
       </section>
     </section>
@@ -548,8 +552,10 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 </div>
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<script src="static/chat.js?v=0.16.0"></script>
-<script src="static/shell.js?v=0.16.0"></script>
-<script src="static/app.js?v=0.16.0"></script>
+<!-- nickcolor.js：逻辑色 ID → 显示色（§4.4 映射表），chat.js / shell.js / app.js 共用 -->
+<script src="static/nickcolor.js?v=0.17.0"></script>
+<script src="static/chat.js?v=0.17.0"></script>
+<script src="static/shell.js?v=0.17.0"></script>
+<script src="static/app.js?v=0.17.0"></script>
 </body>
 </html>

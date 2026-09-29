@@ -23,8 +23,8 @@
        chat.js     ← web/static/chat.js（群聊气泡组件，两端同一份）
        pc.js       ← 本页表现层
      ═══════════════════════════════════════════════════════════════════ -->
-<link rel="stylesheet" href="tokens.css?v=0.16.0">
-<link rel="stylesheet" href="pc.css?v=0.16.0">
+<link rel="stylesheet" href="tokens.css?v=0.17.0">
+<link rel="stylesheet" href="pc.css?v=0.17.0">
 </head>
 <body>
 
@@ -189,12 +189,13 @@
         <h2 class="card__title">本机</h2>
         <p class="card__sub">回复时用的昵称、开机行为与主题。</p>
 
-        <div class="form-row">
+        <div class="form-row" id="legacy-name-row">
           <label class="field-label" for="set-reply-name">回复昵称</label>
           <input class="input" id="set-reply-name" type="text" autocomplete="off"
                  list="set-reply-names" placeholder="爸爸">
           <datalist id="set-reply-names"></datalist>
-          <span class="field-support">群聊里认昵称不认设备：昵称就是这条消息在家人眼里的署名。</span>
+          <span class="field-support">群聊里认昵称不认设备：昵称就是这条消息在家人眼里的署名。
+            共享昵称生效时这一项由下面的「共享昵称」块接管（那才是全局统一的名字）。</span>
         </div>
 
         <div class="form-row">
@@ -216,6 +217,49 @@
             <svg class="icon icon--xs select__chevron" aria-hidden="true"><use href="#i-chevron-down"/></svg>
           </span>
         </div>
+      </div>
+
+      <!-- ══ 共享昵称（NAS 全局）═════════════════════════════════════════════
+           只在本机连上服务端、且服务端启用了共享昵称（host.nickname.available）时显示。
+           规格：docs/NICKNAME-SYSTEM-PLAN.md §3.3 / §5.2 / §7 Phase 4。
+           ★ 这里**没有「修改本机昵称」输入框**：PC 不拥有昵称，只有「我当前用谁的名义」。
+             改名字 / 换颜色 / 删除都是**全局操作**（影响所有使用者）；离线时那四个入口
+             一律置灰并明示原因（不排队、不落 pending、重连不补发）。
+           「选用」= 纯粹本地动作（唯一能离线的）。 -->
+      <div class="card" id="nick-card" hidden>
+        <h2 class="card__title">共享昵称</h2>
+        <p class="card__sub">昵称由 NAS 统一管理、全局共享：改名字 / 换颜色 / 删除会影响所有在用的机器。
+          「选用」只影响这台电脑。</p>
+
+        <div class="nick-current">
+          <span class="nick-dot nick-dot--lg" id="nick-cur-dot" aria-hidden="true"></span>
+          <span class="nick-current__name" id="nick-cur-name">—</span>
+          <span class="chip" id="nick-cur-state">—</span>
+          <span class="bar__spacer"></span>
+          <button class="btn btn--secondary btn--sm" id="nick-refresh-btn" type="button">刷新列表</button>
+        </div>
+
+        <p class="field-support is-warn" id="nick-offline-reason" hidden></p>
+
+        <div class="form-row">
+          <label class="field-label" for="nick-new-name">新建共享昵称</label>
+          <div class="field-inline">
+            <input class="input" id="nick-new-name" type="text" autocomplete="off"
+                   maxlength="32" placeholder="例如：妈妈">
+            <button class="btn btn--primary" id="nick-create-btn" type="button">新建</button>
+          </div>
+          <span class="field-support">最多 32 个字符。重名会被拒绝 —— 这时可以直接「选用」已有的那条。</span>
+        </div>
+
+        <div class="nick-list" id="nick-list"></div>
+        <p class="field-support" id="nick-quota"></p>
+
+        <div class="hint" id="nick-conflict" hidden>
+          <span id="nick-conflict-text"></span>
+          <button class="btn btn--secondary btn--sm" id="nick-conflict-use" type="button">直接选用它</button>
+        </div>
+
+        <p class="hint" id="settings-nick-hint" role="status" aria-live="polite"></p>
       </div>
 
       <!-- 版本与运行信息 -->
@@ -261,7 +305,7 @@
   </div>
 </section>
 
-<script src="chat.js?v=0.16.0"></script>
-<script src="pc.js?v=0.16.0"></script>
+<script src="chat.js?v=0.17.0"></script>
+<script src="pc.js?v=0.17.0"></script>
 </body>
 </html>

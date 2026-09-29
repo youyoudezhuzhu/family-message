@@ -33,6 +33,11 @@ _DEFAULTS: dict = {
         "redirect_url": "http://homeassistant.local:8123",
         "oauth_device_id": "",
     },
+    # ── 共享昵称（docs/NICKNAME-SYSTEM-PLAN.md §4.3 / §7）─────────────
+    # enabled 是**跨阶段的全局开关**：默认 false —— 本阶段（Phase 1）只落数据层，
+    # 一个接口都不注册、/api/config 一个字段都不加，现有功能逐字不变；
+    # Phase 2 做完 API + 广播后由部署方打开它（关掉即回到今天的行为）。
+    "nickname": {"enabled": False, "color_pool_version": 1},
 }
 
 

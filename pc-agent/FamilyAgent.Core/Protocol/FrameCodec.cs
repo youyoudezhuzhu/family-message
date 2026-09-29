@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Text.Json;
 using FamilyAgent.Core.Protocol.Frames;
 
@@ -154,6 +155,44 @@ public static class FrameCodec
                 frame = new HeartbeatAckFrame { Type = kind, Raw = rawEl };
                 break;
 
+            // ── 共享昵称（§5.4）：整表两条同形，四个增量同形，错误一条 ──
+            case FrameTypes.NicknameListResponse:
+            case FrameTypes.NicknameListSync:
+                frame = new NicknameListFrame
+                {
+                    Type = kind,
+                    Raw = rawEl,
+                    Nicknames = ReadNicknameList(root, "nicknames"),
+                    PoolVersion = ReadInt32(root, "pool_version"),
+                    IsSync = kind == FrameTypes.NicknameListSync,
+                };
+                break;
+
+            case FrameTypes.NicknameCreated:
+            case FrameTypes.NicknameUpdated:
+            case FrameTypes.NicknameColorChanged:
+            case FrameTypes.NicknameRemoved:
+                frame = new NicknameDeltaFrame
+                {
+                    Type = kind,
+                    Raw = rawEl,
+                    Nickname = ReadNickname(root, "nickname"),
+                    ReleasedColor = ReadString(root, "released_color"),
+                };
+                break;
+
+            case FrameTypes.NicknameError:
+                frame = new NicknameErrorFrame
+                {
+                    Type = kind,
+                    Raw = rawEl,
+                    Request = ReadString(root, "request"),
+                    Code = ReadString(root, "code"),
+                    Message = ReadString(root, "message"),
+                    ExistingNicknameId = ReadInt64OrNull(root, "existing_nickname_id"),
+                };
+                break;
+
             default:
                 frame = null;      // 不认识的 type：原实现落到 switch 之外，什么都不做
                 break;
@@ -192,6 +231,32 @@ public static class FrameCodec
             ? value
             : null;
 
+    private static int ReadInt32(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.Number &&
+        el.TryGetInt32(out var value)
+            ? value
+            : 0;
+
+    /// <summary>取 <c>{"nickname":{…}}</c> 里那条昵称；缺字段 / 类型不对返回 null。</summary>
+    private static NicknameDto? ReadNickname(JsonElement obj, string name) =>
+        obj.TryGetProperty(name, out var el) ? NicknameDto.From(el) : null;
+
+    /// <summary>取 <c>{"nicknames":[…]}</c> 整表；不是数组就当空表（**空表就返回空数组，绝不假造**，§0.9）。</summary>
+    private static IReadOnlyList<NicknameDto> ReadNicknameList(JsonElement obj, string name)
+    {
+        var list = new List<NicknameDto>();
+        if (!obj.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Array)
+            return list;
+
+        foreach (var item in el.EnumerateArray())
+        {
+            var dto = NicknameDto.From(item);
+            if (dto is not null)
+                list.Add(dto);
+        }
+        return list;
+    }
+
     private static bool ReadBool(JsonElement obj, string name) =>
         obj.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
 
@@ -223,4 +288,20 @@ public static class FrameTypes
     public const string ScreenshotResponse = "screenshot_response";
     public const string UnlockResult = "unlock_result";
     public const string Event = "event";
+
+    // ── 共享昵称（docs/NICKNAME-SYSTEM-PLAN.md §5.4）──
+    // 下行：整表两条 + 增量广播四条 + 错误一条
+    public const string NicknameListResponse = "nickname_list_response";
+    public const string NicknameListSync = "nickname_list_sync";
+    public const string NicknameCreated = "nickname_created";
+    public const string NicknameUpdated = "nickname_updated";
+    public const string NicknameRemoved = "nickname_removed";
+    public const string NicknameColorChanged = "nickname_color_changed";
+    public const string NicknameError = "nickname_error";
+    // 上行：五个设备帧**全部是在线操作**（离线时客户端根本不构造请求）
+    public const string NicknameListRequest = "nickname_list_request";
+    public const string NicknameCreateRequest = "nickname_create_request";
+    public const string NicknameRenameRequest = "nickname_rename_request";
+    public const string NicknameReassignColorRequest = "nickname_reassign_color_request";
+    public const string NicknameDeleteRequest = "nickname_delete_request";
 }

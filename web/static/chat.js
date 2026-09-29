@@ -16,8 +16,16 @@
 (function (global) {
   'use strict';
 
-  /* 与 PC 端 / Android 端完全一致的色板（见 docs/DESIGN-TOKENS.md §3）。
-     app.js 里有一份权威实现 nickColor()；这里是同页加载顺序兜底用的等价副本。 */
+  /* ── 昵称颜色（Phase 3 起：颜色由 NAS 决定，这里是**兜底**）──────
+     启用共享昵称时（/api/config 的 nickname_enabled=true），app.js 会挂上
+     window.FMNickResolver，由它按**逻辑色 ID**（NAS 下发）经 static/nickcolor.js 的
+     §4.4 映射表算出头像底 / 头像字色 —— 颜色**不再由名字哈希决定**。
+
+     这套哈希色板只在三种情况下生效（都保留今天的观感）：
+       · nickname.enabled=false（回退开关，§7）
+       · 老消息（改造前入库的，没有 id / 逻辑色快照）
+       · 名字反查不到任何昵称（NAS 上没有这个名字）
+     见 docs/NICKNAME-SYSTEM-PLAN.md §2-C1 / §4.4 / §7 Phase 3。 */
   var NICK_COLORS = [
     '#90CAF9', '#CE93D8', '#80CBC4', '#A5D6A7', '#FFE082', '#FFCC80',
     '#EF9A9A', '#F48FB1', '#9FA8DA', '#80DEEA', '#C5E1A5', '#FFAB91',
@@ -45,6 +53,21 @@
     return String((msg && msg.sender_name) || '').trim();
   }
 
+  /** 头像底 / 头像字色：**单一入口**。
+      先问 app.js 的昵称字典（逻辑色 ID → §4.4 显示色）；它说没有（开关关闭 /
+      老消息 / 未知昵称）才退回哈希色 + 今天那套写死的 0.7 黑字。
+      返回值里 bg 一定是本文件或 nickcolor.js 里的常量，**不会是后端原串**。 */
+  function avatarColors(msg, name) {
+    try {
+      var r = global.FMNickResolver;
+      if (r && typeof r.avatarFor === 'function') {
+        var got = r.avatarFor(msg);
+        if (got && got.bg) return got;
+      }
+    } catch (_) { /* app.js 还没就绪 → 走兜底 */ }
+    return { bg: colorOf(name), fg: null };   // fg=null → CSS 里的默认 0.7 黑字
+  }
+
   /** 这条是不是「我」发的 —— 群聊模型里身份只看昵称 */
   function isOwn(msg, myName) {
     var b = String(myName == null ? '' : myName).trim();
@@ -60,7 +83,9 @@
 
     var el = document.createElement('article');
     el.className = 'chat-row' + (own ? ' chat-row--out' : '');
-    el.style.setProperty('--chat-nick', colorOf(name));
+    var av = avatarColors(msg, name);
+    el.style.setProperty('--chat-nick', av.bg);
+    if (av.fg) el.style.setProperty('--chat-nick-fg', av.fg);
 
     var avatar = document.createElement('span');
     avatar.className = 'chat-avatar';
@@ -125,6 +150,7 @@
     append: append,
     isOwn: isOwn,
     colorOf: colorOf,
+    avatarColors: avatarColors,
     NICK_COLORS: NICK_COLORS,
     className: 'chat-list',
   };

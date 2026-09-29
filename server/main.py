@@ -33,6 +33,7 @@ from config import CONFIG, save_config
 from hub import HUB, DeviceOffline
 from services import devices as dev_svc
 from services import messages as msg_svc
+from services import nicknames as nick_svc
 from services import unlock as unlock_svc
 from services import xiaomi as xiaomi_svc
 
@@ -162,7 +163,7 @@ async def api_login(body: LoginBody, response: Response):
 
 @app.get("/api/config", dependencies=[WebAuth])
 async def api_config():
-    return {
+    out = {
         "auth_required": bool(CONFIG["web"]["password"]),
         "popup_auto_close_seconds": CONFIG["message"]["popup_auto_close_seconds"],
         "public_url": CONFIG["server"]["public_url"],
@@ -171,6 +172,14 @@ async def api_config():
         # 前端据此决定设备操作按钮的可用性（后端仍会再查一遍）
         "permissions": permissions.for_session(),
     }
+    # ── 共享昵称：**只在开关打开时才出现这两个字段** ────────────────────
+    # 前端读 `!!cfg.nickname_enabled`：字段缺失 = false = 完全走今天的哈希路径。
+    # 这样 `nickname.enabled=false` 时 /api/config 的响应**逐字不变**，
+    # 与「开关关闭时现有行为逐字不变」这条硬约束一致（§7 的额外字段只服务 Phase 3）。
+    if CONFIG["nickname"]["enabled"]:
+        out["nickname_enabled"] = True
+        out["color_pool_version"] = nick_svc.COLOR_POOL_VERSION
+    return out
 
 
 # ============================================================
@@ -724,6 +733,224 @@ async def api_events(limit: int = 100):
 
 
 # ============================================================
+# 共享昵称（docs/NICKNAME-SYSTEM-PLAN.md §5 / §7 Phase 2）
+#
+# 三层状态里的**只有第 ① 层**在 NAS 上：共享昵称表（全局对象，没有 owner）。
+# ② 「这个客户端现在用哪个昵称」是客户端本地状态，**服务端没有、也不许有端点**
+#    （所以这里**不实现** GET / PUT /api/web/sender，§5.2）；
+# ③ 消息快照在 messages 行内，读取时绝不 JOIN 本表（§3.4）。
+#
+# ★ 全局开关：`nickname.enabled=false` 时**路由根本不注册、帧不处理、广播不发** ——
+#   现有功能逐字不变（回退手段，§7）。所以下面整块都包在 `if` 里。
+# ============================================================
+NICKNAME_ON = bool(CONFIG["nickname"]["enabled"])
+
+#: 5 个设备上行帧的类型名（§5.4；r2/r3/r4 的旧名一律不作数）
+NICKNAME_FRAME_TYPES = (
+    "nickname_list_request",
+    "nickname_create_request",
+    "nickname_rename_request",
+    "nickname_reassign_color_request",
+    "nickname_delete_request",
+)
+
+
+class _FrameBad(Exception):
+    """设备帧字段缺失/类型不对 —— 只用于回一个 `nickname_error`，不关连接。"""
+
+
+def _nickname_list_frame(kind: str) -> dict:
+    """整表帧：`nickname_list_response`（点对点应答）与 `nickname_list_sync`（广播）同形。
+
+    必须**全量** `status=active`（§5.4：PC 弹窗右侧要显示别人的消息，没有全量就只能哈希）；
+    `pool_version` 让客户端判断自己那份「逻辑色 ID → 显示色」映射表是否落后（§4.3 / §4.4）。
+    """
+    return {
+        "type": kind,
+        "nicknames": nick_svc.list("active"),
+        "pool_version": nick_svc.COLOR_POOL_VERSION,
+    }
+
+
+def _nickname_err_frame(exc: nick_svc.NicknameError, request: str) -> dict:
+    """设备侧的 `nickname_error`（§5.4 下行帧表）。
+
+    `request` 回显发起帧的 type，客户端据此把错误配对回它那份请求；
+    `existing_nickname_id` 只在**创建撞名**时出现（UI 拿它引导「直接选用它」）。
+    """
+    d = exc.to_detail()
+    frame = {"type": "nickname_error", "request": request,
+             "code": d.get("code"), "message": d.get("message")}
+    if d.get("existing_nickname_id") is not None:
+        frame["existing_nickname_id"] = d["existing_nickname_id"]
+    return frame
+
+
+async def _broadcast_nickname(payload: dict) -> None:
+    """昵称广播：**所有在线 `/ws/web` 订阅者 + 所有已连接设备**（§5.4 / §5.6.2）。
+
+    形状照 `_broadcast_message()`（`main.py:319-340`）——注意这里**不排除发起者**：
+    昵称是全局对象，别人的弹窗/列表里也有这个名字，大家都得跟着变。
+
+    ★ **必须在事务提交之后调用**：广播里带的颜色/名字必须是**已落库**的值（§5.6.2 第 1 条）。
+    ★ 载荷里没有任何 owner / 设备字段（连 `device_id` 都没有，§0.7 / §5.4）。
+    """
+    if not CONFIG["nickname"]["enabled"]:
+        return
+    await HUB.broadcast_web(payload)
+    for device_id in list(HUB.devices.keys()):
+        await HUB.send_to_device(device_id, payload)
+
+
+async def handle_nickname_frame(device_id: str, mtype: str, data: dict) -> None:
+    """处理 5 个设备昵称帧（§5.4）。
+
+    · **全部是在线操作**：新建 / 改名 / 删除 / 重新分配颜色（§5.2 完全拒绝离线改昵称）。
+      所以这里一律**直发当前连接**，不落盘、不入 `Outbox`、**不补发** ——
+      昵称帧不进离线队列（§5.4 的限制注）。
+    · 写操作成功后：先回 `nickname_list_response` 给**发起者**（让它对齐整表），
+      再广播增量事件（**提交之后**才广播）。
+    """
+    try:
+        if mtype == "nickname_list_request":
+            await HUB.send_to_device(device_id, _nickname_list_frame("nickname_list_response"))
+            # 有客户端要求整表校正 → 顺手广播一次整表，让所有在看的人/设备一致
+            await _broadcast_nickname(_nickname_list_frame("nickname_list_sync"))
+            return
+
+        if mtype == "nickname_create_request":
+            row = nick_svc.create(data.get("display_name") or "")
+            await HUB.send_to_device(device_id, _nickname_list_frame("nickname_list_response"))
+            await _broadcast_nickname({"type": "nickname_created", "nickname": row})
+            return
+
+        if mtype == "nickname_rename_request":
+            row = nick_svc.rename(_frame_nickname_id(data), data.get("display_name") or "")
+            await HUB.send_to_device(device_id, _nickname_list_frame("nickname_list_response"))
+            await _broadcast_nickname({"type": "nickname_updated", "nickname": row})
+            return
+
+        if mtype == "nickname_reassign_color_request":
+            row = nick_svc.reassign_color(_frame_nickname_id(data))
+            await HUB.send_to_device(device_id, _nickname_list_frame("nickname_list_response"))
+            await _broadcast_nickname({"type": "nickname_color_changed", "nickname": row})
+            return
+
+        if mtype == "nickname_delete_request":
+            out = nick_svc.remove(_frame_nickname_id(data))
+            await HUB.send_to_device(device_id, _nickname_list_frame("nickname_list_response"))
+            await _broadcast_nickname({
+                "type": "nickname_removed",
+                # 软删后的完整行（status='inactive'）—— 按 id 取，绝不按名字反查（§3.4.1）
+                "nickname": nick_svc.get(out["nickname_id"]) or {},
+                "released_color": out["released_color"],
+            })
+            return
+
+    except nick_svc.NicknameError as e:
+        await HUB.send_to_device(device_id, _nickname_err_frame(e, mtype))
+    except _FrameBad as e:
+        # 帧字段不合法（不是业务错误）：回一个 error 帧，**不拖垮整条设备连接**
+        await HUB.send_to_device(device_id, {
+            "type": "nickname_error", "request": mtype,
+            "code": "INVALID_REQUEST", "message": str(e),
+        })
+
+
+def _frame_nickname_id(data: dict) -> int:
+    """从设备帧里取 `nickname_id`：**必须是整数**（§5.1 已定 1），否则回 INVALID_REQUEST。"""
+    try:
+        return int(data.get("nickname_id"))
+    except (TypeError, ValueError):
+        raise _FrameBad("缺少或非法的 nickname_id（必须是整数）")
+
+
+# ── 5 个 HTTP 端点（§5.3）—— 仅在开关打开时注册 ────────────────────────
+if CONFIG["nickname"]["enabled"]:
+
+    class NicknameCreateBody(BaseModel):
+        """请求体**只有** `display_name`：颜色由服务端分配，出现 color 一律忽略（§5.5）。"""
+
+        display_name: str
+
+    class NicknamePatchBody(BaseModel):
+        display_name: str
+
+    def _nickname_fail(exc: nick_svc.NicknameError) -> HTTPException:
+        """业务错误 → HTTP（`status` 用错误类自带的，`detail` 是 `{code, message, …}`，§5.1）。"""
+        return HTTPException(exc.http_status, detail=exc.to_detail())
+
+    @app.get("/api/nicknames", dependencies=[WebAuth])
+    async def api_nicknames(status: str = "active"):
+        """列昵称（默认 active，按 `nickname_id` 升序）。
+
+        ★ **纯读**：空表就返回空数组，**不建行、不分配颜色**（§0.9）——
+        没有共享昵称可选的客户端用灰临时昵称发消息。
+        """
+        try:
+            return {"nicknames": nick_svc.list(status)}
+        except nick_svc.NicknameError as e:
+            raise _nickname_fail(e)
+
+    @app.post("/api/nicknames", dependencies=[WebAuth], status_code=201)
+    async def api_nickname_create(body: NicknameCreateBody):
+        """新建共享昵称 → **201**；撞名 → **409 `NICKNAME_ALREADY_EXISTS`**（带既有 id）。
+
+        ⚠ 302/200 都不是「创建」：撞名**不写库、不分配颜色、不发 `nickname_created`**（§5.6.4）。
+        """
+        try:
+            row = nick_svc.create(body.display_name)
+        except nick_svc.NicknameError as e:
+            raise _nickname_fail(e)
+        await _broadcast_nickname({"type": "nickname_created", "nickname": row})
+        return {"nickname": row}
+
+    @app.patch("/api/nicknames/{nickname_id}", dependencies=[WebAuth])
+    async def api_nickname_patch(nickname_id: int, body: NicknamePatchBody):
+        """改**共享昵称本身**的名字（全局操作）：`nickname_id` 不变、**颜色不变**、历史不变。
+
+        ⚠ 撞名是 **409 `NAME_TAKEN`**（引导「换个名字」），与创建撞名的引导不同（§5.3）。
+        """
+        try:
+            row = nick_svc.rename(nickname_id, body.display_name)
+        except nick_svc.NicknameError as e:
+            raise _nickname_fail(e)
+        await _broadcast_nickname({"type": "nickname_updated", "nickname": row})
+        return {"nickname": row}
+
+    @app.post("/api/nicknames/{nickname_id}/reassign-color", dependencies=[WebAuth])
+    async def api_nickname_reassign(nickname_id: int):
+        """换一个未被任何 active 占用的逻辑色 ID（新色必≠旧色，且未被占用）。
+
+        池满 → 503 `NO_AVAILABLE_COLOR`，**绝不回退到重色 / 哈希**（规格 §11）。
+        """
+        try:
+            row = nick_svc.reassign_color(nickname_id)
+        except nick_svc.NicknameError as e:
+            raise _nickname_fail(e)
+        await _broadcast_nickname({"type": "nickname_color_changed", "nickname": row})
+        return {"nickname": row}
+
+    @app.delete("/api/nicknames/{nickname_id}", dependencies=[WebAuth])
+    async def api_nickname_delete(nickname_id: int):
+        """软删（`status='inactive'`）：行永久保留、**颜色立刻回池**。
+
+        广播 `nickname_removed` 额外带 `released_color`（规格 §8 的「释放」要看得见，§5.4）。
+        """
+        try:
+            out = nick_svc.remove(nickname_id)
+        except nick_svc.NicknameError as e:
+            raise _nickname_fail(e)
+        await _broadcast_nickname({
+            "type": "nickname_removed",
+            "nickname": nick_svc.get(out["nickname_id"]) or {},
+            "released_color": out["released_color"],
+        })
+        return {"ok": True, "nickname_id": out["nickname_id"],
+                "released_color": out["released_color"]}
+
+
+# ============================================================
 # WebSocket：Device Agent
 # ============================================================
 @app.websocket("/ws/device/{device_id}")
@@ -946,6 +1173,12 @@ async def handle_device_message(device_id: str, data: dict) -> None:
     elif mtype == "event":
         db.log_event(device_id, str(data.get("kind", "event")), str(data.get("detail", ""))[:500])
 
+    elif mtype in NICKNAME_FRAME_TYPES:
+        # 共享昵称管理帧（§5.4）——**开关关闭时整块不处理**：这五种 type 走完所有
+        # elif 都不匹配 → 与今天「未知帧被忽略」完全一样（现有行为逐字不变）。
+        if CONFIG["nickname"]["enabled"]:
+            await handle_nickname_frame(device_id, mtype, data)
+
     elif mtype == "device_info":
         db.execute(
             "UPDATE devices SET platform=COALESCE(NULLIF(?,''), platform), "
@@ -974,6 +1207,10 @@ async def ws_web(websocket: WebSocket):
     await HUB.add_web(websocket)
     try:
         await websocket.send_json({"type": "ready", "server_time": db.now_iso()})
+        # 新客户端连上 → 整表下发一次（§5.4：广播管实时、整表同步管一致性）。
+        # 开关关闭时一个字节都不发（现有行为逐字不变）。
+        if CONFIG["nickname"]["enabled"]:
+            await _broadcast_nickname(_nickname_list_frame("nickname_list_sync"))
         while True:
             data = await websocket.receive_json()
             if data.get("type") == "ping":

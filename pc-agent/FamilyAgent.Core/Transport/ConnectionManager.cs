@@ -100,6 +100,18 @@ public sealed class ConnectionManager : ICommandChannel, ISyncConnection
     /// 校验与应答都不需要桌面，headless（登录界面）下同样能走通。</summary>
     public event Action<UnlockRequestFrame>? UnlockRequested;
 
+    /// <summary>
+    /// 收到**共享昵称**相关的一帧（docs/NICKNAME-SYSTEM-PLAN.md §5.4）。
+    ///
+    /// 载荷是三类之一：<see cref="NicknameListFrame"/>（整表：<c>nickname_list_response</c> /
+    /// <c>nickname_list_sync</c>）、<see cref="NicknameDeltaFrame"/>（四个增量广播）、
+    /// <see cref="NicknameErrorFrame"/>（<c>nickname_error</c>）。
+    ///
+    /// 为什么合成**一个**事件而不是七个：昵称在客户端只有一份消费者（<c>Nicknames.NicknameService</c>），
+    /// 七条对称的事件只会让宿主多写七行订阅；连接层的职责只是「把这三类帧交给它」。
+    /// </summary>
+    public event Action<CoreFrame>? NicknameFrameReceived;
+
     public event Action<string>? Log;
 
     /// <param name="capabilities">
@@ -468,6 +480,19 @@ public sealed class ConnectionManager : ICommandChannel, ISyncConnection
                 // 心跳回执是「发送链路还活着」的唯一证据
                 heartbeat.NotifyAckReceived();
                 break;
+
+            // ── 共享昵称（§5.4）：整表 / 增量广播 / 错误，三类合成一个事件 ──
+            case NicknameListFrame nicknameList:
+                NicknameFrameReceived?.Invoke(nicknameList);
+                break;
+
+            case NicknameDeltaFrame nicknameDelta:
+                NicknameFrameReceived?.Invoke(nicknameDelta);
+                break;
+
+            case NicknameErrorFrame nicknameError:
+                NicknameFrameReceived?.Invoke(nicknameError);
+                break;
         }
 
         // （收包日志已提前到 switch 之前 —— 见上面的 [WS] RX 行）
@@ -477,6 +502,31 @@ public sealed class ConnectionManager : ICommandChannel, ISyncConnection
 
     /// <summary>发送一条消息。返回 true = 已进入发送流程；false = 当前无连接，已入队。</summary>
     public bool SendOrQueue<T>(T payload, string kind) => _outbox.SendOrQueue(payload, kind);
+
+    /// <summary>
+    /// **直发**一帧：不预判内容、不进 <see cref="Outbox"/>、不落盘、**不补发**。
+    ///
+    /// 为什么需要它（docs/NICKNAME-SYSTEM-PLAN.md §5.4 的限制注 / §7 Phase 4 风险 ②）：
+    /// 昵称的四个管理操作被 r6 定为「**完全拒绝离线**」，而 <see cref="SendOrQueue{T}"/>
+    /// 会在发送失败时入队、并在重连后**静默补发** —— 一次断网时已经被拒的改名
+    /// 就会在重连后悄悄生效，直接违反那条定稿。
+    /// 所以昵称帧走这条直发路径：**离线时根本不构造请求**，调用方拿到 false 就回界面提示。
+    ///
+    /// ⚠ 只用于「丢了也无所谓 / 本来就不该离线做」的帧。消息收发仍走
+    ///   <see cref="SendOrQueue{T}"/>（那条路的重连补发是既有正确行为，别改）。
+    /// </summary>
+    public bool TrySendDirect(object payload, string kind)
+    {
+        var ws = CurrentSocket();
+        if (ws is not { State: WebSocketState.Open })
+        {
+            AgentLog.Write($"[NICK] 无连接，拒绝直发 {kind}（昵称管理要求在线：不排队、不落盘、不补发）");
+            return false;
+        }
+
+        _ = _outbox.SendNowAsync(ws, JsonSerializer.Serialize(payload), kind);
+        return true;
+    }
 
     /// <summary>把积压的消息补发出去（原 <c>FlushOutbox</c>）。</summary>
     public void FlushOutbox() => _outbox.Flush();

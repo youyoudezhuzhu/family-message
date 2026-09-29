@@ -381,6 +381,48 @@ html[data-view="settings"] #v-settings { display: flex; }
 .actions__row--form { justify-content: flex-end; padding-top: var(--spacing-xs); }
 .foot { margin: 0; font: var(--font-caption); color: var(--fluent-color-text-tertiary); text-align: right; }
 
+/* ── 6.1 共享昵称块（docs/NICKNAME-SYSTEM-PLAN.md §4.4 / §7 Phase 4）───────
+   颜色**不在这里写死**：圆点的 background 由 pc.js 用逻辑色 ID 经 §4.4 映射表现算后
+   写进 style —— 所以 CSS 里一个昵称色值都没有（逻辑色 / 显示色分离，r6 第 ④ 条）。 */
+.btn--sm { height: 32px; padding: 0 var(--spacing-md); font: var(--font-caption); }
+
+.nick-current {
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  padding: var(--spacing-md);
+  border: 1px solid var(--fluent-color-border-subtle);
+  border-radius: var(--radius-large);
+  background: var(--fluent-color-surface-secondary);
+}
+.nick-current__name { font: var(--font-body-strong); color: var(--fluent-color-text); }
+
+/* 色点：形状与间距在这里，颜色由 JS 按当前主题算。
+   ⚠ 刻意**不给兜底 background** —— 没算出来时宁可看不见，也不要让人以为那是正常颜色。 */
+.nick-dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: var(--radius-circle); }
+.nick-dot--lg { width: 14px; height: 14px; flex: 0 0 14px; }
+
+.nick-list { display: flex; flex-direction: column; gap: var(--spacing-xs); }
+.nick-row {
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid transparent;
+  border-radius: var(--radius-medium);
+}
+.nick-row--using { border-color: var(--fluent-color-primary); background: var(--fluent-color-surface-secondary); }
+.nick-row__swatch { width: 14px; height: 14px; flex: 0 0 14px; border-radius: var(--radius-circle); }
+.nick-row__input { flex: 1 1 auto; min-width: 0; }
+.nick-row__actions { display: flex; gap: var(--spacing-xs); flex: 0 0 auto; }
+.nick-row__actions .btn { white-space: nowrap; }
+
+.field-support.is-warn { color: var(--fluent-color-warning); }
+
+/* 撞名引导（「已存在，直接选用它？」）：[hidden] 必须显式隐藏 —— display:flex 会盖掉它 */
+#nick-conflict {
+  display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;
+  min-height: 0; color: var(--fluent-color-warning);
+}
+#nick-conflict[hidden] { display: none; }
+#nick-conflict:empty { display: none; }
+
 /* ── 7. 窄屏 / 矮屏（PC 窗口会被拖小）──────────────────────── */
 @media (max-width: 900px) {
   .bar { padding: 0 var(--spacing-sm) 0 var(--spacing-md); }

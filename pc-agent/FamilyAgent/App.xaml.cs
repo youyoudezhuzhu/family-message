@@ -11,6 +11,7 @@ using FamilyAgent.Core.Devices;
 using FamilyAgent.Core.Diagnostics;
 using FamilyAgent.Core.Events;
 using FamilyAgent.Core.Messaging;
+using FamilyAgent.Core.Nicknames;
 using FamilyAgent.Core.Protocol;
 using FamilyAgent.Core.Protocol.Frames;
 using FamilyAgent.Core.Transport;
@@ -63,6 +64,21 @@ public partial class App : Application
 
     /// <summary>命令派发（Phase 3）：截图 / 关机 / 解锁的应答统一由 Core 发出。</summary>
     private CommandRouter? _router;
+
+    /// <summary>
+    /// 共享昵称在本机的**全部逻辑**（docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4）。
+    ///
+    /// 三条口径（§5.2 / r6）：
+    /// <list type="bullet">
+    ///   <item>本机「当前用谁的名义」是**纯本地状态**（落 <c>nickname.json</c>），
+    ///     整表由服务端经设备连接推来 —— PC 不「拥有」任何昵称。</item>
+    ///   <item>首次运行**不注册任何东西**（只发 <c>nickname_list_request</c> 拉整表），
+    ///     界面显示灰临时昵称（本机名 + 逻辑色 <c>gray</c>），NAS 一行都不多。</item>
+    ///   <item>四个管理操作（新建 / 改名 / 删除 / 重新分配颜色）**必须在线**：
+    ///     离线时直接拒绝并说明原因，不排队、不落 pending、重连不补发。</item>
+    /// </list>
+    /// </summary>
+    private NicknameService? _nicknames;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -220,6 +236,23 @@ public partial class App : Application
         _messaging.DisplayFallbackRequired += OnDisplayFallbackRequired;
         _fallback = new FallbackNotifier(() => _tray, action => Dispatcher.Invoke(action));
         AgentLog.Write($"[MSG] 消息生命周期已搬进 Core：本地消息库={_messaging.Store.Describe()}");
+
+        // ── 共享昵称（docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4）──────────────
+        // 走**同一条设备连接**（§5.4：不新增 HTTP 依赖），但昵称帧走**直发**：
+        // 不进 Outbox、不落盘、不补发 —— 否则一次「断网时被拒的改名」会在重连后
+        // 被 Outbox 静默补发，违反 r6「完全拒绝离线改昵称」。
+        //
+        // 本机「当前用谁的名义」落 %APPDATA%\FamilyAgent\nickname.json（与 config.json 同目录，
+        // 独立文件 —— 见 NicknameStore 的说明：塞进配置会被「配置损坏回默认」那条路径清掉）。
+        // 默认名取 DeviceName（Normalize 后 = ComputerName）；灰临时昵称就用它。
+        _nicknames = new NicknameService(
+            new ConnectionNicknameTransport(Core),
+            new JsonNicknameStore(),
+            Config.DeviceName);
+        Core.NicknameFrameReceived += OnNicknameFrameReceived;
+        _nicknames.Changed += OnNicknamesChanged;
+        AgentLog.Write($"[NICK] 共享昵称已接入：本机默认名={Config.DeviceName} "
+                     + $"缓存文件={JsonNicknameStore.DefaultPath}（首次运行不注册，只拉整表）");
 
         // ── Windows 会话状态上报（远程解锁 Phase 1）──────────────────────
         // 在这里（Core 已建好、连接还没开始）启动最合适：第一次心跳就能带
@@ -414,6 +447,12 @@ public partial class App : Application
         host.Bridge.ConfigSaveRequested += OnSaveConfigRequested;
         host.Bridge.SettingsRequested += ShowSettings;
         host.Bridge.QuitRequested += ExitApp;
+
+        // 共享昵称（§7 Phase 4）：
+        //  · 页面 → 宿主：六个 web.nickname_* 由桥归一成一次本事件
+        //  · 宿主 → 页面：页面就绪 / 进设置视图时按需推整份状态（NicknameSource）
+        host.Bridge.NicknameRequested += OnNicknameRequested;
+        host.NicknameSource = () => _nicknames;
 
         return host;
     }
@@ -854,6 +893,12 @@ public partial class App : Application
             try { Core.ReportSessionState(); }
             catch (Exception ex) { AgentLog.Write("上线时上报会话状态失败：" + ex.Message); }
 
+            // 共享昵称（§7 Phase 4）：重连后**只做一件事** —— 发 nickname_list_request 拉整表校正。
+            // 没有待补发的改名、没有 synced/pending 状态机（r6 把整套离线 pending 昵称同步删了）。
+            // 整表回来后 NicknameService 会自己校正「本机选用的那条还在不在」（不在 → 回退灰临时 + 提示）。
+            try { _nicknames?.OnConnected(); }
+            catch (Exception ex) { AgentLog.Write("[NICK] 上线后拉昵称整表失败：" + ex.Message); }
+
             // Phase 2：把「已决策但没交给传输层」的 ACK 补发一遍
             // （交给传输层时抛过异常的那种；断线期间入队的那部分由 Outbox 自己补发）
             try
@@ -871,6 +916,157 @@ public partial class App : Application
             if (_tray is not null)
                 _tray.Text = connected ? "家庭消息 Agent · 已连接" : "家庭消息 Agent · 未连接";
         });
+    }
+
+    // ---------------- 共享昵称（docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4）----------------
+
+    /// <summary>
+    /// Core 收到一帧昵称相关的下行帧（整表应答 / 四个增量广播 / <c>nickname_error</c>）。
+    ///
+    /// 昵称在客户端**只有一份消费者**（<see cref="NicknameService"/>），所以这里转发一次：
+    /// 服务会更新整表 / 本机选用，并抛 <c>Changed</c> → <see cref="OnNicknamesChanged"/>
+    /// 把新的整份状态经桥推给页面（**免刷新重画**）。
+    ///
+    /// <c>nickname_error</c> 额外单独推一条 <c>host.nickname_error</c> ——
+    /// 页面靠它把错误配对回自己发起的那次请求（撞名时带 <c>existing_nickname_id</c>，
+    /// 引导「已存在，直接选用它？」）。
+    /// </summary>
+    private void OnNicknameFrameReceived(CoreFrame frame)
+    {
+        var svc = _nicknames;
+        if (svc is null)
+            return;
+
+        try
+        {
+            svc.OnFrame(frame);      // 认识的帧返回 true；不认识的原样忽略
+            if (frame is NicknameErrorFrame err)
+            {
+                RunOnUi(() => _host?.Bridge.PostNicknameError(
+                    err.Request, err.Code, err.Message, err.ExistingNicknameId));
+            }
+        }
+        catch (Exception ex)
+        {
+            // 一帧坏数据绝不能把连接循环带崩
+            AgentLog.Write("[NICK] 处理昵称帧失败（连接不受影响）：" + ex);
+        }
+    }
+
+    /// <summary>整表 / 本机选用 / 可用性有变化 → 把整份状态推给页面（页面免刷新重画）。</summary>
+    private void OnNicknamesChanged()
+    {
+        var svc = _nicknames;
+        if (svc is null)
+            return;
+        RunOnUi(() => _host?.PushNickname(svc));
+    }
+
+    /// <summary>
+    /// 页面发来的一次昵称请求（<c>web.nickname_*</c>）。**由桥校验过帧形状**后才到这里。
+    ///
+    /// 分派语义（§5.2 / §5.4）：
+    /// <list type="bullet">
+    ///   <item><c>select</c>：**纯本地**动作，一个帧都不发，因此**离线也能做**。</item>
+    ///   <item><c>refresh</c> / <c>create</c> / <c>rename</c> / <c>reassign_color</c> / <c>delete</c>：
+    ///     全部要求在线 —— 服务离线时 <see cref="NicknameService"/> 直接拒绝并给出中文原因，
+    ///     不排队、不落盘、不补发。</item>
+    /// </list>
+    ///
+    /// ⚠ 这里回的是「**请求被接受了吗**」，不是「改成功了吗」：真正的成功判据是服务端随后回的
+    ///   那一帧（整表变了 / <c>host.nickname_error</c>）。宿主**绝不乐观地宣布成功**。
+    /// </summary>
+    private void OnNicknameRequested(NicknameRequest req)
+    {
+        var svc = _nicknames;
+        if (svc is null || req is null)
+            return;
+
+        var bridge = _host?.Bridge;
+        try
+        {
+            switch (req.Kind)
+            {
+                case "refresh":
+                {
+                    var sent = svc.RequestList();
+                    bridge?.PostNicknameResult("refresh", sent, !sent,
+                        sent ? "正在向服务端刷新昵称列表…" : NicknameService.OfflineMessage);
+                    break;
+                }
+
+                case "select":
+                {
+                    // 桥已把「显式传 null（= 切回灰临时）」和「根本没带字段（坏帧，已被拦）」分开。
+                    // 这里 nickname_id <= 0 只可能是显式 null 的落点 → 交给 Select(null)。
+                    long? id = req.NicknameId > 0 ? req.NicknameId : (long?)null;
+                    var r = svc.Select(id);
+                    bridge?.PostNicknameResult("select", r.Accepted, r.Offline, r.Message,
+                                               r.ExistingNicknameId);
+                    break;
+                }
+
+                case "create":
+                {
+                    var r = svc.Create(req.DisplayName);
+                    bridge?.PostNicknameResult("create", r.Accepted, r.Offline, r.Message);
+                    break;
+                }
+
+                case "rename":
+                {
+                    var r = svc.Rename(req.NicknameId, req.DisplayName);
+                    bridge?.PostNicknameResult("rename", r.Accepted, r.Offline, r.Message);
+                    break;
+                }
+
+                case "reassign_color":
+                {
+                    var r = svc.ReassignColor(req.NicknameId);
+                    bridge?.PostNicknameResult("reassign_color", r.Accepted, r.Offline, r.Message);
+                    break;
+                }
+
+                case "delete":
+                {
+                    var r = svc.Delete(req.NicknameId);
+                    bridge?.PostNicknameResult("delete", r.Accepted, r.Offline, r.Message);
+                    break;
+                }
+
+                default:
+                    AgentLog.Write($"[NICK] 桥送来了不认识的昵称操作（{req.Kind}，已忽略）");
+                    return;
+            }
+
+            // 选用是纯本地动作（服务端不会回帧）→ 主动推一次，页面立刻重画；
+            // 其余五个的整表变化由 OnNicknamesChanged 负责，这里不重复推。
+            if (req.Kind == "select")
+                _host?.PushNickname(svc);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write($"[NICK] 处理页面昵称请求 {req.Kind} 出错（已忽略）：" + ex);
+        }
+    }
+
+    /// <summary>
+    /// 把 <paramref name="action"/> 切到 UI 线程执行（WinForms 托盘 / WPF 窗口都只认 UI 线程）。
+    /// 昵称帧来自连接的接收循环（后台线程），而桥的推送最终会碰 WebView2 —— 必须切回去。
+    /// </summary>
+    private void RunOnUi(Action action)
+    {
+        try
+        {
+            if (Dispatcher.CheckAccess())
+                action();
+            else
+                Dispatcher.Invoke(action);
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("[NICK] UI 线程调度失败（已忽略）：" + ex.Message);
+        }
     }
 
     /// <summary>

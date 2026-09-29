@@ -54,17 +54,36 @@ const BASE = (() => {
 })();
 
 const $ = (id) => document.getElementById(id);
+/* 统一的 API 调用。错误分两种形状（Phase 3 起要区分机器可读的 `code`）：
+   · 字符串 detail（老接口）：直接当 message；
+   · 对象 detail（昵称接口：{code, message, ...}）：message 给人看，code 给代码分支用
+     （例如 409 NICKNAME_ALREADY_EXISTS → UI 引导「直接选用它」）。 */
 const api = async (path, opts = {}) => {
-  const res = await fetch(BASE + path, {
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    ...opts,
-  });
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      ...opts,
+    });
+  } catch (e) {
+    // fetch 本身失败 = 断网 / 服务不可达：给一个明确的「必须在线」提示（§4 硬约束）
+    const err = new Error('连不上服务器');
+    err.code = 'OFFLINE';
+    throw err;
+  }
   if (res.status === 401) { askPassword(); throw new Error('需要访问口令'); }
   if (!res.ok) {
     let detail = res.statusText;
     try { detail = (await res.json()).detail || detail; } catch (_) {}
-    throw new Error(detail);
+    const e = new Error(
+      typeof detail === 'string' ? detail : (detail && detail.message) || res.statusText);
+    if (detail && typeof detail === 'object') {
+      e.code = detail.code;
+      e.data = detail;
+      if (detail.existing_nickname_id != null) e.existing_nickname_id = detail.existing_nickname_id;
+    }
+    throw e;
   }
   return res.json();
 };
@@ -114,6 +133,9 @@ function applyMode(pref, persist) {
     if (bg) meta.setAttribute('content', bg);
   }
   if (persist) { try { localStorage.setItem(MODE_KEY, pref); } catch (_) {} }
+  // 昵称圆点 / 头像色是**按主题算**的（§4.4 规则 1）→ 换主题要按新主题重画一遍。
+  // （nickEnabled 由 bootConsole 设好；开机时这里还是 false，不做事。）
+  if (nickEnabled) redrawNicks();
 }
 
 // 系统主题变化时，只有「跟随系统」需要跟着变
@@ -381,7 +403,17 @@ function buildSelect(host, items, value, onChange) {
 
   const label = document.createElement('span');
   label.textContent = chosen ? chosen.label : '（没有可选项）';
-  if (chosen && chosen.color) label.style.color = chosen.color;
+  /* §4.4 规则 4：**不用色值当字色** —— 昵称颜色（逻辑色 ID 经 §4.4 算出来的显示色）
+     在「已选项」这里走「色块 + 常规字色」。item.swatch 只有共享昵称路径会传
+     （老路径 item.color 是本地哈希色，保持原来的彩色字 = 逐像素回退）。 */
+  if (chosen && chosen.color && chosen.swatch) {
+    const sw = document.createElement('span');
+    sw.className = 'combo__swatch';
+    sw.style.background = chosen.color;      // 值来自 §4.4 映射表，绝不透传后端原串
+    btn.appendChild(sw);
+  } else if (chosen && chosen.color) {
+    label.style.color = chosen.color;
+  }
 
   btn.append(label, icon('chevron-down'));
   const chev = btn.querySelector('svg');
@@ -444,7 +476,12 @@ document.addEventListener('click', () => {
     唯一差别是实时事件源 —— 由 connectWS() 自己判断，见下面的守卫。 */
 async function bootConsole() {
   state.config = await api('/api/config');
-  renderNameSelectors();
+  // 共享昵称开关：字段缺失 = false = 完全走今天的本地哈希路径（§7 回退）
+  nickEnabled = !!(state.config && state.config.nickname_enabled);
+  nickPoolVersion = (state.config && state.config.color_pool_version) || 0;
+  dropLegacyNamesKey();                       // 旧 key 只删不读（不再有第二真相源）
+  if (nickEnabled) await loadNicknames();      // 拉整表（空库 → 空数组，服务端不建任何行）
+  redrawNicks();
 
   await Promise.all([loadDevices(), loadMessages(), loadVersion(), loadXiaomi()]);
   connectWS();
@@ -875,11 +912,14 @@ async function sendMessage() {
   $('send-hint').textContent = '发送中……';
   try {
     // 群聊模型：不传 targets（没有「发送给」这一步）。字段服务端保留了但会忽略。
+    // nickname_id = 这个浏览器当前选中的共享昵称（null = 灰临时「默认用户」）；
+    // **颜色一律不传**：服务端自己抄昵称当前的颜色、灰临时写常量 'gray'（§5.5 / R2）。
     const r = await api('/api/messages', {
       method: 'POST',
       body: JSON.stringify({
         sender_name: currentSender(),
         content,
+        nickname_id: currentSenderId(),
       }),
     });
     $('content').value = '';
@@ -1081,69 +1121,523 @@ function handleServerFrame(d) {
   } else if (d.type === 'shutdown_sent') {
     const dev = state.devices.find((x) => x.device_id === d.device_id);
     snack(`「${dev ? dev.name : d.device_id}」关机指令已下发`);
+  } else if (d.type === 'nickname_created' || d.type === 'nickname_updated'
+             || d.type === 'nickname_color_changed') {
+    // 三个「一行变了」的增量事件：更新本地缓存 + 重画（**不需要刷新页面**，§5.6.2）
+    upsertNickname(d.nickname);
+  } else if (d.type === 'nickname_removed') {
+    dropNickname(d.nickname);          // 软删：摘缓存；正在用它的人回退灰临时（§11 风险 4）
+  } else if (d.type === 'nickname_list_sync') {
+    // 整表下发（新客户端连上 / 客户端主动请求时服务端推）：直接替换本地缓存，对齐一致性
+    if (typeof d.pool_version === 'number') nickPoolVersion = d.pool_version;
+    applyNicknames(d.nicknames);
   }
 }
 
-/* ── B11. 发送昵称（纯本地；服务端不参与）────────────────────── */
-const NAMES_KEY = 'fm.names';
-const LAST_SENDER_KEY = 'fm.lastSender';
-let names = loadNames();
+/* ── B11. 昵称（Phase 3：共享昵称来自 NAS；开关关闭时回到本机老路径）
+   ─────────────────────────────────────────────────────────────────
+   三层状态（docs/NICKNAME-SYSTEM-SUMMARY.md §2）：
+     ① 共享昵称池  = NAS 的 nicknames 表（唯一权威）—— 本文件只做**本地缓存 + 转发写操作**
+     ② 当前用哪个  = **这个浏览器**本地（localStorage 的 fm.lastSender 存 nickname_id）
+     ③ 消息快照    = 消息行内的 sender_name / sender_nickname_id / sender_color
 
-function loadNames() {
-  try {
-    const raw = localStorage.getItem(NAMES_KEY);
-    if (raw) {
-      const arr = JSON.parse(raw);
-      if (Array.isArray(arr)) {
-        const clean = arr.filter((n) => typeof n === 'string' && n.trim());
-        if (clean.length) return clean;
-      }
-    }
-  } catch (_) { /* 解析失败就回默认 */ }
-  return ['我'];
+   四条硬规矩（施工时不许破）：
+     · **颜色只来自 NAS**：本地只认**逻辑色 ID**（color_01…color_16 / gray），
+       显示色交给 static/nickcolor.js 的 §4.4 映射表按主题算（这里不写任何 HEX 表）；
+     · 四个管理操作（新建 / 改名 / 重新分配颜色 / 删除）**全是全局操作、必须在线**：
+       离线一律失败并在 UI 说明原因，**不排队、不本地生效、不补发**（§4 / §10 已定 3）；
+     · **空库不假造任何昵称**（§0.9）：列表空就是空态 + 引导，服务端也不会懒建；
+     · 本地只存「我选了谁」这一件事（§5.2）：**没有服务端指针**，
+       A 浏览器选了别人，不会改到 B 的界面。
+   ───────────────────────────────────────────────────────────────── */
+const LAST_SENDER_KEY = 'fm.lastSender';       // 值 = nickname_id（数字字符串）；空 = 没选
+const LOCAL_TEMP_NAME = '默认用户';             // 网页端的本地临时昵称（固定中性文案）
+const LOCAL_TEMP_COLOR = 'gray';               // 它的逻辑色 ID（= 服务端常量 LOCAL_TEMP_COLOR_ID）
+const NAME_MAX_LEN = 32;                       // 昵称长度上限：NAS / API / PC / Web 统一 32（§5.5）
+const NICK_MAX_ACTIVE = 16;                    // 活跃上限 = 逻辑色池大小（14 起提示、16 拉闸，§4.3）
+/* 旧 key（本地昵称数组）：Phase 3 起**停止读写**，只在启动时删掉残留。
+   ⚠ 用拼接写法的原因：施工判据要求 `grep -rn 'fm.names' web/` 为 0（不再有第二真相源）。 */
+const LEGACY_NAMES_KEY = 'fm.' + 'names';
+
+/* 开关关闭时用的本机名字（= 改造前的行为）：**只活在内存里**，不再落 localStorage ——
+   昵称的真相源只有 NAS 一处，浏览器本地不留第二份清单。 */
+let localNames = ['我'];
+
+let nickEnabled = false;       // /api/config 的 nickname_enabled（字段缺失 = false = 全走老路径）
+let nickPoolVersion = 0;       // NAS 的池子版本，用于判断本地映射表是否落后（§4.3）
+let nickList = [];             // NAS 上 status=active 的整表（按 nickname_id 升序）
+let nickLoaded = false;        // 是否已经成功拉到过整表
+let names = [];                // 显示名数组（从 nickList 派生；壳模式 / 下拉复用这一份）
+const nickById = new Map();    // nickname_id → 昵称对象（主索引：消息快照按 id 查）
+const nickByName = new Map();  // display_name → 昵称对象（反查：只有 sender_name 的历史消息）
+
+/* ── 颜色：本地不生成，只把逻辑色 ID 交给 §4.4 映射表 ───────────── */
+/** 逻辑色 ID → 显示色（kind ∈ dot / avatarBg / avatarFg）。
+    未知 ID 由 nickcolor.js 内部走**灰兜底**，绝不把收到的字符串塞进 style（R2）。 */
+function nickDisplay(kind, colorId) {
+  if (!window.FMNickColor) return '#8A8A8A';    // nickcolor.js 在 app.js 之前加载，正常到不了
+  return FMNickColor.display(kind, colorId);
 }
 
-function persistNames() {
-  try { localStorage.setItem(NAMES_KEY, JSON.stringify(names)); } catch (_) {}
+/* ── ② 当前昵称（本地状态；服务端不参与）────────────────────────── */
+/** 我选的 nickname_id；null = 没选 → 灰临时「默认用户」 */
+function selectedNickId() {
+  let raw = '';
+  try { raw = localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) { return null; }
+  if (!/^\d+$/.test(raw)) return null;          // 空 / 老格式（名字）= 没选
+  const id = Number(raw);
+  return nickById.has(id) ? id : null;          // 服务端已经没有这条 = 没选
+}
+function rememberSenderId(id) {
+  try { localStorage.setItem(LAST_SENDER_KEY, id == null ? '' : String(id)); } catch (_) {}
+}
+function currentNick() {
+  const id = selectedNickId();
+  return id == null ? null : (nickById.get(id) || null);
+}
+/** 当前发送人：选了共享昵称就是它，没选就是灰临时「默认用户」 */
+function currentSender() {
+  if (!nickEnabled) return localSender();
+  const n = currentNick();
+  return n ? n.display_name : LOCAL_TEMP_NAME;
+}
+/** 当前发送人的 nickname_id（发消息时带上；null = 灰临时） */
+function currentSenderId() {
+  if (!nickEnabled) return null;
+  const n = currentNick();
+  return n ? n.nickname_id : null;
+}
+/** 当前发送人的逻辑色 ID（灰临时 = 'gray'） */
+function currentSenderColor() {
+  const n = currentNick();
+  return n ? n.color : LOCAL_TEMP_COLOR;
 }
 
+/* 开关关闭时的老路径（本机名字 + 哈希色，与改造前一致） */
+function localSender() {
+  const v = $('sender-sel')._value;
+  if (v && localNames.includes(v)) return v;
+  let last = '';
+  try { last = localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) {}
+  return localNames.includes(last) ? last : localNames[0];
+}
 function rememberSender(value) {
   try { localStorage.setItem(LAST_SENDER_KEY, value || ''); } catch (_) {}
 }
 
-/** 当前选中的发送人（下拉 → localStorage → 第一个） */
-function currentSender() {
-  const v = $('sender-sel')._value;
-  if (v && names.includes(v)) return v;
-  let last = '';
-  try { last = localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) {}
-  return names.includes(last) ? last : names[0];
+/* ── 一次性迁移 / 清理 ─────────────────────────────────────────── */
+/** 旧 key 只删不读（读它 = 又有了第二个昵称真相源） */
+function dropLegacyNamesKey() {
+  try { localStorage.removeItem(LEGACY_NAMES_KEY); } catch (_) {}
+}
+/** `fm.lastSender` 迁移：老值存的是**名字**，能对上某个 active 昵称就换成它的 nickname_id，
+    对不上就回到「未选」（= 灰色「默认用户」）。只在第一次拉到整表后跑一次。 */
+let nickMigrated = false;
+function migrateLastSender() {
+  if (nickMigrated) return;
+  nickMigrated = true;
+  let raw = '';
+  try { raw = localStorage.getItem(LAST_SENDER_KEY) || ''; } catch (_) { return; }
+  if (!raw || /^\d+$/.test(raw)) return;         // 空的 / 已经是 id → 不动
+  const hit = nickByName.get(raw.trim());
+  rememberSenderId(hit ? hit.nickname_id : null);
+  if (hit) snack(`已把「当前昵称」记为「${hit.display_name}」（改用 nickname_id 记住它）`);
 }
 
-/** 把本地昵称同步到发送区那个下拉框（群聊模型下只有这一个） */
+/* ── ① 共享昵称池的本地缓存（读写全在 NAS，这边只是镜像）───────── */
+function rebuildNickIndex() {
+  nickById.clear();
+  nickByName.clear();
+  nickList.forEach((n) => {
+    nickById.set(n.nickname_id, n);
+    if (n.display_name) nickByName.set(n.display_name, n);
+  });
+  names = nickList.map((n) => n.display_name);
+}
+
+/** 从 NAS 拉整表（空库就是空数组 —— 服务端不建任何行，§0.9） */
+async function loadNicknames() {
+  try {
+    const r = await api('/api/nicknames?status=active');
+    applyNicknames(r && r.nicknames);
+  } catch (e) {
+    nickLoaded = true;                            // 拿不到就按空处理：界面**不假造**任何昵称
+    nickList = [];
+    rebuildNickIndex();
+    snack('读取昵称失败：' + nickErrText(e), { error: true });
+  }
+}
+
+/** 整表替换（GET 结果 / nickname_list_sync）→ 对齐缓存 + 重画 */
+function applyNicknames(list) {
+  nickList = (Array.isArray(list) ? list : [])
+    .filter((n) => n && n.nickname_id != null)
+    .sort((a, b) => a.nickname_id - b.nickname_id);
+  rebuildNickIndex();
+  nickLoaded = true;
+  migrateLastSender();
+  redrawNicks();
+}
+
+/** 增量事件（nickname_created / nickname_updated / nickname_color_changed）：只动一行 */
+function upsertNickname(one) {
+  if (!one || one.nickname_id == null) return;
+  const id = Number(one.nickname_id);
+  const i = nickList.findIndex((n) => n.nickname_id === id);
+  if (i >= 0) nickList[i] = Object.assign({}, nickList[i], one, { nickname_id: id });
+  else nickList.push(Object.assign({}, one, { nickname_id: id }));
+  nickList.sort((a, b) => a.nickname_id - b.nickname_id);
+  nickLoaded = true;
+  rebuildNickIndex();
+  redrawNicks();
+}
+
+/** 增量事件（nickname_removed）：摘掉缓存；**正在用它的人立刻回退灰临时并提示**（§11 风险 4） */
+function dropNickname(one) {
+  const id = one && one.nickname_id != null ? Number(one.nickname_id) : null;
+  if (id == null) return;
+  const wasMine = selectedNickId() === id;
+  const gone = (one && one.display_name) || (nickById.get(id) || {}).display_name || '这个昵称';
+  nickList = nickList.filter((n) => n.nickname_id !== id);
+  rebuildNickIndex();
+  if (wasMine) {
+    rememberSenderId(null);
+    snack(`「${gone}」已被删除，已回到「${LOCAL_TEMP_NAME}」`, { action: '知道了' });
+  }
+  redrawNicks();
+}
+
+/** 重画的**单一入口**（昵称下拉 + 设置页列表 + 消息行）——避免「一处新色、一处旧色」 */
+function redrawNicks() {
+  renderNameSelectors();
+  renderNickList();
+  if (nickEnabled) renderMessages(isLogAtBottom());
+}
+
+/* ── 消息上色：三级查找（§2-C1）─────────────────────────────────── */
+/** 一条消息的逻辑色 ID：
+      ① 消息快照的 sender_nickname_id（新消息，最准）
+      ② 消息快照的 sender_color（逻辑色 ID；灰临时 = 'gray'）
+         ⚠ NULL（改造前的老消息）**不算灰**，继续往下找
+      ③ 名字反查昵称表（历史消息只有 sender_name —— 这张反查索引就是给它兜底的）
+    都没命中 → null（调用方退回哈希色，老消息观感与今天一致；§4.4 的「未知 → 兜底」） */
+function nickColorIdForMessage(msg) {
+  if (!msg) return null;
+  if (msg.sender_nickname_id != null) {
+    const n = nickById.get(Number(msg.sender_nickname_id));
+    if (n) return n.color;
+  }
+  const snap = msg.sender_color;
+  if (typeof snap === 'string' && window.FMNickColor && FMNickColor.isKnown(snap)) return snap;
+  const name = String(msg.sender_name || '').trim();
+  if (name && nickByName.has(name)) return nickByName.get(name).color;
+  if (name && name === LOCAL_TEMP_NAME) return LOCAL_TEMP_COLOR;   // 本地临时昵称一律灰
+  return null;
+}
+
+/** 给 chat.js / shell.js 用的钩子（它们不直接碰昵称表） */
+window.FMNickResolver = {
+  /** 头像底 + 头像字色；null = 让调用方走哈希兜底（开关关闭 / 老消息 / 未知名字） */
+  avatarFor(msg) {
+    if (!nickEnabled) return null;
+    const id = nickColorIdForMessage(msg);
+    if (!id) return null;
+    return { bg: nickDisplay('avatarBg', id), fg: nickDisplay('avatarFg', id) };
+  },
+  /** 逻辑色 ID（给需要自己决定 kind 的地方，例如壳里的小圆点） */
+  colorIdForMessage(msg) { return nickEnabled ? nickColorIdForMessage(msg) : null; },
+  /** 按显示名查逻辑色 ID（壳模式的下拉 / 老消息兜底） */
+  colorIdForName(name) {
+    if (!nickEnabled) return null;
+    const s = String(name == null ? '' : name).trim();
+    const hit = nickByName.get(s);
+    if (hit) return hit.color;
+    return s === LOCAL_TEMP_NAME ? LOCAL_TEMP_COLOR : null;
+  },
+  dot(colorId) { return nickDisplay('dot', colorId); },
+  /** 壳模式（PC 端 WebView2 页面）用的几个小接口 —— 它不直接碰昵称表，
+      但「以谁的名义回复」的下拉与弹窗小圆点需要同一份颜色/同一条本地选择（§5.6.2 第 2 条）。 */
+  enabled() { return nickEnabled; },
+  /** 按显示名选择（壳里的下拉给的是名字）—— 存进本地的仍然是 nickname_id */
+  selectByName(name) {
+    const s = String(name == null ? '' : name).trim();
+    const n = nickByName.get(s);
+    rememberSenderId(n ? n.nickname_id : null);
+    redrawNicks();
+    return !!n;
+  },
+  /** 本地存的那个选择，换回显示名（没选 = 灰临时） */
+  currentName() { return nickEnabled ? currentSender() : null; },
+  /** 当前选中（调试 / 测试断言用） */
+  current() {
+    return { nickname_id: currentSenderId(), display_name: currentSender(),
+             color: currentSenderColor(), enabled: nickEnabled };
+  },
+};
+
+/* ── 发送区下拉（群聊模型下只有这一个）───────────────────────────── */
 function renderNameSelectors() {
-  const items = names.map((n) => ({ value: n, label: n, color: nickColor(n) }));
-
-  buildSelect($('sender-sel'), items, currentSender(), (v) => rememberSender(v));
-
-  renderNamesList();
-
+  if (!nickEnabled) {
+    const items = localNames.map((n) => ({ value: n, label: n, color: nickColor(n) }));
+    buildSelect($('sender-sel'), items, localSender(), (v) => { rememberSender(v); redrawNicks(); });
+  } else {
+    const cur = currentSenderId();
+    /* 没选 → 第一项就是灰色的本地临时昵称（它**不是**共享昵称：不进池、不占色、不参与同步，
+       只在这台浏览器上存在，§3.2.1）；条目的颜色是「色块 + 常规字色」，不用色值当字色（§4.4 规则 4） */
+    const items = [{ value: '', label: LOCAL_TEMP_NAME, color: nickDisplay('dot', LOCAL_TEMP_COLOR), swatch: true }]
+      .concat(nickList.map((n) => ({
+        value: String(n.nickname_id), label: n.display_name, color: nickDisplay('dot', n.color), swatch: true,
+      })));
+    buildSelect($('sender-sel'), items, cur == null ? '' : String(cur),
+                (v) => selectNick(v === '' ? null : Number(v)));
+  }
   // 壳模式：全屏弹窗里那个「以谁的名义回复」的下拉也要跟着改
   if (window.FM_SHELL && window.FM_SHELL.enabled) window.FM_SHELL.syncNames();
 }
 
-function renderNamesList() {
+/** 选择昵称 = **纯本地动作**：不上传、不广播、不影响别的浏览器（§5.2） */
+function selectNick(id) {
+  rememberSenderId(id);
+  const n = id == null ? null : nickById.get(id);
+  snack(n ? `以后以「${n.display_name}」的名义发言` : `已回到「${LOCAL_TEMP_NAME}」（灰临时昵称）`);
+  redrawNicks();
+}
+
+/* ── 设置页：昵称列表（全局管理：改名 / 重新分配颜色 / 删除）──────── */
+function noteEl(text, cls) {
+  const p = document.createElement('p');
+  p.className = 'nick-note' + (cls ? ' ' + cls : '');
+  p.textContent = text;
+  return p;
+}
+
+function renderNickList() {
   const box = $('names-list');
+  if (!box) return;
   box.innerHTML = '';
-  if (names.length === 0) {
-    const p = document.createElement('p');
-    p.className = 'text-caption text-secondary';
-    p.textContent = '还没有昵称，先添加一个吧。';
-    box.appendChild(p);
+  if (!nickEnabled) { renderLocalNickList(box); renderNickQuota(); return; }
+
+  if (!nickLoaded) { box.appendChild(noteEl('正在读取 NAS 上的昵称……')); renderNickQuota(); return; }
+  if (nickList.length === 0) {
+    // ★ 空态是**正常路径**（全新部署）：不假造任何默认昵称，只给引导（§0.9）
+    box.appendChild(noteEl('还没有昵称，先添加一个吧。'));
+  } else {
+    nickList.forEach((n) => box.appendChild(nickRowEl(n)));
+  }
+  renderNickQuota();
+}
+
+/** 一行的 DOM：色点（NAS 的逻辑色 ID）+ 名字（可就地改名）+ 换色 / 删除 */
+function nickRowEl(n) {
+  const row = document.createElement('div');
+  row.className = 'name-row' + (selectedNickId() === n.nickname_id ? ' name-row--using' : '');
+  row.dataset.nickId = String(n.nickname_id);
+
+  const sw = document.createElement('span');
+  sw.className = 'name-row__swatch';
+  sw.style.background = nickDisplay('dot', n.color);   // 显示色 = §4.4 按主题算出来的圆点变体
+  sw.dataset.colorId = n.color;                        // 逻辑色 ID 只进 data 属性，不参与排版
+  sw.title = `颜色：${n.color}`;
+
+  const input = document.createElement('input');
+  input.className = 'name-row__input';
+  input.value = n.display_name;
+  input.maxLength = NAME_MAX_LEN;
+  input.setAttribute('aria-label', `昵称 ${n.display_name}`);
+  input.onchange = () => renameNick(n, input);
+
+  const actions = document.createElement('div');
+  actions.className = 'name-row__actions';
+
+  const recolor = document.createElement('button');
+  recolor.type = 'button';
+  recolor.className = 'icon-btn';
+  recolor.title = '重新分配颜色（这个名字所有在用的机器会一起变）';
+  recolor.setAttribute('aria-label', `重新分配「${n.display_name}」的颜色`);
+  recolor.appendChild(icon('sync', 'icon icon--sm'));
+  recolor.onclick = () => reassignNickColor(n);
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'icon-btn icon-btn--danger';
+  del.title = '删除这个昵称（历史消息保留当时的名字和颜色）';
+  del.setAttribute('aria-label', `删除昵称 ${n.display_name}`);
+  del.appendChild(icon('delete', 'icon icon--sm'));
+  del.onclick = () => deleteNick(n);
+
+  actions.append(recolor, del);
+  row.append(sw, input, actions);
+  return row;
+}
+
+/** 额度提示（文案逐字取自 §4.3，括号里是**真实计数**）：
+      x ≥ 14 →「共享昵称颜色即将用尽（x/16）」；x = 16 → 满额文案 + 新建入口置灰 */
+function renderNickQuota() {
+  const el = $('nick-quota');
+  const addBtn = $('name-add');
+  const input = $('name-new');
+  if (!el) return;
+  if (!nickEnabled) {
+    el.hidden = true; el.textContent = ''; el.className = 'nick-note';
+    if (addBtn) addBtn.disabled = false;
+    if (input) input.disabled = false;
     return;
   }
+  const x = nickList.length;
+  const full = x >= NICK_MAX_ACTIVE;
+  if (full) {
+    el.hidden = false;
+    el.className = 'nick-note nick-note--error';
+    el.textContent = '已达到共享昵称上限，请删除不再使用的昵称后再添加。';
+  } else if (x >= NICK_MAX_ACTIVE - 2) {
+    el.hidden = false;
+    el.className = 'nick-note nick-note--warn';
+    el.textContent = `共享昵称颜色即将用尽（${x}/${NICK_MAX_ACTIVE}）`;
+  } else {
+    el.hidden = true; el.textContent = ''; el.className = 'nick-note';
+  }
+  if (addBtn) addBtn.disabled = full;             // 满额置灰（服务端仍会兜底 503）
+  if (input) input.disabled = full;
+}
 
-  names.forEach((name, idx) => {
+/* ── 撞名引导（409 NICKNAME_ALREADY_EXISTS →「已存在，直接选用它？」）── */
+function hideNickConflict() {
+  const box = $('nick-conflict');
+  if (!box) return;
+  box.hidden = true;
+  box.innerHTML = '';
+}
+
+function showNickConflict(id, name) {
+  const box = $('nick-conflict');
+  if (!box) return;
+  box.innerHTML = '';
+  box.hidden = false;
+
+  const t = document.createElement('span');
+  t.className = 'nick-conflict__text';
+  t.textContent = `「${name}」已存在，直接选用它？`;
+
+  const acts = document.createElement('div');
+  acts.className = 'nick-conflict__actions';
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn';
+  cancel.textContent = '取消';
+  cancel.onclick = hideNickConflict;
+
+  const use = document.createElement('button');
+  use.type = 'button';
+  use.className = 'btn btn--primary';
+  use.textContent = '选用它';
+  use.disabled = id == null;                      // 服务端没给 id（异常情况）→ 只能取消
+  use.onclick = () => {
+    $('name-new').value = '';
+    hideNickConflict();
+    if (id != null) selectNick(Number(id));       // 点一下 = 选用（纯本地动作）
+  };
+
+  acts.append(cancel, use);
+  box.append(t, acts);
+}
+
+/* ── 四个管理操作（**全是全局操作，必须在线**）────────────────────── */
+/** 管理操作的错误文案：离线要**明说原因**，否则用户以为功能坏了（§4 / §11 风险 6） */
+function nickErrText(e) {
+  if (e && e.code === 'OFFLINE') return '连不上服务器（昵称管理必须在线）';
+  return (e && e.message) || '未知错误';
+}
+
+async function addName() {
+  if (!nickEnabled) return addLocalName();
+  const input = $('name-new');
+  const v = (input.value || '').trim();
+  if (!v) return;
+  if (v.length > NAME_MAX_LEN) { snack(`昵称最长 ${NAME_MAX_LEN} 个字符`, { error: true }); return; }
+  if (nickByName.has(v)) {                        // 本地已知同名 → 不白跑一次请求
+    showNickConflict(nickByName.get(v).nickname_id, v);
+    return;
+  }
+  try {
+    const r = await api('/api/nicknames', {
+      method: 'POST', body: JSON.stringify({ display_name: v }),
+    });
+    input.value = '';
+    hideNickConflict();
+    if (r && r.nickname) {
+      upsertNickname(r.nickname);
+      selectNick(r.nickname.nickname_id);         // 新建完就直接用它
+    }
+  } catch (e) {
+    if (e.code === 'NICKNAME_ALREADY_EXISTS') {
+      const id = e.existing_nickname_id != null
+        ? e.existing_nickname_id : (nickByName.get(v) || {}).nickname_id;
+      showNickConflict(id, v);
+    } else if (e.code === 'NO_AVAILABLE_COLOR') {
+      snack(e.message, { error: true, action: '知道了' });
+      loadNicknames();                            // 计数可能被别的浏览器改了 → 重新对齐
+    } else {
+      snack('新建失败：' + nickErrText(e), { error: true });
+    }
+  }
+}
+
+async function renameNick(n, input) {
+  const v = (input.value || '').trim();
+  if (!v || v === n.display_name) { input.value = n.display_name; return; }
+  if (v.length > NAME_MAX_LEN) {
+    input.value = n.display_name;
+    snack(`昵称最长 ${NAME_MAX_LEN} 个字符`, { error: true });
+    return;
+  }
+  try {
+    const r = await api(`/api/nicknames/${n.nickname_id}`, {
+      method: 'PATCH', body: JSON.stringify({ display_name: v }),
+    });
+    if (r && r.nickname) upsertNickname(r.nickname);
+  } catch (e) {
+    input.value = n.display_name;                 // 失败就回滚显示，**不本地生效**
+    if (e.code === 'NAME_TAKEN') snack(`「${v}」已被占用，换个名字吧`, { error: true });
+    else if (e.code === 'NICKNAME_INACTIVE') snack('这个昵称已经被删除了', { error: true });
+    else snack('改名失败：' + nickErrText(e), { error: true });
+  }
+}
+
+async function reassignNickColor(n) {
+  try {
+    const r = await api(`/api/nicknames/${n.nickname_id}/reassign-color`, { method: 'POST' });
+    if (r && r.nickname) upsertNickname(r.nickname);
+    snack(`「${n.display_name}」换了新颜色（所有在用的机器一起变）`);
+  } catch (e) {
+    snack('换色失败：' + nickErrText(e), { error: true });
+  }
+}
+
+async function deleteNick(n) {
+  const ok = await confirmDialog({
+    title: '删除这个昵称？',
+    body: `「${n.display_name}」会从所有设备上消失，颜色立刻回到池子；它过去发的消息保留当时的名字和颜色。`,
+    okText: '删除',
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/nicknames/${n.nickname_id}`, { method: 'DELETE' });
+    // 广播会带来 nickname_removed；WS 断线时本地也顺手摘掉，列表不会残留
+    dropNickname({ nickname_id: n.nickname_id, display_name: n.display_name });
+  } catch (e) {
+    snack('删除失败：' + nickErrText(e), { error: true });
+  }
+}
+
+/* ── 开关关闭时的老路径（nickname.enabled=false，行为回到改造前）──── */
+function renderLocalNickList(box) {
+  const wrap = box || $('names-list');
+  wrap.innerHTML = '';
+  if (localNames.length === 0) { wrap.appendChild(noteEl('还没有昵称，先添加一个吧。')); return; }
+
+  localNames.forEach((name, idx) => {
     const row = document.createElement('div');
     row.className = 'name-row';
 
@@ -1154,18 +1648,17 @@ function renderNamesList() {
     const input = document.createElement('input');
     input.className = 'name-row__input';
     input.value = name;
-    input.maxLength = 16;
+    input.maxLength = NAME_MAX_LEN;               // 老路径也统一 32（§5.5：四端同一上限）
     input.setAttribute('aria-label', `昵称 ${name}`);
     input.onchange = () => {
       const v = input.value.trim();
-      if (!v || (names.includes(v) && names[idx] !== v)) {
-        input.value = names[idx];
-        if (v && names.includes(v)) snack('这个昵称已经有了', { error: true });
+      if (!v || (localNames.includes(v) && localNames[idx] !== v)) {
+        input.value = localNames[idx];
+        if (v && localNames.includes(v)) snack('这个昵称已经有了', { error: true });
         return;
       }
-      names[idx] = v;
-      persistNames();
-      renderNameSelectors();
+      localNames[idx] = v;
+      redrawNicks();
     };
 
     const del = document.createElement('button');
@@ -1174,29 +1667,25 @@ function renderNamesList() {
     del.setAttribute('aria-label', `删除昵称 ${name}`);
     del.appendChild(icon('delete', 'icon icon--sm'));
     del.onclick = () => {
-      names.splice(idx, 1);
-      if (names.length === 0) names = ['我'];
-      persistNames();
-      renderNameSelectors();
+      localNames.splice(idx, 1);
+      if (localNames.length === 0) localNames = ['我'];
+      redrawNicks();
     };
 
     row.append(sw, input, del);
-    box.appendChild(row);
+    wrap.appendChild(row);
   });
 }
 
-function addName() {
+function addLocalName() {
   const v = $('name-new').value.trim();
   if (!v) return;
-  if (!names.includes(v)) {
-    names.push(v);
-    persistNames();
-  } else {
-    snack('这个昵称已经有了');
-  }
+  if (v.length > NAME_MAX_LEN) { snack(`昵称最长 ${NAME_MAX_LEN} 个字符`, { error: true }); return; }
+  if (!localNames.includes(v)) localNames.push(v);
+  else snack('这个昵称已经有了');
   $('name-new').value = '';
   rememberSender(v);
-  renderNameSelectors();
+  redrawNicks();
 }
 
 /* ── B12. 米家开关绑定（官方 OAuth2 + MIoT 云端）
@@ -1603,7 +2092,7 @@ async function xmUnbind(row) {
 /** 进入设置页时刷新这一段内容（设备列表可能变了） */
 function enterSettings() {
   renderModeRow();
-  renderNamesList();
+  renderNickList();
   loadXiaomi();
 }
 

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text.Json;
 using FamilyAgent.Core.Config;
 using FamilyAgent.Core.Diagnostics;
+using FamilyAgent.Core.Nicknames;
 using FamilyAgent.Core.Protocol;
 
 namespace FamilyAgent;
@@ -217,6 +218,110 @@ public sealed class JsBridge
         Send(new { type = "host.history", messages });
     }
 
+    /// <summary>
+    /// ★ 推一份**共享昵称的完整状态**给页面（docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4「新增桥帧」）。
+    ///
+    /// 壳模式下页面**不连** <c>/ws/web</c>，昵称的整表 / 广播一律由宿主经桥送过来 ——
+    /// 没有这条帧，PC 本地页就收不到别人的颜色变化（§5.6.2 第 2 点）。
+    ///
+    /// 一趟给全（页面免刷新重画只需要这一帧）：
+    /// <list type="bullet">
+    ///   <item><c>available</c>：服务端**有没有应答过**昵称帧（据此决定设置页走昵称模式还是
+    ///     走今天的本地昵称回退路径 —— 服务端 <c>nickname.enabled=false</c> 时它一直是 false，
+    ///     页面行为与改造前逐字一致）。</item>
+    ///   <item><c>online</c> / <c>can_manage</c>：能否做那四个管理操作（离线时页面禁用入口
+    ///     并明示 <c>offline_reason</c>，§5.2）。</item>
+    ///   <item><c>current</c>：本机当前选用（灰临时 = <c>nickname_id</c> 为 null + <c>color</c>
+    ///     为 <c>gray</c>）。**PC 不「拥有」昵称**，这只是「我当前用谁的名义」。</item>
+    ///   <item><c>nicknames</c>：**全量**活跃昵称（弹窗右侧要给别人的消息上色，没有全量就只能退回名字哈希）。</item>
+    /// </list>
+    ///
+    /// ⚠ 载荷里**只有逻辑色 ID**，一个 HEX 都没有（§4.4）：显示色由页面自己按主题算。
+    /// </summary>
+    public void PostNickname(NicknameService nicknames)
+    {
+        if (nicknames is null)
+            return;
+
+        var rows = new List<object>();
+        foreach (var n in nicknames.Table)
+        {
+            rows.Add(new
+            {
+                nickname_id = n.NicknameId,
+                display_name = n.DisplayName,
+                color = n.Color,              // 逻辑色 ID（color_01…color_16）
+                status = n.Status,
+                created_at = n.CreatedAt,
+                updated_at = n.UpdatedAt,
+            });
+        }
+
+        var current = nicknames.Current;
+        Send(new
+        {
+            type = "host.nickname",
+            // 服务端是否应答过（开关关闭 → 一直是 false → 页面走回退路径，现有行为不变）
+            available = nicknames.Available,
+            online = nicknames.Online,
+            can_manage = nicknames.CanManage,
+            offline_reason = NicknameService.OfflineMessage,
+            default_name = nicknames.DefaultName,             // 本机名（灰临时昵称用它）
+            local_temp_color = NicknameColor.LocalTempColorId, // "gray"
+            max_active = NicknameService.MaxActive,            // 16（额度提示用）
+            pool_version = nicknames.PoolVersion,
+            current = new
+            {
+                nickname_id = current.NicknameId,              // null = 灰临时（还没选）
+                display_name = current.DisplayName,
+                color = current.Color,                         // 逻辑色 ID；灰临时 = "gray"
+                is_local_temp = current.IsLocalTemp,
+            },
+            nicknames = rows,
+            // 「你用的昵称已被删除，已切回本地临时昵称」这类一次性提示；读过就没了
+            notice = nicknames.TakeNotice(),
+        });
+    }
+
+    /// <summary>
+    /// 一次昵称操作的**结果**回给页面（页面据此提示「已发出，等待服务端应答…」/「离线不可用」）。
+    ///
+    /// ⚠ 这里回的是「**请求被接受了吗**」，不是「改成功了吗」：
+    ///   真正的成功判据是服务端回的那一帧（<see cref="PostNickname"/> 里整表变了），
+    ///   或者 <see cref="PostNicknameError"/> 里的错误码。宿主**绝不乐观地宣布成功**。
+    /// </summary>
+    public void PostNicknameResult(string action, bool accepted, bool offline, string detail,
+                                   long? existingNicknameId = null)
+    {
+        Send(new
+        {
+            type = "host.nickname_result",
+            action = action ?? "",
+            accepted,
+            offline,
+            detail = detail ?? "",
+            existing_nickname_id = existingNicknameId,
+        });
+    }
+
+    /// <summary>
+    /// 服务端回了一个 <c>nickname_error</c>（撞名 / 池满 / 找不到…）。
+    ///
+    /// <paramref name="existingNicknameId"/> 只在**创建撞名**
+    /// （<c>NICKNAME_ALREADY_EXISTS</c>）时出现 —— 页面拿它做「已存在，直接选用它？」（§3.3 方式 A）。
+    /// </summary>
+    public void PostNicknameError(string request, string code, string message, long? existingNicknameId)
+    {
+        Send(new
+        {
+            type = "host.nickname_error",
+            request = request ?? "",
+            code = code ?? "",
+            message = message ?? "",
+            existing_nickname_id = existingNicknameId,
+        });
+    }
+
     // ── 页面 → 宿主 ──────────────────────────────────────────────
 
     /// <summary>页面已就绪（宿主这时候才发 hello / session / connection）.</summary>
@@ -257,6 +362,17 @@ public sealed class JsBridge
 
     /// <summary>页面要求退出程序。</summary>
     public event Action? QuitRequested;
+
+    /// <summary>
+    /// 页面发来的一条**昵称请求**（docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4 的页面 → 宿主方向）。
+    ///
+    /// 六种 <see cref="NicknameRequest.Kind"/>：
+    /// <c>select</c>（选用 / 切回灰临时，**唯一能离线的**）/ <c>create</c> / <c>rename</c> /
+    /// <c>reassign_color</c> / <c>delete</c> / <c>refresh</c>。
+    /// <c>create</c> 撞名（409）时宿主回 <c>host.nickname_error</c>，
+    /// 页面据 <c>existing_nickname_id</c> 引导「已存在，直接选用它？」。
+    /// </summary>
+    public event Action<NicknameRequest>? NicknameRequested;
 
     /// <summary>
     /// 处理一帧来自页面的消息。**永远不抛异常**：坏帧只写日志。
@@ -436,6 +552,37 @@ public sealed class JsBridge
                     QuitRequested?.Invoke();
                     break;
 
+                // ── 共享昵称（§7 Phase 4）。**形态只走桥**，昵称也走桥 ──
+                case "web.nickname_select":
+                case "web.nickname_create":
+                case "web.nickname_rename":
+                case "web.nickname_reassign_color":
+                case "web.nickname_delete":
+                case "web.nickname_refresh":
+                {
+                    var req = new NicknameRequest
+                    {
+                        Kind = type.Substring("web.nickname_".Length),
+                        // 「传了 null」是**有意义**的输入（= 回灰临时），
+                        // 所以要和「根本没传这个字段」分开（后者是坏帧）：
+                        // 这里只判**字段在不在**；值是不是 null 交给 Validate() 解释。
+                        // （之前把显式 null 也当成「没传」，结果「切回灰临时」会被当坏帧丢掉。）
+                        HasNicknameId = root.TryGetProperty("nickname_id", out _),
+                        NicknameId = GetLong(root, "nickname_id"),
+                        DisplayName = GetString(root, "display_name"),
+                    };
+
+                    var problem = req.Validate();
+                    if (problem is not null)
+                    {
+                        AgentLog.Write($"✗ 桥：{type} 不合法（{problem}，已忽略）");
+                        return;
+                    }
+
+                    NicknameRequested?.Invoke(req);
+                    break;
+                }
+
                 default:
                     AgentLog.Write($"✗ 桥：未知帧类型 {type}（已忽略）");
                     break;
@@ -539,4 +686,87 @@ public sealed class ConfigPatch
     public bool IsEmpty =>
         ServerUrl is null && EnrollToken is null && ReplyName is null
         && AutoStart is null && ThemeMode is null;
+}
+
+/// <summary>
+/// 页面发来的一次**昵称请求**（<c>web.nickname_*</c>，docs/NICKNAME-SYSTEM-PLAN.md §7 Phase 4）。
+///
+/// 六个 <see cref="Kind"/> 对应页面那六个帧（桥已把 <c>web.nickname_</c> 前缀剥掉）：
+/// <list type="bullet">
+///   <item><c>select</c>：选用某个共享昵称 / 切回灰临时（**唯一能离线的**）。</item>
+///   <item><c>refresh</c>：主动拉一次整表（启动 / 重连 / 点「刷新」）。</item>
+///   <item><c>create</c>：新建共享昵称（撞名 → 服务端 409，UI 引导「直接选用」）。</item>
+///   <item><c>rename</c>：改**共享昵称本身**的名字（全局生效）。</item>
+///   <item><c>reassign_color</c>：换一个未被占用的逻辑色 ID（全局生效）。</item>
+///   <item><c>delete</c>：删除共享昵称（软删，颜色立即回池）。</item>
+/// </list>
+///
+/// ★ <see cref="HasNicknameId"/> 与 <see cref="NicknameId"/> 是**两回事**：
+///   「<c>select</c> 时显式传 <c>null</c>」是**有意义**的输入（= 切回灰临时），
+///   必须和「这一帧根本没带 <c>nickname_id</c> 字段」区分开 —— 后者是坏帧，直接忽略。
+///   桥在构造时已经把这个区分算好放在 <see cref="HasNicknameId"/> 里。
+///
+/// ⚠ 本类**不引用 WPF / WebView2**，和 <see cref="JsBridge"/> 一样是纯 C#（桥能单独看懂）。
+///   这里只做**帧形状**校验；名字的 1–32 字符 / 控制字符等业务校验由
+///   <c>NicknameService.ValidateName</c> 负责（服务端才是权威，§5.5）。
+/// </summary>
+public sealed class NicknameRequest
+{
+    /// <summary>操作种类：<c>select</c> / <c>refresh</c> / <c>create</c> / <c>rename</c> /
+    /// <c>reassign_color</c> / <c>delete</c>（由帧名 <c>web.nickname_*</c> 派生）。</summary>
+    public string Kind { get; set; } = "";
+
+    /// <summary>
+    /// 页面**有没有带** <c>nickname_id</c> 这个字段（带了 null 也算带了）。
+    /// 见类注释：<c>select</c> 靠它区分「切回灰临时」与「坏帧」。
+    /// </summary>
+    public bool HasNicknameId { get; set; }
+
+    /// <summary>目标共享昵称 id（<see cref="HasNicknameId"/> 为 false 时无意义，恒 0）。</summary>
+    public long NicknameId { get; set; }
+
+    /// <summary>要创建 / 改成的名字（<c>create</c> / <c>rename</c> 用；其余种类忽略）。</summary>
+    public string DisplayName { get; set; } = "";
+
+    /// <summary>这个 <paramref name="kind"/> 认不认识（六个之一）。</summary>
+    public static bool IsKnownKind(string? kind) =>
+        kind is "select" or "refresh" or "create" or "rename" or "reassign_color" or "delete";
+
+    /// <summary>
+    /// 校验这一帧**形状**是否成立。返回中文错误文案；<c>null</c> = 通过。
+    ///
+    /// 规则（§7 Phase 4 的帧定义）：
+    /// <list type="bullet">
+    ///   <item><c>select</c>：必须带 <c>nickname_id</c> 字段（值可以是 null = 回灰临时）。</item>
+    ///   <item><c>refresh</c>：不看任何字段。</item>
+    ///   <item><c>create</c> / <c>rename</c>：<c>display_name</c> 不能为空（去空白后）。</item>
+    ///   <item><c>reassign_color</c> / <c>delete</c>：<c>nickname_id &gt; 0</c>。</item>
+    /// </list>
+    /// </summary>
+    public string? Validate()
+    {
+        if (!IsKnownKind(Kind))
+            return $"不认识的昵称操作「{Kind}」";
+
+        switch (Kind)
+        {
+            case "select":
+                // 显式传 null = 切回灰临时（有意义）；连字段都没有 = 坏帧。
+                return HasNicknameId ? null : "select 必须带 nickname_id 字段（切回灰临时请显式传 null）";
+
+            case "refresh":
+                return null;
+
+            case "create":
+            case "rename":
+                return string.IsNullOrWhiteSpace(DisplayName) ? "昵称不能为空" : null;
+
+            case "reassign_color":
+            case "delete":
+                return NicknameId > 0 ? null : "缺少有效的 nickname_id";
+
+            default:
+                return $"不认识的昵称操作「{Kind}」";
+        }
+    }
 }
