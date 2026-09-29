@@ -49,6 +49,7 @@ import shutil
 import socket
 import sqlite3
 import subprocess
+import random
 import sys
 import tempfile
 import threading
@@ -324,8 +325,10 @@ def main() -> int:
     old = made[0]["color"]
     new = nk.reassign_color(made[0]["nickname_id"])
     others = {m["color"] for m in nk.list("active") if m["nickname_id"] != made[0]["nickname_id"]}
-    check("判据6 reassign → 新色 ≠ 旧色、且未被任何 active 占用（拿到刚释放的 color_02）",
-          new["color"] != old and new["color"] == POOL[1] and new["color"] not in others,
+    # ⚠ 换色自 v0.18.1 起是**随机**的，不再钉死「一定拿到刚释放的那个色」——只钉契约本身：
+    #   新色 ≠ 旧色、不在他人占用里、是池里的逻辑色。
+    check("判据6 reassign → 新色 ≠ 旧色、且未被任何 active 占用",
+          new["color"] != old and new["color"] not in others and new["color"] in POOL,
           f"{old} → {new['color']}（他人占用 {sorted(others)[:3]}…）")
     nk.remove(made[3]["nickname_id"])                 # 再腾一个色
     n2 = nk.reassign_color(made[0]["nickname_id"])
@@ -580,12 +583,15 @@ def main() -> int:
         print("  ⏭  未传 --db：跳过旧库迁移实测（用 `--db server/data/family.db` 跑一遍）")
 
     # ══════════════════════════════════════════════════════════════
-    section("6b. 换色选色：与旧色感知差异最大（本轮修复；纯函数 + 服务层）")
+    section("6b. 换色选色：够远的候选里随机（v0.18.1；纯函数 + 服务层）")
     # ══════════════════════════════════════════════════════════════
-    # 背景（用户报「点重新分配颜色没反应」）：旧实现取「池子顺序第一个可用色」，
+    # 历史：v0.17 用户报「点重新分配颜色没反应」——旧实现取「池子顺序第一个可用色」，
     # 库里只有 1 条昵称时可用色 = 除自己外全部 → 永远取到 color_02，再点又回 color_01，
-    # 而这两个色的浅色圆点（#3D2273 / #252F6F）ΔE00 只有 7.5 —— 肉眼看不出来。
-    # 修法：候选里取与旧色 ΔE00 最大者（pool.pick_farthest_from），纯函数、可单测。
+    # 这两个色的浅色圆点（#3D2273 / #252F6F）ΔE00 只有 7.5，肉眼看不出变化。
+    # v0.18.0 的修法「取与旧色 ΔE00 最大者」**又是确定性的**，于是变成「原色 ↔ 最远色」两色互跳
+    # —— v0.18.0 用户实测反馈：**「只在绿色和原本色之间互换，不是真正的随机颜色」**。
+    # ★ v0.18.1 定稿：候选里筛出 ΔE00 ≥ pool.MIN_RECOLOR_DISTANCE(35) 的，**随机**取一个
+    #   （pool.pick_random_recolor）；候选全都很近时才退回 pick_farthest_from。
 
     def _dot(hex_color: str, dark: bool = False) -> str:
         """镜像客户端 §4.4 规则 1 的圆点色（浅色 mix 35% 黑 / 深色 mix 30% 白）。
@@ -675,6 +681,23 @@ def main() -> int:
     check("旧色是脏数据（不在池里）→ 退回第一个候选，不抛异常",
           pool.pick_farthest_from("gray", ["color_05", "color_06"]) == "color_05")
 
+    # ── pick_random_recolor：真随机 + 最小差异 + 兜底（v0.18.1）──
+    one15 = [c for c in POOL if c != "color_01"]
+    _rr = random.Random(7)
+    picks = [pool.pick_random_recolor("color_01", one15, rnd=_rr) for _ in range(12)]
+    check("pick_random_recolor：12 次里出现 ≥ 3 种不同结果（真随机，不是固定取最远）",
+          len(set(picks)) >= 3 and all(p in one15 for p in picks) and all(p != "color_01" for p in picks),
+          f"{sorted(set(picks))}")
+    check(f"pick_random_recolor：结果一律离旧色 ≥ ΔE00 {pool.MIN_RECOLOR_DISTANCE:.0f}（一步看得出变化）",
+          all(pool.visual_distance("color_01", p) >= pool.MIN_RECOLOR_DISTANCE for p in picks),
+          f"最小 {min(pool.visual_distance('color_01', p) for p in picks):.1f}")
+    near = [c for c in one15 if pool.visual_distance("color_01", c) < pool.MIN_RECOLOR_DISTANCE]
+    check("pick_random_recolor：候选全都太近（只有 color_02/color_14/color_16）→ 退回最远的那个",
+          bool(near) and pool.pick_random_recolor("color_01", near) == pool.pick_farthest_from("color_01", near),
+          f"候选 {near} → {pool.pick_random_recolor('color_01', near)}")
+    check("pick_random_recolor：候选为空 → None（调用方据此抛 503，绝不回退同色）",
+          pool.pick_random_recolor("color_01", []) is None)
+
     # ── 服务层集成：真写库、真换色 ──
     wipe()
     solo = nk.create("换个色试试")
@@ -682,11 +705,25 @@ def main() -> int:
     for _ in range(3):
         seq.append(nk.reassign_color(solo["nickname_id"])["color"])
     steps = [pool.visual_distance(a, b) for a, b in zip(seq, seq[1:])]
-    check("服务层：单条昵称连换 3 次 → 每次都是新色，且每步 ΔE00 ≥ 60（旧算法 7.5）",
-          all(a != b for a, b in zip(seq, seq[1:])) and min(steps) >= 60,
+    check(f"服务层：单条昵称连换 3 次 → 每次都是新色，且每步 ΔE00 ≥ {pool.MIN_RECOLOR_DISTANCE:.0f}（旧算法 7.5）",
+          all(a != b for a, b in zip(seq, seq[1:])) and min(steps) >= pool.MIN_RECOLOR_DISTANCE,
           " → ".join(seq) + f"（相邻 ΔE00 {['%.1f' % d for d in steps]}）")
     check("……换完仍只占 1 个色位、库里仍 1 条 active（不泄漏颜色）",
           len(active()) == 1 and len({r["color"] for r in active()}) == 1, f"{active()}")
+
+    # ★ 用户 v0.18.0 实测反馈的**直接回归**：「颜色更换只是在绿色和原本颜色之间互换」。
+    #   连点 6 次，出现的不同颜色必须 ≥ 3 种（两色互跳只有 2 种）。
+    #   种子固定 = CI 可复现；这里断言的是「不是两色互跳」这个契约，不是统计随机性。
+    wipe()
+    solo2 = nk.create("连点六次")
+    random.seed(20260929)
+    seq2 = [solo2["color"]] + [nk.reassign_color(solo2["nickname_id"])["color"] for _ in range(6)]
+    uniq = len(set(seq2[1:]))
+    check("★ 回归（v0.18.0 实测）：单条昵称连点 6 次换色 → ≥ 3 种不同颜色，不是两色互跳",
+          uniq >= 3, " → ".join(seq2) + f"（不同色 {uniq} 种）")
+    check("……且每一步都真的换了（相邻不重复）",
+          all(a != b for a, b in zip(seq2, seq2[1:])),
+          f"相邻 {['%.0f' % pool.visual_distance(a, b) for a, b in zip(seq2, seq2[1:])]}")
 
     wipe()
     made15 = [nk.create(f"人{i}") for i in range(15)]
@@ -1132,8 +1169,10 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
     except Exception as e:                                    # noqa: BLE001
         d_gap = -1.0
         print(f"  ! 算 ΔE 失败：{type(e).__name__}: {e}")
-    push(f"……换到的色与旧色 ΔE00 = {d_gap:.1f} ≥ 60（一眼可辨；旧实现只会给出 color_02，ΔE00 9.2）",
-         d_gap >= 60, f"{a.get('color')} → {r.get('color')} ΔE00={d_gap:.1f}")
+    from nicknames import MIN_RECOLOR_DISTANCE as _MIN_D
+    push(f"……换到的色与旧色 ΔE00 = {d_gap:.1f} ≥ {_MIN_D:.0f}"
+         f"（一眼可辨；旧实现只会给出 color_02，ΔE00 9.2）",
+         d_gap >= _MIN_D, f"{a.get('color')} → {r.get('color')} ΔE00={d_gap:.1f}")
     st, body = _http(B, "POST", "/api/nicknames/99999/reassign-color")
     push("reassign-color 不存在的 id → 404 NICKNAME_NOT_FOUND",
          st == 404 and body.get("detail", {}).get("code") == "NICKNAME_NOT_FOUND")
@@ -1156,17 +1195,24 @@ def _phase2_http_checks(srv: _Srv, out: list) -> None:
          st == 409 and body.get("detail", {}).get("code") == "NICKNAME_INACTIVE", f"{st} {body}")
 
     # ── ★ 释放的颜色能被下一个新建拿到 ──
-    # 让「甲A」先持有 color_01（池中第一个色）——它此前**一直被 active 行占着**——
-    # 再软删它；此时 color_01 就是池中第一个空闲色，新建必须拿回这个刚被释放的色。
+    # 让「甲A」换一次色（换到一个空闲色）→ 软删它 → 「池中第一个空闲色」（= 新建的口径
+    # pick_first_available）必须能立刻被下一个新建拿到：删掉的色回到了池子（§3.5）。
+    # ⚠ 换色自 v0.18.1 起是**随机**的，所以这里**不能**钉死「甲必须持有 color_01」——
+    #   改成按池子顺序算出「此刻第一个空闲色」再对账（口径与新建完全一致）。
     st, body = _http(B, "POST", f"/api/nicknames/{aid}/reassign-color")
     held = body.get("nickname", {}).get("color")
     before_used = {n["color"] for n in g("/api/nicknames?status=active")[1]["nicknames"]}
     _http(B, "DELETE", f"/api/nicknames/{aid}")
+    after_used = {n["color"] for n in g("/api/nicknames?status=active")[1]["nicknames"]}
+    from nicknames import COLOR_POOL as _POOL
+    first_free = next(c for c in _POOL if c not in after_used)
     st, body = _http(B, "POST", "/api/nicknames", {"display_name": "丙"})
     got = body.get("nickname", {}).get("color")
     push("★ 软删释放的颜色能被**下一个新建**拿到（删掉的色回到了池子，§3.5）",
-         held == "color_01" and held in before_used and st == 201 and got == held,
-         f"删前 active 占用={sorted(before_used)} / 被删行持有={held} / 新建拿到={got}")
+         st == 201 and held in before_used and held not in after_used
+         and held in [c for c in _POOL if c not in after_used] and got == first_free,
+         f"删前 active 占用={sorted(before_used)} / 被删行持有={held} / "
+         f"删后空闲={sorted(c for c in _POOL if c not in after_used)} / 新建拿到={got}")
     new_id = body.get("nickname", {}).get("nickname_id")
 
     # ── 没有「越权」概念（§7 Phase 2 验收 5）──

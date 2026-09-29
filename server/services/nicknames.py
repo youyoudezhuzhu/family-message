@@ -37,7 +37,7 @@ import db
 # 这里转发一遍，业务层只 import 这一个模块就够（常量本身不复制）。
 from nicknames import (COLOR_POOL, COLOR_POOL_VERSION, LOCAL_TEMP_BASE_COLOR,  # noqa: F401
                        LOCAL_TEMP_COLOR_ID, LOGICAL_COLORS, MAX_ACTIVE_NICKNAMES,
-                       is_valid_shared_color, pick_farthest_from, pick_first_available,
+                       is_valid_shared_color, pick_random_recolor, pick_first_available,
                        visual_distance)
 
 #: 昵称长度上限：NAS / API / PC / Web 统一 32（§5.5 / §10 已定 13）
@@ -297,10 +297,12 @@ def remove(nickname_id: int) -> dict:
 def reassign_color(nickname_id: int) -> dict:
     """给这一行换一个**未被任何 active 占用**的逻辑色 ID；**新色必与旧色不同**。
 
-    ★ 选出的是「候选里与旧色**感知差异最大**」的那个（`pick_farthest_from`，CIEDE2000），
-    不是「池子顺序第一个可用色」—— 后者在只有 1 条昵称时会在 `color_01`/`color_02`
-    之间来回跳（两者浅色圆点 ΔE2000 只有 7.5），用户看到的现象就是「点了没反应」。
-    池子顺序仍由新建（`create`）使用，两处口径不同是有意的。
+    ★ 选色 = 「在够远的候选里**随机**取一个」（`pick_random_recolor`）：
+    先把候选里与旧色 CIEDE2000 距离 < 35（肉眼看不出变化）的剔掉，再从剩下的随机取。
+
+    *为什么是随机*：v0.18.0 用的是「取与旧色差异最大者」，确定性 → 对同一条昵称反复点，
+    结果在「原色 ↔ 最远色」之间来回跳（用户实测反馈：**「只在绿色和原本色之间互换」**）。
+    现在同一场景连点多次会给出一串不同的色（`tools/test_nicknames.py` §6b 有连点回归）。
 
     池满（16 个色全被 active 占着）→ `NoAvailableColor`（503）—— 这是正确结果：
     没有别的色可换，绝不回退到「就用原来的色」假装成功（规格 §11）。
@@ -327,10 +329,11 @@ def _reassign_once(nickname_id: int) -> dict:
         used = {r[0] for r in conn.execute(
             "SELECT color FROM nicknames WHERE status='active'")}
         used.discard(old_color)                      # 排除自身（§6.4 最后一行）
-        # ★ 候选保持 COLOR_POOL 顺序（同分时靠它保确定性），但**不是**取第一个：
-        #   取与旧色感知差异最大的那个，否则单条昵称时会 01↔02 死循环（用户报的「没反应」）。
+        # ★ 候选保持 COLOR_POOL 顺序，但**不是**取第一个、也**不是**永远取最远的：
+        #   在「与旧色 ΔE00 ≥ MIN_RECOLOR_DISTANCE」的候选里**随机**取一个 ——
+        #   取最远是确定性的，单条昵称时会 原色↔最远色 两色互跳（v0.18.0 实测反馈）。
         candidates = [c for c in COLOR_POOL if c not in used and c != old_color]
-        color = pick_farthest_from(old_color, candidates)
+        color = pick_random_recolor(old_color, candidates)
         if color is None:
             raise NoAvailableColor()
 

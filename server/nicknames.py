@@ -17,13 +17,17 @@
    → `gray` 不在本模块的 `COLOR_POOL` 里、不在 `nicknames.color` 的 DDL `CHECK` 枚举里，
      永远不被分配给共享昵称，`is_valid_shared_color("gray")` 返回 `False`（§3.2.1）。
 
-★ **4. 「重新分配颜色」按感知距离选**（`pick_farthest_from()`，本轮修复）：
-   在「没被 active 占用、且不等于旧色」的候选里，取**与旧色 CIEDE2000 距离最大**的那个。
+★ **4. 「重新分配颜色」= 在「够远」的候选里随机**（`pick_random_recolor()`，v0.18.1 修）：
+   候选 = 池中**没被 active 占用、且不等于旧色**的逻辑色；先筛掉与旧色 CIEDE2000 距离
+   < `MIN_RECOLOR_DISTANCE`(35) 的「看着几乎一样」的色，**在剩下的里面随机取一个**。
 
-   *为什么换算法*：原来 reassign 也走「池子顺序第一个可用色」。库里只有 1 条昵称时，
-   可用色 = 池中除自己以外的全部，于是永远取到 `color_02`；再点一次又取回 `color_01` ——
-   在 `color_01`/`color_02` 之间来回跳。这两个色在浅色主题圆点上是 `#3D2273` 与 `#252F6F`，
-   **ΔE76 只有 15.2（ΔE2000 7.5）**，肉眼看不出变化 → 用户报「点重新分配颜色没反应」。
+   *为什么改成随机*：v0.18.0 用的是「取与旧色差异最大者」（`pick_farthest_from()`），
+   它是**确定性**的 —— 同一条昵称反复点，候选集合不变、结果也不变：`color_01`(紫) 的最远色是
+   `color_08`/`color_07`(黄绿/绿)，再点又回 `color_01`。**v0.18.0 实测反馈就是「只在绿色和原本色
+   之间互换，不是真正的随机颜色」**。现在同一场景连点多次会给出一串不同的色。
+   `pick_farthest_from()` **保留**，但只在「所有候选都离旧色太近（< 35）」时兜底：那时随机已无意义，
+   取最远的至少保证「看得出变了」。与「新建」走 `pick_first_available()`（池子顺序第一个可用）
+   仍是两套口径，这是有意的。
 
    *为什么不挂显示色映射表*：客户端圆点 / 头像底是基础色的**固定线性混合**
    （§4.4 规则 1：浅色 `mix(base,#000,35%)`、深色 `mix(base,#FFF,30%)`），在 Lab 里几乎保序 ——
@@ -38,6 +42,7 @@
 from __future__ import annotations
 
 import math
+import random
 import sqlite3
 
 # ── ① 「逻辑色 ID → 基础色值」常量表 ─────────────────────────────────
@@ -221,6 +226,10 @@ def pick_farthest_from(old_color: str, candidates) -> str | None:
     """在 `candidates`（可迭代的逻辑色 ID，**不重复且已排除被占用 / 自身**）里，
     取与 `old_color` **感知距离最大**的那个；`candidates` 为空 → `None`（= 池满，调用方抛 503）。
 
+    ⚠ 现在**不直接用于「换色」**（换色走 `pick_random_recolor()`，见模块文档第 4 点）；
+    它只剩一个用途：换色时候选**全都**离旧色太近（< `MIN_RECOLOR_DISTANCE`）时兜底 ——
+    那时随机已无意义，取最远的至少保证「看得出变了」。
+
     两条确定性规则（可测试、可复现）：
       · **同分取迭代顺序靠前者** —— 调用方传的是 `COLOR_POOL` 顺序，所以同分时等价于
         「池子书写顺序」，与 `pick_first_available()` 的口径一致；
@@ -241,4 +250,33 @@ def pick_farthest_from(old_color: str, candidates) -> str | None:
         if d > best_d:                      # 严格大于 → 同分保留先出现的（确定性）
             best, best_d = c, d
     return best
+
+
+#: 「换色」时新色与旧色的**最小感知差异**（CIEDE2000）。
+#: 低于它的候选被排除，否则随机可能挑到肉眼看不出变化的色（`color_01`↔`color_02` 只有 9.2、
+#: `color_01`↔`color_14` 9.3）→ 用户以为「点了没反应」。
+#: 取 35 的依据：16 个旧色里，每个旧色至少还有 **7** 个候选满足它（最多 11 个）——
+#: 既保证「一步看得出变化」，又保证随机池足够大（阈值 45 时最少只剩 2 个候选，随机就没意义了）。
+MIN_RECOLOR_DISTANCE = 35.0
+
+
+def pick_random_recolor(old_color: str, candidates, *, rnd: random.Random | None = None) -> str | None:
+    """「重新分配颜色」的选色：在**够远**的候选里**随机**取一个。
+
+    `candidates` 由调用方给出（= 池中没被 active 占用、且不等于旧色的逻辑色 ID）。
+    筛选：只保留与 `old_color` 的 CIEDE2000 距离 ≥ `MIN_RECOLOR_DISTANCE` 的；
+    若一个都没有（池子快被占满 / 只剩邻近色）→ 退回 `pick_farthest_from()` 取最远的。
+    候选为空 → `None`（= 池满，调用方抛 503，绝不回退同色）。
+
+    `rnd` 只为单测注入固定种子用；生产走模块级 `random`。
+    """
+    items = list(candidates)
+    if not items:
+        return None
+    far = [c for c in items if c in LOGICAL_COLORS
+           and old_color in LOGICAL_COLORS
+           and visual_distance(old_color, c) >= MIN_RECOLOR_DISTANCE]
+    if not far:                              # 全都很近 → 至少给个最远的（仍不等于旧色）
+        return pick_farthest_from(old_color, items)
+    return (rnd or random).choice(far)
 
