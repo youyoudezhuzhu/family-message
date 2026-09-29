@@ -602,9 +602,28 @@ pc-agent/
 **改什么**
 1. 文档：按 §5.2 补齐/修正 `docs/PROTOCOL.md`，并新增「能力清单」与「客户端实现检查表」；
    把 `docs/DESIGN.md:75-84`、`:191` 的过期段落标注为历史（§2.7-⑫）。
-2. 清理候选：`web/static/shell.js`（916 行，废弃）、`webHostWindow` 里遗留的 `_pending` 语义、`AgentClient.cs` 旧名残留。
+2. 清理候选：~~`web/static/shell.js`（916 行，废弃）~~、`webHostWindow` 里遗留的 `_pending` 语义、`AgentClient.cs` 旧名残留。
+   - ⚠ **2026-09-29 勘察更正**：`web/static/shell.js` **不是废弃件** —— 它是**浏览器预览壳**的运行件
+     （`web/index.html` 仍在 `<script src="static/shell.js?v=0.17.1">` 引用它，文件头自带
+     「浏览器模式一行都不变 / 壳模式不连 /ws/web / 页面不直接调宿主能力」三条硬规矩）。
+     删它必须同时改 `web/index.html`，属于 Web 侧重构 → **本轮决定：不删**，
+     与「浏览器预览模式去留」一起放到下轮决策。
+   - `_pending`：核实为**页面 ACK 等待集**（加：交给页面时；减：`web.ack`；清：关窗按已读回报），
+     **不是遗留字段** → 已在 `WebHostWindow.xaml.cs` 就地定死语义，保留。
+   - `AgentClient.cs`：v0.16 重构时已删除；Core 里 20+ 处注释引用是**迁移溯源**（带行号出处），
+     批量删会丢掉「这段逻辑从哪来」的线索 → 口径统一收敛到 `pc-agent/FamilyAgent.Core/README.md`。
 3. 产出「Android 契约核对表」一页：`Core` 里哪些接口 Android 必须自己实现（`IPlatformInfo` / `IScreenshotProvider` /
    `IPowerProvider` / `MessageStore` / 会话状态）、哪些直接复用协议（`PROTOCOL.md:240-252` 已有初版）。
+   → 已产出：**`docs/ANDROID-CONTRACT.md`**（该页同时修正了初版里两条过期结论：昵称已不是本地概念、心跳结论保留）。
+
+**执行记录（2026-09-29，Phase 5 落地）**
+
+| 项 | 结果 | 证据 |
+|---|---|---|
+| 1 协议文档 | ✅ `docs/PROTOCOL.md` 冻结版（服务端 26 帧 + 设备上行 14 帧 + §10 能力清单 + §11 客户端检查表 + `message_status` 标预留）；`docs/DESIGN.md` 两处标历史 | `python3 tools/check_protocol_doc.py` → 退出码 0 |
+| 2 清理 | ✅ shell.js **保留**（见上）；`_pending` 语义定死；`AgentClient` 口径收敛（README） | `dotnet build` 0 warning；`python3 tools/check_agent_refs.py` 通过 |
+| 3 Android 契约 | ✅ `docs/ANDROID-CONTRACT.md` | 表 A 6 个接口签名逐条核对 Core 源码 |
+| ★ 勘察新发现 | ⚠ **`messages.sender_nickname_id` / `sender_color` 没有写端**（列 / 索引 / 两端读端都在，写端缺失 → 恒 `NULL`）→ 已在协议里标为预留并要求客户端容忍 `null`；**补写端另立一项**（需放开 `server/`） | `grep -rn 'sender_nickname_id' server/ pc-agent/` 只命中 `db.py` 的建表/索引 |
 
 **验收标准**
 - 机械判据：`grep -rn '"type":' server/main.py server/hub.py` 的输出与 `PROTOCOL.md` 的帧表格**逐条对齐**（允许「已注释」项被显式标注为不广播）。
