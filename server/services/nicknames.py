@@ -36,9 +36,12 @@ import db
 # 逻辑色池的**唯一定义点**在 server/nicknames.py（§4.3）；
 # 这里转发一遍，业务层只 import 这一个模块就够（常量本身不复制）。
 from nicknames import (COLOR_POOL, COLOR_POOL_VERSION, LOCAL_TEMP_BASE_COLOR,  # noqa: F401
-                       LOCAL_TEMP_COLOR_ID, LOGICAL_COLORS, MAX_ACTIVE_NICKNAMES,
-                       is_valid_shared_color, pick_random_recolor, pick_first_available,
+                       LOCAL_TEMP_COLOR_ID, LOGICAL_COLORS, MAX_ACTIVE_NICKNAMES, MAX_COLOR_POOL,
+                       is_valid_shared_color, pick_random_recolor,
                        visual_distance)
+# ★ v0.19：色表是**数据**（表 nickname_colors）。依赖方向 color_svc → nicknames（纯常量），
+#   反向不依赖 —— 本模块是那个「反向」的拥有者，所以取色一律问 color_svc。
+from services import colors as color_svc
 
 #: 昵称长度上限：NAS / API / PC / Web 统一 32（§5.5 / §10 已定 13）
 NAME_MAX_LEN = 32
@@ -184,6 +187,26 @@ def _fetch(conn: sqlite3.Connection, nickname_id: int) -> dict:
                                 (nickname_id,)).fetchone())
 
 
+# ── 动态色表（v0.19：池子从 DB 读，见 services/colors.py）──────────────────
+def pick_first_available(conn: sqlite3.Connection) -> str | None:
+    """在**调用方的事务里**查 active 占用，返回**动态色表**里第一个可用的逻辑色 ID。
+
+    ⚠ 与 `nicknames.pick_first_available` **同名是有意的**：
+      ① 老测试会 monkeypatch `nk.pick_first_available`（`tools/test_nicknames.py` 用它造「色被抢走」的冲突）；
+      ② 业务层只需要一个「取第一个可用色」的口径 —— 只是现在这个池子来自 DB，按 `sort` 排序，
+         用户新加的颜色也能被分配（v0.19）。
+    返回 `None` = 没色可给 → 调用方抛 `NoAvailableColor`（503），**绝不重色**（§11）。
+    """
+    used = {row[0] for row in conn.execute(
+        "SELECT color FROM nicknames WHERE status='active'")}
+    return next((c for c in color_svc.pool_ids(conn) if c not in used), None)
+
+
+def active_count(conn: sqlite3.Connection) -> int:
+    """当前 active 昵称条数（额度提示与上限判定都用它）。"""
+    return int(conn.execute("SELECT COUNT(*) FROM nicknames WHERE status='active'").fetchone()[0])
+
+
 # ── 创建（§3.3 / §6.2 / §6.3）────────────────────────────────────────────
 def create(display_name: str) -> dict:
     """创建一个**新的**共享昵称，返回完整对象（`color` 是服务端分配的逻辑色 ID）。
@@ -197,7 +220,7 @@ def create(display_name: str) -> dict:
     """
     name = normalize(display_name)
 
-    for _ in range(len(COLOR_POOL) + 2):
+    for _ in range(MAX_COLOR_POOL + 2):
         try:
             row = _create_once(name)
         except sqlite3.IntegrityError as exc:
@@ -226,12 +249,17 @@ def _create_once(name: str) -> dict:
         if row:
             raise NicknameAlreadyExists(int(row["nickname_id"]))
 
-        # ② 同一事务里取第一个可用色（返回逻辑色 ID，如 'color_07' —— 不是 HEX）
+        # ② 活跃上限 16：与池子大小**解耦**（池子可以更长，但活跃昵称最多
+        #    MAX_ACTIVE_NICKNAMES 条 —— 额度文案「x/16」与 UI 都按它，§4.3）
+        if active_count(conn) >= MAX_ACTIVE_NICKNAMES:
+            raise NoAvailableColor()
+
+        # ③ 同一事务里取第一个可用色（查**动态色表**，按 sort；返回逻辑色 ID，不是 HEX）
         color = pick_first_available(conn)
         if color is None:
             raise NoAvailableColor()
 
-        # ③ 插入
+        # ④ 插入
         now = db.now_iso()
         cur = conn.execute(
             "INSERT INTO nicknames (display_name, color, status, created_at, updated_at)"
@@ -307,7 +335,7 @@ def reassign_color(nickname_id: int) -> dict:
     池满（16 个色全被 active 占着）→ `NoAvailableColor`（503）—— 这是正确结果：
     没有别的色可换，绝不回退到「就用原来的色」假装成功（规格 §11）。
     """
-    for _ in range(len(COLOR_POOL) + 2):
+    for _ in range(MAX_COLOR_POOL + 2):
         try:
             row = _reassign_once(nickname_id)
         except sqlite3.IntegrityError as exc:
@@ -329,10 +357,10 @@ def _reassign_once(nickname_id: int) -> dict:
         used = {r[0] for r in conn.execute(
             "SELECT color FROM nicknames WHERE status='active'")}
         used.discard(old_color)                      # 排除自身（§6.4 最后一行）
-        # ★ 候选保持 COLOR_POOL 顺序，但**不是**取第一个、也**不是**永远取最远的：
+        # ★ 候选来自**动态色表**（用户增删的颜色一样参与），但不是取第一个、也不是永远取最远的：
         #   在「与旧色 ΔE00 ≥ MIN_RECOLOR_DISTANCE」的候选里**随机**取一个 ——
         #   取最远是确定性的，单条昵称时会 原色↔最远色 两色互跳（v0.18.0 实测反馈）。
-        candidates = [c for c in COLOR_POOL if c not in used and c != old_color]
+        candidates = [c for c in color_svc.pool_ids(conn) if c not in used and c != old_color]
         color = pick_random_recolor(old_color, candidates)
         if color is None:
             raise NoAvailableColor()
@@ -340,6 +368,39 @@ def _reassign_once(nickname_id: int) -> dict:
         conn.execute("UPDATE nicknames SET color=?, updated_at=? WHERE nickname_id=?",
                      (color, db.now_iso(), nickname_id))
         return _fetch(conn, nickname_id)
+
+
+# ── 指定颜色（v0.19 新能力，docs/COLOR-TABLE-PLAN.md §3.2）───────────────
+def set_color(nickname_id: int, color_id: str) -> dict:
+    """**人为**把某个昵称指定成表里的某个颜色（与「换色 = 随机换一个够远的」并列）。
+
+    校验链（任何一条不过就明确报错，不静默）：
+      ① `color_id` 形状（`color_NN`，`gray` 不算）→ `INVALID_COLOR_ID`(422)；
+      ② 在色表里且没被停用 → `COLOR_NOT_FOUND`(404) / `COLOR_RETIRED`(409)（`color_svc.require_assignable`）；
+      ③ 昵称存在且是 active → `NICKNAME_NOT_FOUND`(404) / `NICKNAME_INACTIVE`(409)（`_row_or_raise`）；
+      ④ 该色**没被别的 active 昵称占着** → `COLOR_IN_USE`(409)（DDL 唯一索引是并发时的最后防线）。
+
+    已经就是这个色 → **原样返回**（幂等，不写审计、不广播）。历史消息**不回写**（快照冻结，§3.4.1）。
+    """
+    if not isinstance(nickname_id, int):
+        raise NicknameNotFound(None)
+    with db.tx() as conn:
+        row = _row_or_raise(conn, nickname_id)
+        color_svc.require_assignable(conn, color_id)
+        if row["color"] == color_id:
+            return _public(row)
+        holder = conn.execute(
+            "SELECT nickname_id, display_name FROM nicknames"
+            " WHERE status='active' AND color=? AND nickname_id<>?",
+            (color_id, nickname_id)).fetchone()
+        if holder:
+            raise color_svc.ColorInUse(color_id, int(holder["nickname_id"]), holder["display_name"])
+        conn.execute("UPDATE nicknames SET color=?, updated_at=? WHERE nickname_id=?",
+                     (color_id, db.now_iso(), nickname_id))
+        out = _fetch(conn, nickname_id)
+    db.log_event(None, "nickname_color_changed",
+                 f"#{nickname_id} {out['display_name']} → {color_id}（指定）")
+    return out
 
 
 # ── 读（纯读，绝不创建任何东西，§0.9 / §6.2 末）─────────────────────────

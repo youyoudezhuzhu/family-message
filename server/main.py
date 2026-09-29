@@ -34,6 +34,7 @@ from hub import HUB, DeviceOffline
 from services import devices as dev_svc
 from services import messages as msg_svc
 from services import nicknames as nick_svc
+from services import colors as color_svc
 from services import unlock as unlock_svc
 from services import xiaomi as xiaomi_svc
 
@@ -178,7 +179,7 @@ async def api_config():
     # 与「开关关闭时现有行为逐字不变」这条硬约束一致（§7 的额外字段只服务 Phase 3）。
     if CONFIG["nickname"]["enabled"]:
         out["nickname_enabled"] = True
-        out["color_pool_version"] = nick_svc.COLOR_POOL_VERSION
+        out["color_pool_version"] = color_svc.pool_version()   # v0.19：版本随色表变（存在 DB 里）
     return out
 
 
@@ -781,15 +782,18 @@ def _nickname_list_frame(kind: str) -> dict:
     return {
         "type": kind,
         "nicknames": nick_svc.list("active"),
-        "pool_version": nick_svc.COLOR_POOL_VERSION,
+        "pool_version": color_svc.pool_version(),      # v0.19：跟着色表变（客户端据此重拉）
     }
 
 
-def _nickname_err_frame(exc: nick_svc.NicknameError, request: str) -> dict:
+def _nickname_err_frame(exc, request: str) -> dict:
     """设备侧的 `nickname_error`（§5.4 下行帧表）。
 
     `request` 回显发起帧的 type，客户端据此把错误配对回它那份请求；
     `existing_nickname_id` 只在**创建撞名**时出现（UI 拿它引导「直接选用它」）。
+
+    `exc` 上不写死类型：`NicknameError` 与 `ColorError`（v0.19 色表）**同构**，
+    都有 `.to_detail()`，两族错误共用这个构造函数。
     """
     d = exc.to_detail()
     frame = {"type": "nickname_error", "request": request,
@@ -810,6 +814,20 @@ async def _broadcast_nickname(payload: dict) -> None:
     """
     if not CONFIG["nickname"]["enabled"]:
         return
+    await HUB.broadcast_web(payload)
+    for device_id in list(HUB.devices.keys()):
+        await HUB.send_to_device(device_id, payload)
+
+
+async def _broadcast_color_table() -> None:
+    """色表变了（加色 / 停用）→ 让所有连着的客户端**重拉一次**色表（v0.19 新帧）。
+
+    只带版本号，**不推全表**：客户端自己按 `GET /api/nicknames/colors` 拉，
+    这样以后色表再长也不会把每一帧撑大（老客户端认不出这个帧 → 忽略即可，§2.4）。
+    """
+    if not CONFIG["nickname"]["enabled"]:
+        return
+    payload = {"type": "color_table_changed", "color_pool_version": color_svc.pool_version()}
     await HUB.broadcast_web(payload)
     for device_id in list(HUB.devices.keys()):
         await HUB.send_to_device(device_id, payload)
@@ -889,8 +907,11 @@ if CONFIG["nickname"]["enabled"]:
     class NicknamePatchBody(BaseModel):
         display_name: str
 
-    def _nickname_fail(exc: nick_svc.NicknameError) -> HTTPException:
-        """业务错误 → HTTP（`status` 用错误类自带的，`detail` 是 `{code, message, …}`，§5.1）。"""
+    def _nickname_fail(exc) -> HTTPException:
+        """业务错误 → HTTP（`status` 用错误类自带的，`detail` 是 `{code, message, …}`，§5.1）。
+
+        `exc` 不写死类型：`NicknameError` 与 v0.19 的 `ColorError` **同构**，都用这个转换。
+        """
         return HTTPException(exc.http_status, detail=exc.to_detail())
 
     @app.get("/api/nicknames", dependencies=[WebAuth])
@@ -961,6 +982,70 @@ if CONFIG["nickname"]["enabled"]:
         })
         return {"ok": True, "nickname_id": out["nickname_id"],
                 "released_color": out["released_color"]}
+
+    # ── 颜色表（v0.19：色表是数据；docs/COLOR-TABLE-PLAN.md §3.2）──────────────
+    class ColorAddBody(BaseModel):
+        """加颜色：`hex`（`#RRGGBB` / `RRGGBB` / `#RGB`）或 `rgb`（`[94,53,177]`），二选一。"""
+
+        hex: str | None = None
+        rgb: list[int] | None = None
+
+    class NicknameColorBody(BaseModel):
+        """给某个昵称**指定**颜色（传逻辑色 ID，不是 HEX）。"""
+
+        color_id: str
+
+    @app.get("/api/nicknames/colors", dependencies=[WebAuth])
+    async def api_color_list(status: str = "all"):
+        """列颜色表：默认 `all`（可用 + 已停用，UI 要画两个区）。
+
+        每行带 `used_by`（正在用它的 active 昵称），停用按钮据此置灰并说明「谁在用」。
+        """
+        try:
+            rows = color_svc.rows(status)
+        except color_svc.ColorError as e:
+            raise _nickname_fail(e)
+        return {"color_pool_version": color_svc.pool_version(), "colors": rows}
+
+    @app.post("/api/nicknames/colors", dependencies=[WebAuth], status_code=201)
+    async def api_color_add(body: ColorAddBody):
+        """加一个颜色 → **201**；同色值已在表里 → **409 `COLOR_ALREADY_EXISTS`**（带既有的 id）。
+
+        新 ID = 现有最大序号 +1（**只增不复用**，已停用的序号也占着）；到 32 个 → 503。
+        """
+        value = body.hex if body.hex else (",".join(str(x) for x in body.rgb) if body.rgb else "")
+        try:
+            row = color_svc.add(value)
+        except color_svc.ColorError as e:
+            raise _nickname_fail(e)
+        await _broadcast_color_table()
+        return {"color": row, "color_pool_version": color_svc.pool_version()}
+
+    @app.delete("/api/nicknames/colors/{color_id}", dependencies=[WebAuth])
+    async def api_color_retire(color_id: str):
+        """停用一个颜色（行**保留**、`status='retired'`）：正被 active 昵称用着 → 409 `COLOR_IN_USE`。
+
+        ⚠ 不 DELETE 行、ID 不复用 —— 历史消息快照只存 ID，复用会让老消息颜色漂移（§3.4.1）。
+        """
+        try:
+            row = color_svc.retire(color_id)
+        except color_svc.ColorError as e:
+            raise _nickname_fail(e)
+        await _broadcast_color_table()
+        return {"color": row, "color_pool_version": color_svc.pool_version()}
+
+    @app.post("/api/nicknames/{nickname_id}/color", dependencies=[WebAuth])
+    async def api_nickname_set_color(nickname_id: int, body: NicknameColorBody):
+        """**人为**给某个昵称指定颜色（与「换色 = 随机换一个够远的」并列）。
+
+        该色被别的 active 昵称占着 → 409 `COLOR_IN_USE`；已经是这个色 → 幂等返回。
+        """
+        try:
+            row = nick_svc.set_color(nickname_id, body.color_id)
+        except (nick_svc.NicknameError, color_svc.ColorError) as e:
+            raise _nickname_fail(e)
+        await _broadcast_nickname({"type": "nickname_color_changed", "nickname": row})
+        return {"nickname": row}
 
 
 # ============================================================
