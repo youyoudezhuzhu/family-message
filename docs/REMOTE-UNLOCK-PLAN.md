@@ -627,3 +627,27 @@ def require(perm):
 **只做 P2（安全存凭据 + 全链路可验证，但仍不能真解锁），还是 P2+P3 一起排期？**
 我的建议：**先只做 P2** —— 它零风险、可独立验证，而且 P3 的 CP 一定要等你在 VM 里能测的时候才动。
 
+> 2026-09-29 答复：按推荐值先做 P2。
+
+---
+
+## 17. Phase 2 进度（滚动更新）
+
+- **2026-09-29 · 第 1 步完成 ✅**：凭据存取的**平台无关抽象**已进 Core ——
+  `pc-agent/FamilyAgent.Core/Unlock/{ISecretProtector, CredentialVault, UnlockGate}.cs`
+  + `pc-agent/FamilyAgent.Core.Tests/UnlockCredentialTests.cs`（12 条判据，Core 单测 **153 → 165** 全过）。
+  已机械验证：存/取一致；**磁盘上无明文**（口令本身与它的 base64 都不出现）；密文被改 / 换了熵 →
+  按「没配凭据」处理且**不抛异常**；连续 3 次失败 → 冷却 10 分钟（冷却中连正确口令也不接受，
+  且不再去戳平台校验）→ 窗口过后恢复；成功清零并记 `verified_at`；审计行只记「谁 / 第几次 / 结果」、
+  **不含口令**；校验实现抛异常 → 按「不对」处理，绝不放行。
+  ⚠ 这一组用的是**假实现**（`FakeProtector` / `FakeVerifier`）—— DPAPI 与 `LogonUser` 的真实现
+  是 Windows 侧的事，真机行为要等接线后在 Windows 上验。
+
+- **待做（按 §16.2 清单顺序）**：
+  1. Windows 侧 `DpapiSecretProtector`（LocalMachine + 附加熵 + 文件 ACL 只给服务账户）
+  2. `LogonUser` 校验实现（验证型登录，不建交互会话 → 不会把用户桌面顶掉）
+  3. Service 宿主（安装/卸载/恢复策略）+ 命名管道（ACL 限当前交互用户）
+  4. 设置页「凭据」卡（输入 / 测试 / 清除 + 冷却提示）
+  5. `capabilities` 上报 `unlock` + `docs/PROTOCOL.md` 那行 ❌ → ✅
+  6. 真机验收：按 §16.4 的 5 条判据逐条过（其中第 3 条可扩 `tools/test_unlock.py` 自动化）
+
