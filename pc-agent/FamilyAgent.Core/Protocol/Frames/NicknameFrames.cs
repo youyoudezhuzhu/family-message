@@ -62,10 +62,34 @@ public sealed class NicknameDto
 }
 
 /// <summary>
+/// v0.19：颜色表的一行 —— **逻辑色 ID → 基础 HEX**（HEX 只是客户端算显示色的起点）。
+///
+/// 色表是**数据**（服务端表 <c>nickname_palette</c> 是权威），客户端内置那份只做首屏兜底：
+/// 整表帧带来这一份之后，认色一律以它为准，认不出的 ID 才走兜底色。
+/// </summary>
+public sealed record NicknameColorEntry(string ColorId, string Hex)
+{
+    /// <summary>#RRGGBB（大写化交给使用方；这里只判形状）。</summary>
+    public static bool IsValidHex(string? hex)
+    {
+        if (string.IsNullOrWhiteSpace(hex) || hex.Length != 7 || hex[0] != '#')
+            return false;
+        for (var i = 1; i < 7; i++)
+        {
+            var c = hex[i];
+            var ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+            if (!ok) return false;
+        }
+        return true;
+    }
+}
+
+/// <summary>
 /// <c>nickname_list_response</c>（点对点应答）与 <c>nickname_list_sync</c>（整表广播校正）**同形**。
 ///
 /// ⚠ 必须**全量**（<c>status=active</c>）：PC 弹窗右侧要显示别人的消息，没有全量就只能退回名字哈希。
-///   <see cref="PoolVersion"/> 让客户端判断自己那份「逻辑色 ID → 显示色」映射表是否落后（§4.3）。
+///   <see cref="PoolVersion"/> 让客户端判断自己那份「逻辑色 ID → 显示色」映射表是否落后（§4.3）；
+///   v0.19 起 <see cref="ColorTable"/> 直接带来权威色表（空 = 服务端没给，保留手上那份）。
 /// </summary>
 public sealed class NicknameListFrame : CoreFrame
 {
@@ -75,8 +99,23 @@ public sealed class NicknameListFrame : CoreFrame
     /// <summary>服务端的逻辑色池语义版本（本地映射表落后时只记日志，不改渲染）。</summary>
     public int PoolVersion { get; init; }
 
+    /// <summary>v0.19：服务端权威颜色表（空数组 = 这一帧没带，保留本地已有的）。</summary>
+    public IReadOnlyList<NicknameColorEntry> ColorTable { get; init; } = new List<NicknameColorEntry>();
+
     /// <summary>true = 来自 <c>nickname_list_sync</c> 广播（与点对应答只差 type）。</summary>
     public bool IsSync { get; init; }
+}
+
+/// <summary>
+/// v0.19：<c>color_table_changed</c> —— 颜色表被增删（**只带版本号**，不推全表）。
+///
+/// 客户端收到它：记下版本 → 发 <c>nickname_list_request</c> 重拉整表（整表帧里带权威色表）。
+/// 老客户端不认这个 type → 走通用兜底，不影响既有行为。
+/// </summary>
+public sealed class ColorTableChangedFrame : CoreFrame
+{
+    /// <summary>服务端口径的颜色表版本（客户端据此判断要不要重拉）。</summary>
+    public int PoolVersion { get; init; }
 }
 
 /// <summary>

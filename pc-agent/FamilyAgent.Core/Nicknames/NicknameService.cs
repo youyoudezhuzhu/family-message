@@ -120,6 +120,7 @@ public sealed class NicknameService
     private NicknameState _current;
     private bool _available;
     private int _poolVersion;
+    private IReadOnlyList<NicknameColorEntry> _colorTable = new List<NicknameColorEntry>();
     private string _notice = "";
 
     public NicknameService(INicknameTransport transport, INicknameStore store, string defaultName)
@@ -168,6 +169,17 @@ public sealed class NicknameService
     /// <summary>活跃上限（= 色池大小 16；界面据此提示额度，§3.1）。</summary>
     public static int MaxActive => NicknameColor.MaxActiveNicknames;
 
+    /// <summary>
+    /// v0.19：服务端下发的**权威颜色表**（逻辑色 ID → 基础 HEX）。
+    ///
+    /// 空 = 还没拿到（宿主推给页面时，页面用内置表兜底）；整表帧每来一次就整份替换，
+    /// 但**空表不覆盖** —— 服务端没带这个字段时保留手上那份（宁可用旧的，别把界面打回兜底色）。
+    /// </summary>
+    public IReadOnlyList<NicknameColorEntry> ColorTable
+    {
+        get { lock (_gate) { return _colorTable; } }
+    }
+
     /// <summary>一次性的界面提示（如「你用的昵称已被删除，已切回本地临时昵称」）；读过即清。</summary>
     public string TakeNotice()
     {
@@ -206,7 +218,15 @@ public sealed class NicknameService
         switch (frame)
         {
             case NicknameListFrame list:
-                ApplyTable(list.Nicknames, list.PoolVersion);
+                ApplyTable(list.Nicknames, list.PoolVersion, list.ColorTable);
+                return true;
+
+            // v0.19：颜色表被增删（只带版本号）→ 记下版本并重拉整表（整表帧里带权威色表）。
+            // 不直接改渲染：等整表回来再一起换，避免「半张表」造成界面闪烁。
+            case ColorTableChangedFrame tableChanged:
+                lock (_gate) { _poolVersion = tableChanged.PoolVersion; }
+                AgentLog.Write($"[NICK] 颜色表变了（v{tableChanged.PoolVersion}）→ 重拉整表");
+                RequestList();
                 return true;
 
             case NicknameDeltaFrame delta:
@@ -228,9 +248,11 @@ public sealed class NicknameService
         }
     }
 
-    private void ApplyTable(IReadOnlyList<NicknameDto> rows, int poolVersion)
+    private void ApplyTable(IReadOnlyList<NicknameDto> rows, int poolVersion,
+                            IReadOnlyList<NicknameColorEntry>? colorTable = null)
     {
         string? notice = null;
+        var adopted = 0;
         lock (_gate)
         {
             _available = true;
@@ -238,10 +260,18 @@ public sealed class NicknameService
             foreach (var row in rows)
                 _table.Add(row);
             _poolVersion = poolVersion;
+            // v0.19：**空表不覆盖** —— 服务端没带 color_table 时保留手上那份（宁可用旧的，
+            // 也别把界面打回兜底色；色表只在真拿到内容时才整份替换）
+            if (colorTable is { Count: > 0 })
+            {
+                _colorTable = colorTable;
+                adopted = colorTable.Count;
+            }
             notice = ReconcileLocked();
         }
 
         AgentLog.Write($"[NICK] 整表校正：{rows.Count} 条活跃昵称，pool_version={poolVersion}，"
+                     + $"色表={(adopted > 0 ? adopted + " 项" : "这一帧没带（保留原表）")}，"
                      + $"本机当前={Current}");
         Raise(notice);
     }

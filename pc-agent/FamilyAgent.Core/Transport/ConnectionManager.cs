@@ -493,6 +493,11 @@ public sealed class ConnectionManager : ICommandChannel, ISyncConnection
             case NicknameErrorFrame nicknameError:
                 NicknameFrameReceived?.Invoke(nicknameError);
                 break;
+
+            // v0.19：颜色表变了（只带版本号）→ 也走同一条「昵称帧」事件（同一个消费者）
+            case ColorTableChangedFrame colorTableChanged:
+                NicknameFrameReceived?.Invoke(colorTableChanged);
+                break;
         }
 
         // （收包日志已提前到 switch 之前 —— 见上面的 [WS] RX 行）

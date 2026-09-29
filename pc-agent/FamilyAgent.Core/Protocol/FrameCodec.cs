@@ -151,6 +151,16 @@ public static class FrameCodec
                 };
                 break;
 
+            // v0.19：颜色表变了（只带版本号）—— 客户端据此**重拉整表**（整表帧里带 color_table）
+            case FrameTypes.ColorTableChanged:
+                frame = new ColorTableChangedFrame
+                {
+                    Type = kind,
+                    Raw = rawEl,
+                    PoolVersion = ReadInt32(root, "color_pool_version"),
+                };
+                break;
+
             case FrameTypes.HeartbeatAck:
                 frame = new HeartbeatAckFrame { Type = kind, Raw = rawEl };
                 break;
@@ -164,6 +174,7 @@ public static class FrameCodec
                     Raw = rawEl,
                     Nicknames = ReadNicknameList(root, "nicknames"),
                     PoolVersion = ReadInt32(root, "pool_version"),
+                    ColorTable = ReadColorTable(root, "color_table"),   // v0.19
                     IsSync = kind == FrameTypes.NicknameListSync,
                 };
                 break;
@@ -237,6 +248,28 @@ public static class FrameCodec
             ? value
             : 0;
 
+    /// <summary>
+    /// 取 <c>{"color_table":[{color_id,hex},…]}</c>（v0.19：整表帧里带来的**权威颜色表**）。
+    ///
+    /// 缺失 / 不是数组 → 空表：客户端保留手上那份（内置表或上次拿到的），**绝不清空**。
+    /// 单条缺字段 / HEX 形状不对 → 跳过那一条（宁缺勿错，认不出的逻辑色 ID 会走兜底色）。
+    /// </summary>
+    private static IReadOnlyList<NicknameColorEntry> ReadColorTable(JsonElement obj, string name)
+    {
+        var list = new List<NicknameColorEntry>();
+        if (!obj.TryGetProperty(name, out var el) || el.ValueKind != JsonValueKind.Array)
+            return list;
+
+        foreach (var item in el.EnumerateArray())
+        {
+            var id = ReadString(item, "color_id");
+            var hex = ReadString(item, "hex");
+            if (!string.IsNullOrWhiteSpace(id) && NicknameColorEntry.IsValidHex(hex))
+                list.Add(new NicknameColorEntry(id, hex));
+        }
+        return list;
+    }
+
     /// <summary>取 <c>{"nickname":{…}}</c> 里那条昵称；缺字段 / 类型不对返回 null。</summary>
     private static NicknameDto? ReadNickname(JsonElement obj, string name) =>
         obj.TryGetProperty(name, out var el) ? NicknameDto.From(el) : null;
@@ -298,6 +331,8 @@ public static class FrameTypes
     public const string NicknameRemoved = "nickname_removed";
     public const string NicknameColorChanged = "nickname_color_changed";
     public const string NicknameError = "nickname_error";
+    // v0.19：颜色表变了（**只带版本号**）→ 客户端重拉整表（整表帧里带 color_table）
+    public const string ColorTableChanged = "color_table_changed";
     // 上行：五个设备帧**全部是在线操作**（离线时客户端根本不构造请求）
     public const string NicknameListRequest = "nickname_list_request";
     public const string NicknameCreateRequest = "nickname_create_request";

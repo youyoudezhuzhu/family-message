@@ -90,7 +90,13 @@ CREATE TABLE nickname_palette (
 >   `create`·`reassign` 改用动态色表、活跃上限 16 与池子大小解耦。
 >   测试：`tools/test_nicknames.py` **154/154**（含 27 条色表断言：ID 不复用、在用色不可停用、
 >   指定颜色、广播三端都收到、版本号逐次 +1）。
-> - **P2 / P3 / P4 未开工**（客户端渲染、网页界面、回归与发布）。
+> - **P2 ✅ 已完成（2026-09-29）**：色表由服务端下发、三端渲染以它为准 ——
+>   ① 设备 `hello` 帧带 `color_table` + `color_pool_version`；② 整表帧（response / sync）也带 `color_table`；
+>   ③ 网页端 `nickcolor.js` / PC 壳 `pc.js` 均「服务端表优先、内置表兜底、**空表不覆盖**」；
+>   ④ 网页端收 `color_table_changed` 免刷新重拉；PC 端由宿主收该帧→重拉整表→推 `host.nickname`；
+>   ⑤ `ANDROID-CONTRACT.md` 写明「不许写死 16 色」。测试：网页端 **85/85**、PC 套件（T7 七条）、
+>   NAS 套件 **155/155**、Core 单测 153。
+> - **P3 / P4 未开工**（网页端色表管理界面 + 逐昵称选色；回归与发布）。
 
 | 期 | 内容 | 交付物 | 不动的东西 |
 |---|---|---|---|

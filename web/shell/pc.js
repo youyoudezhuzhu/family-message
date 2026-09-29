@@ -88,10 +88,40 @@
     if (l1 < l2) { var t = l1; l1 = l2; l2 = t; }
     return (l1 + 0.05) / (l2 + 0.05);
   }
+  /* ★ v0.19：色表是**数据**（服务端表是权威）。上面那份 NICK_BASE 只做「首屏兜底」：
+     宿主（C#）会在 host.hello / host.nickname 里带 color_table（来自服务端整表帧），
+     拿到就整份覆盖；**空表不覆盖**（保留手上那份）；认不出的 ID 依旧走灰兜底（R2 不变）。 */
+  var NICK_SERVER_TABLE = null;      // {color_17:'#0FA3B1', …}；null = 还没拿到服务端的表
+  var NICK_TABLE_VERSION = 1;
+
+  function nickSetTable(rows, version) {
+    if (!rows || typeof rows.length !== 'number') return false;
+    var next = {};
+    for (var i = 0; i < rows.length; i++) {
+      var id = rows[i] && rows[i].color_id, hex = rows[i] && rows[i].hex;
+      if (typeof id === 'string' && typeof hex === 'string' && /^#[0-9A-Fa-f]{6}$/.test(hex)) {
+        next[id] = hex.toUpperCase();
+      }
+    }
+    if (!Object.keys(next).length) return false;   // 空表 / 全不合法 → 保留旧表，绝不清空
+    NICK_SERVER_TABLE = next;
+    if (typeof version === 'number') NICK_TABLE_VERSION = version;
+    return true;
+  }
+  function nickTableVersion() { return NICK_TABLE_VERSION; }
+  function nickHasServerTable() { return !!NICK_SERVER_TABLE; }
+
   function nickIsKnown(id) {
+    if (NICK_SERVER_TABLE && Object.prototype.hasOwnProperty.call(NICK_SERVER_TABLE, id)) return true;
     return typeof id === 'string' && Object.prototype.hasOwnProperty.call(NICK_BASE, id);
   }
-  function nickBase(id) { return nickIsKnown(id) ? NICK_BASE[id] : NICK_BASE[NICK_LOCAL_TEMP_ID]; }
+  /** 逻辑色 ID → 基础色值（**服务端表优先**，未知 → 灰的兜底色） */
+  function nickBase(id) {
+    if (NICK_SERVER_TABLE && Object.prototype.hasOwnProperty.call(NICK_SERVER_TABLE, id)) {
+      return NICK_SERVER_TABLE[id];
+    }
+    return nickIsKnown(id) ? NICK_BASE[id] : NICK_BASE[NICK_LOCAL_TEMP_ID];
+  }
   function nickTheme() {
     try {
       return document.documentElement.getAttribute('data-mode') === 'dark' ? 'dark' : 'light';
@@ -120,6 +150,10 @@
     baseColors: NICK_BASE,
     isKnown: nickIsKnown,
     base: nickBase,
+    /* ★ v0.19：色表以服务端为准（宿主带过来的 color_table） */
+    setTable: nickSetTable,
+    tableVersion: nickTableVersion,
+    hasServerTable: nickHasServerTable,
     theme: nickTheme,
     dot: nickDot,
     avatarBg: nickAvatarBg,
@@ -1145,6 +1179,8 @@
       }) : [],
       notice: String(d.notice || ''),
     };
+    // ★ v0.19：整份昵称状态里也带色表（服务端整表帧带来的）——先换上再画，避免用旧色画一遍
+    nickSetTable(d.color_table, d.pool_version);
 
     // 刚新建成功（整表里出现了那个名字）→ 清输入框（提示文案由 resolveNickPending 落）
     if (S.nickPendingName && nickByName(S.nickPendingName)) {
@@ -1256,6 +1292,7 @@
     S.platform = d.platform || '';
     if (typeof d.enroll_configured === 'boolean') S.enroll = d.enroll_configured;
     if (typeof d.autostart === 'boolean') S.autostart = d.autostart;
+    nickSetTable(d.color_table, d.pool_version);   // ★ v0.19：宿主 hello 里带的权威色表
     setThemeChoice(d.theme_mode || 'system');
 
     applyDevice();

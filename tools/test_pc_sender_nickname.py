@@ -188,6 +188,18 @@ def nick_state(current_id=2, available=True):
     }
 
 
+#: ★ v0.19：宿主（C#）在 host.hello / host.nickname 里带来的**服务端权威色表**。
+#: 这里用真的那 16 个基础色值（从 server/nicknames.py 取，不复制常量），可再追加自定义色。
+sys.path.insert(0, str(ROOT / "server"))
+import nicknames as _pool  # noqa: E402
+
+
+def color_rows(extra=()):
+    rows = [{"color_id": c, "hex": _pool.LOGICAL_COLORS[c]} for c in _pool.BUILTIN_COLORS]
+    rows.extend(extra)
+    return rows
+
+
 CONVO = [{"id": 101, "message_id": 101, "sender_name": "妈妈", "content": "今晚几点回来？",
           "created_at": "18:42", "status": "sent"},
          {"id": 102, "message_id": 102, "sender_name": "爸爸", "content": "七点半左右",
@@ -221,12 +233,15 @@ def hint(pg, sel):
         return { text: el.textContent, cls: el.className, visible: !!el.offsetParent }; }""", sel)
 
 
-def open_page(b, base, mode, *, push_select=True, available=True, out=None, shot="", **extra):
+def open_page(b, base, mode, *, push_select=True, available=True, out=None, shot="",
+              color_table=None, **extra):
     hello = {"mode": mode, "version": "0.17.1", "platform": "Windows 10.0.26100",
              "server": "http://192.168.1.50:18801", "theme_mode": "light",
              "device_id": "pc_shufang", "device_name": "书房电脑",
              "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "妈妈",
-             "enroll_configured": True, "autostart": True}
+             "enroll_configured": True, "autostart": True,
+             # ★ v0.19：宿主把服务端权威色表带在 hello 里（页面 FMNick.setTable 用它覆盖内置表）
+             "color_table": color_rows() if color_table is None else color_table}
     cfg = {"mode": mode, "hello": hello, "history": CONVO,
            "nick": nick_state(2, available), "push_select": push_select}
     cfg.update(extra)
@@ -534,6 +549,81 @@ def case_theme_select(b, base, out):
         ctx.close()
 
 
+def case_color_table(b, base, out):
+    """T7 ★ v0.19：色表以**服务端**为准（宿主在 hello / host.nickname 里带来 color_table）。
+
+    四件事：
+      · 采纳 —— hello 带的表生效（hasServerTable / base('color_17')）
+      · 渲染 —— 自定义色（内置表里没有）按服务端 HEX 渲染，**不是**灰兜底
+      · **空表不覆盖** —— 宿主没拿到表时推空数组，页面必须保留手上那份
+      · 整表帧带来新表 → 立刻换色（免重启 / 免刷新）
+    """
+    custom = [{"color_id": "color_17", "hex": "#0FA3B1"}]
+    state = nick_state(2, True)
+    state["nicknames"] = state["nicknames"] + [nick(9, "自定义色", "color_17")]
+    ctx, pg, errs = open_page(b, base, "settings", nick=state, color_table=color_rows(custom))
+    try:
+        def probe():
+            return pg.evaluate("""() => {
+              var N = window.FM_PC.nick;
+              return {
+              has: N.hasServerTable(), hex17: N.base('color_17'),
+              known: N.isKnown('color_17'), dot17: N.dot('color_17'),
+              dotGray: N.dot('gray'), v: N.tableVersion(),
+              swatch: (function () {
+                var rows = document.querySelectorAll('#nick-list .nick-row');
+                for (var i = 0; i < rows.length; i++) {
+                  var inp = rows[i].querySelector('input');
+                  if (inp && inp.value === '自定义色') {
+                    var sw = rows[i].querySelector('.nick-row__swatch');
+                    return sw ? getComputedStyle(sw).backgroundColor : '';
+                  }
+                }
+                return '';
+              })(),
+            }; }""")
+
+        got = probe()
+        check("T7 宿主 hello 带的色表被采纳（hasServerTable）", got["has"] is True, got)
+        check("T7 自定义色认得出，且按**服务端 HEX** 取基础色（内置表没有 color_17 → 兜底是灰）",
+              got["known"] is True and got["hex17"] == "#0FA3B1", got)
+        check("T7 自定义色的圆点不是灰兜底（服务端色参与渲染）",
+              got["dot17"] != got["dotGray"], {"dot17": got["dot17"], "dotGray": got["dotGray"]})
+        check("T7 设置页里那一行的色点用的是自定义色（不是灰）",
+              bool(got["swatch"]) and got["swatch"] != "rgb(138, 138, 138)", got["swatch"])
+
+        # 空表不覆盖：宿主「没拿到表」时推空数组
+        pg.evaluate("""() => window.__dispatch({
+          type: 'host.nickname', available: true, online: true, can_manage: true,
+          offline_reason: 'x', default_name: '书房电脑', local_temp_color: 'gray',
+          max_active: 16, pool_version: 8, color_table: [],
+          current: { nickname_id: 2, display_name: '妈妈', color: 'color_13', is_local_temp: false },
+          nicknames: [], notice: '' })""")
+        pg.wait_for_timeout(250)
+        kept = probe()
+        check("T7 ★ 空表**不覆盖**：宿主推来空 color_table → 保留手上那份表",
+              kept["has"] is True and kept["hex17"] == "#0FA3B1", kept)
+
+        # 整表帧带来新色表 → 立刻换色
+        pg.evaluate("""() => window.__dispatch({
+          type: 'host.nickname', available: true, online: true, can_manage: true,
+          offline_reason: 'x', default_name: '书房电脑', local_temp_color: 'gray',
+          max_active: 16, pool_version: 9,
+          color_table: [{ color_id: 'color_17', hex: '#7B1FA2' }],
+          current: { nickname_id: 2, display_name: '妈妈', color: 'color_13', is_local_temp: false },
+          nicknames: [{ nickname_id: 9, display_name: '自定义色', color: 'color_17', status: 'active',
+                        created_at: 'x', updated_at: 'x' }], notice: '' })""")
+        pg.wait_for_timeout(250)
+        changed = probe()
+        check("T7 ★ 整表帧带来新色表 → 立刻换色（且版本跟进）",
+              changed["hex17"] == "#7B1FA2" and changed["v"] == 9
+              and changed["swatch"] != got["swatch"], {"hex17": changed["hex17"], "v": changed["v"],
+                                                       "before": got["swatch"], "after": changed["swatch"]})
+        check("T7 零控制台报错", not errs, errs[:3])
+    finally:
+        ctx.close()
+
+
 def main():
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_OUT
     out.mkdir(parents=True, exist_ok=True)
@@ -561,6 +651,8 @@ def main():
         case_create_delete_progress(b, base, out)
         print("\n== T6 设置页主题下拉（暗色下看得清）==")
         case_theme_select(b, base, out)
+        print("\n== T7 色表以服务端为准（v0.19 P2：hello 带的 color_table）==")
+        case_color_table(b, base, out)
         b.close()
     srv.shutdown()
     print("\n截图目录：", out)

@@ -51,6 +51,13 @@
    协议细节见段 A 补全后的帧表（当前文档完全没有 `nickname_*` 帧）。
 2. 「心跳 15 秒 + `ForegroundService`」→ **仍然有效**（Doze/后台限制）；`heartbeat` 与
    `heartbeat_ack` 的字段以修正后的帧表为准（含 `windows_state` / `capabilities` 两个查询参数）。
+3. ★ **v0.19：颜色表是数据，不许写死 16 色**。Android 必须：
+   · 连接后从 `hello.color_table`（`[{color_id, hex}]`）或 `GET /api/nicknames/colors` 取**权威色表**，
+     内置那份只做首屏兜底；
+   · 监听 `color_table_changed` → **重拉**色表（帧里只有版本号，不推全表）→ 按新表重画；
+   · 认不出的逻辑色 ID 走兜底色（**绝不**把 ID 原样塞进样式，R2 不变）；
+   · 快照里的 `sender_color` 仍是逻辑色 ID —— 着色一律「先查表、查不到兜底」。
+   核心口径与 `Nicknames/NicknameColor.cs` 一致（`ColorTable` / `NicknameColorEntry` 已在 Core 里）。
 
 其他仍然有效的既有结论（§10 第 1/2/4/5/7 条）：协议零依赖（WebSocket + JSON + base64）、
 `tools/cli_agent.py` 是协议的**参考实现**、连接时 `type=phone` / `platform=android`、

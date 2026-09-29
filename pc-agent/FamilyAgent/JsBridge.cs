@@ -257,6 +257,10 @@ public sealed class JsBridge
             });
         }
 
+        var colorRows = new List<object>();
+        foreach (var c in nicknames.ColorTable)
+            colorRows.Add(new { color_id = c.ColorId, hex = c.Hex });   // ★ v0.19 权威色表
+
         var current = nicknames.Current;
         Send(new
         {
@@ -270,6 +274,7 @@ public sealed class JsBridge
             local_temp_color = NicknameColor.LocalTempColorId, // "gray"
             max_active = NicknameService.MaxActive,            // 16（额度提示用）
             pool_version = nicknames.PoolVersion,
+            color_table = colorRows,
             current = new
             {
                 nickname_id = current.NicknameId,              // null = 灰临时（还没选）

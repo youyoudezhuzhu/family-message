@@ -990,9 +990,14 @@ async def _ws_suite(srv: _Srv, out: list) -> None:
     await asyncio.sleep(1.0)
     ALL = (w1, w2, dev)
     try:
+        sync_frame = await w1.wait("nickname_list_sync", 0.5)
         await ok("新 /ws/web 连上即收 nickname_list_sync（整表同步，§5.4）",
-                 (await w1.wait("nickname_list_sync", 0.5)) is not None,
-                 f"web-A 帧序 {w1.types()}")
+                 sync_frame is not None, f"web-A 帧序 {w1.types()}")
+        await ok("★ 整表帧里带权威色表（v0.19 P2：color_table + pool_version），"
+                 "客户端色表以它为准（内置表只兜底）",
+                 bool(sync_frame) and len(sync_frame.get("color_table") or []) >= 16
+                 and all(set(c) == {"color_id", "hex"} for c in sync_frame["color_table"]),
+                 f"n={len((sync_frame or {}).get('color_table') or [])}")
         hello_dev = await dev.wait("hello", 0.5)
         await ok("设备连上收 hello（既有握手未受影响）", hello_dev is not None, f"{dev.types()}")
         st_ct, ct = await asyncio.to_thread(_http, B, "GET", "/api/nicknames/colors?status=active")

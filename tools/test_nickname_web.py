@@ -743,10 +743,17 @@ def main() -> int:
             want5 = {"nickname_created", "nickname_updated", "nickname_removed",
                      "nickname_color_changed", "nickname_list_sync"}
             check("5 个昵称广播事件全部收到", want5 <= got, f"收到 {sorted(got)}")
-            hexes = [f for f in framesA + framesB + framesC
-                     if "#" in json.dumps(f, ensure_ascii=False)]
-            check("广播载荷里没有任何 HEX（颜色只走逻辑色 ID）", not hexes,
-                  str(hexes[:1]))
+            # 守卫本意：**昵称 / 消息快照**里的颜色只走逻辑色 ID，客户端按主题现算显示色。
+            # ★ v0.19 起 `color_table`（色表本身）**合法携带基础 HEX** —— 色表是数据，
+            #   它就是「逻辑色 ID → 基础色值」的权威来源。所以这里只查除它以外的字段。
+            def _strip_color_table(frame: dict) -> str:
+                f = dict(frame)
+                f.pop("color_table", None)
+                return json.dumps(f, ensure_ascii=False)
+
+            hexes = [f for f in framesA + framesB + framesC if "#" in _strip_color_table(f)]
+            check("广播载荷里没有任何 HEX（昵称与快照的颜色只走逻辑色 ID；color_table 除外）",
+                  not hexes, str(hexes[:1]))
 
             # ── G. ★ v0.19：颜色表以服务端为准（内置表只兜底）+ 广播后免刷新跟着变 ──
             #    ⚠ 必须放在「断网 / 开关关闭」之前：那两段会把 on 实例停掉。
