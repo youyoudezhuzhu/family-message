@@ -541,13 +541,20 @@ public sealed class ConnectionManager : ICommandChannel, ISyncConnection
 
     /// <summary>把弹窗里的回复发给服务端（昵称由本机本地维护）。
     /// 返回 true = 已尝试发送；false = 无连接，已入队等重连自动补发。</summary>
-    public bool Reply(string senderName, string content, string clientId) =>
+    /// <param name="nicknameId">
+    /// 本机当时选用的**共享昵称** id（`null` = 灰临时）。服务端据此写消息快照
+    /// （`sender_nickname_id` / `sender_color`，颜色由服务端查表填）。
+    /// 老 exe 不带这个字段 —— 服务端按「老客户端」处理（两列 NULL，走哈希兜底），
+    /// 所以这里总是带上（值可能是 null），语义更明确。
+    /// </param>
+    public bool Reply(string senderName, string content, string clientId, long? nicknameId = null) =>
         SendOrQueue(new
         {
             type = FrameTypes.Reply,
             sender_name = senderName,
             content,
             client_id = clientId,
+            nickname_id = nicknameId,
         }, "reply");
 
     /// <summary>主动拉一次历史对话（从托盘打开对话窗口时用）。</summary>

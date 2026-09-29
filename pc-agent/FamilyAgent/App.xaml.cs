@@ -757,7 +757,9 @@ public partial class App : Application
 
         // 不再预判连接状态：直接尝试发送，发不出去会自动入队，重连后补发。
         // （之前 `if (!Connected) 报失败` 会把能发的回复也拦下来。）
-        var dispatched = Core.Reply(who, content, clientId);
+        // 昵称快照（§3.2）：把本机**当前选用**的共享昵称 id 带上（null = 灰临时）→
+        // 服务端据此写 messages.sender_nickname_id / sender_color（颜色由服务端查表填）。
+        var dispatched = Core.Reply(who, content, clientId, _nicknames?.Current.NicknameId);
         if (!dispatched)
         {
             _host?.Bridge.PostReplyAck(clientId, "queued", 0,

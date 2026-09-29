@@ -20,9 +20,35 @@ from __future__ import annotations
 from typing import Iterable, Optional
 
 import db
+import nicknames as pool
+from services import nicknames as nick_svc
 
 STATES = ["created", "server_received", "device_received", "popup_displayed", "read"]
 RANK = {s: i for i, s in enumerate(STATES)}
+
+
+# ── 消息的昵称快照（docs/NICKNAME-SYSTEM-PLAN.md §3.2 / §3.2.1）────────────
+# 老消息（改造前的行）：两列都是 NULL —— **不等于灰**，客户端靠「按名字反查昵称表 →
+#   退回报名字哈希色」兜底（§3.2.1）。
+# 新消息：选了共享昵称 → (nickname_id, 该昵称**当前**的逻辑色 ID)；
+#   灰临时（没选）→ (NULL, 'gray')，判定灰只看 sender_color == 'gray'。
+# ★ 颜色**由服务端查表填**，不接受客户端传来的色值（传了也忽略）—— 防伪造。
+# ★ 「字段缺失」与「明确传 null」必须分开（与 §5.2 的桥约定同口径）：
+#     字段缺失 = 老客户端 / 老报文 → 两列 NULL（走哈希兜底，观感与改造前一致）；
+#     明确传 null = 「我这会儿是灰临时」→ (NULL, 'gray')。
+MISSING = object()
+
+
+def snapshot_of(nickname_id: object = MISSING) -> tuple[Optional[int], Optional[str]]:
+    """把「发送方当时选用的 nickname_id」翻成消息快照两列。"""
+    if nickname_id is MISSING:
+        return None, None
+    if nickname_id is None:
+        return None, pool.LOCAL_TEMP_COLOR_ID
+    row = nick_svc.get(int(nickname_id))          # type: ignore[arg-type]
+    if not row or row.get("status") != "active":
+        return None, pool.LOCAL_TEMP_COLOR_ID     # 选用的那条已被删 → 按灰临时记
+    return int(row["nickname_id"]), str(row["color"])
 
 # ── 群聊模型（见 docs/GROUP-CHAT-MODEL.md）───────────────────────────
 # 一条消息进的是一个共享空间，所有人都能看到；对外**只有一个状态**：已发送。
@@ -32,13 +58,15 @@ STATUS_SENT = "sent"
 
 
 def create_message(sender_name: str, content: str, targets: Iterable[str],
-                   message_type: str = "text") -> dict:
+                   message_type: str = "text", nickname_id: object = MISSING) -> dict:
     targets = [t for t in dict.fromkeys(targets) if t]
+    nid, ncolor = snapshot_of(nickname_id)
     msg_id = db.execute(
         """INSERT INTO messages (sender_name, content, message_type, created_at,
-                                 sender_kind, sender_device_id)
-           VALUES (?,?,?,?, 'web', NULL)""",
-        (sender_name, content, message_type, db.now_iso()),
+                                 sender_kind, sender_device_id,
+                                 sender_nickname_id, sender_color)
+           VALUES (?,?,?,?, 'web', NULL, ?, ?)""",
+        (sender_name, content, message_type, db.now_iso(), nid, ncolor),
     )
     for dev in targets:
         db.execute(
@@ -180,18 +208,23 @@ def group_history(limit: int = 30, viewer_device_id: Optional[str] = None) -> li
 # 双向对话：Device → Server
 # ============================================================
 
-def create_reply(device_id: str, sender_name: str, content: str) -> dict:
+def create_reply(device_id: str, sender_name: str, content: str,
+                 nickname_id: object = MISSING) -> dict:
     """设备（PC Agent）发出的消息 —— 群聊模型下就是「群里某个人说了一句」。
 
     sender_device_id 记下是谁说的（群聊广播据此跳过发起者自己：自己的消息不弹自己的窗）。
     不写 message_targets —— 它进的是共享空间，不是投递给某台设备；
     别的设备是「看到」这条消息，需要逐设备投递状态的是网页端发起的那类消息。
+
+    `nickname_id` = PC 当时选用的共享昵称 id（设备帧里带上）；颜色由服务端查表填（防伪造）。
     """
+    nid, ncolor = snapshot_of(nickname_id)
     msg_id = db.execute(
         """INSERT INTO messages (sender_name, content, message_type, created_at,
-                                 sender_kind, sender_device_id)
-           VALUES (?,?,?,?, 'device', ?)""",
-        (sender_name, content, "text", db.now_iso(), device_id),
+                                 sender_kind, sender_device_id,
+                                 sender_nickname_id, sender_color)
+           VALUES (?,?,?,?, 'device', ?, ?, ?)""",
+        (sender_name, content, "text", db.now_iso(), device_id, nid, ncolor),
     )
     db.log_event(device_id, "reply", content[:120])
     return get_message(msg_id) or {}

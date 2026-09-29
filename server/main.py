@@ -359,6 +359,10 @@ class MessageBody(BaseModel):
     # 老前端还在传 targets，传了不报错、不生效；不传也完全正常）。
     targets: list[str] = Field(default_factory=list)
     message_type: str = "text"
+    # 昵称快照（§3.2）：网页端把「当前选用」的 nickname_id 带上来。
+    # ⚠ 与 §5.2 同口径：**不带这个字段** = 老前端/老缓存 → 两列 NULL（哈希兜底，观感不变）；
+    #   **带 null** = 明确「我此刻是灰临时」→ 记 gray。颜色一律由服务端查表填（防伪造）。
+    nickname_id: Optional[int] = None
 
 
 @app.post("/api/messages", dependencies=[WebAuth])
@@ -371,7 +375,9 @@ async def api_send_message(body: MessageBody):
     """
     targets = [d["device_id"] for d in dev_svc.list_devices()]
 
-    msg = msg_svc.create_message(body.sender_name, body.content, targets, body.message_type)
+    # 快照：字段缺失（老前端）与明确传 null（灰临时）必须分开 —— 见 MessageBody.nickname_id
+    nick = body.nickname_id if "nickname_id" in body.model_fields_set else msg_svc.MISSING
+    msg = msg_svc.create_message(body.sender_name, body.content, targets, body.message_type, nick)
 
     # 群聊广播：所有已连接设备（网页端发的消息 sender_device_id 为 NULL → 不排除任何设备）
     delivered = await _broadcast_message(msg)
@@ -1105,7 +1111,10 @@ async def handle_device_message(device_id: str, data: dict) -> None:
         # 昵称由 PC 端本地维护并随消息带上来；没带就用设备名兜底
         sender_name = (data.get("sender_name") or "").strip()[:32] \
             or (dev or {}).get("name") or device_id
-        msg = msg_svc.create_reply(device_id, sender_name, content[:2000])
+        # 昵称快照：PC 把「当前选用」的 nickname_id 带上来；字段缺失 = 老 exe → 两列 NULL；
+        # 明确带 null = 灰临时 → gray。颜色由服务端查表填（不信任客户端传来的色值）。
+        nick = data["nickname_id"] if "nickname_id" in data else msg_svc.MISSING
+        msg = msg_svc.create_reply(device_id, sender_name, content[:2000], nick)
         await HUB.send_to_device(device_id, {
             "type": "reply_ack",
             "client_id": client_id,
