@@ -7,6 +7,7 @@ using System.Windows;
 using FamilyAgent.Core.Config;
 using FamilyAgent.Core.Diagnostics;
 using FamilyAgent.Core.Events;
+using FamilyAgent.Core.Messaging;
 using FamilyAgent.Core.Protocol;
 using FamilyAgent.Core.Protocol.Frames;
 using FamilyAgent.Core.Transport;
@@ -39,6 +40,18 @@ public partial class App : Application
     private WinForms.NotifyIcon? _tray;
     private WebHostWindow? _host;
     private string? _pendingReplyClientId;
+
+    /// <summary>
+    /// 消息生命周期与 ACK 决策（docs/CORE-REFACTOR-PLAN.md §6 Phase 2）。
+    ///
+    /// ⚠ Phase 2 起**宿主不再订阅 <c>Core.MessageReceived</c>**：消息先经过它
+    /// （落盘 → 发事件），宿主订阅的是它的 <c>MessageReceived</c>。两边都订阅
+    /// 会让同一条消息被处理两遍。
+    /// </summary>
+    private MessageManager? _messaging;
+
+    /// <summary>WebView2 不可用时的原生通知回落（<see cref="FallbackNotifier"/>，§6 Phase 2-5 / §8.11）。</summary>
+    private FallbackNotifier? _fallback;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -153,12 +166,26 @@ public partial class App : Application
         // Windows 侧实现只做包装（Platform/WindowsPlatformInfo.cs），行为不变（§Phase 1-3）
         Core = new ConnectionManager(Config, new WindowsPlatformInfo());
         Core.ConnectionStateChanged += OnConnectionChanged;
-        Core.MessageReceived += OnMessageReceived;
         Core.ScreenshotRequested += OnScreenshotRequested;
         Core.ReplyAcked += OnReplyAcked;
         Core.HistoryReceived += OnHistoryReceived;
         Core.ShutdownRequested += OnShutdownRequested;
         Core.UnlockRequested += OnUnlockRequested;
+
+        // ── 消息生命周期与 ACK 决策（Phase 2）──────────────────────────
+        // 收到 → 归一 message_id → **本地落盘** → 发事件 → 交界面显示 → 等界面回报事实
+        // → 由 MessageManager 决定发哪个 ack。整个过程不再依赖 UI 是否存在：
+        // 界面挂了消息也不丢，ack 也有终态（见 Core/Messaging/MessageManager.cs）。
+        //
+        // ⚠ 注意这里**没有** `Core.MessageReceived += ...`：那条事件已经由 Attach 接进来，
+        //   宿主再订一次会把同一条消息处理两遍。
+        _messaging = new MessageManager(new JsonlMessageStore(), (id, status) => Core.Ack(id, status));
+        _messaging.Attach(Core);
+        _messaging.MessageReceived += OnMessageReceived;
+        _messaging.DeliveryStateChanged += OnDeliveryStateChanged;
+        _messaging.DisplayFallbackRequired += OnDisplayFallbackRequired;
+        _fallback = new FallbackNotifier(() => _tray, action => Dispatcher.Invoke(action));
+        AgentLog.Write($"[MSG] 消息生命周期已搬进 Core：本地消息库={_messaging.Store.Describe()}");
 
         // ── Windows 会话状态上报（远程解锁 Phase 1）──────────────────────
         // 在这里（Core 已建好、连接还没开始）启动最合适：第一次心跳就能带
@@ -313,20 +340,37 @@ public partial class App : Application
         // 「屏幕上跑的是哪一版」以前只能靠猜 —— 那正是「你根本没编译」误会的土壤。
         host.Title = WindowTitle();
 
-        // 页面回报「这条消息真的画到屏幕上了」→ 才回报 popup_displayed。
-        // （不能提前回报：页面一次渲染都没发生就回报，是谎报。）
+        // 页面回报「这条消息真的画到屏幕上了」→ 交给 Core 决定并发 ack。
+        // （原来这里是宿主直接 `Core.Ack(id, "popup_displayed")`；Phase 2 起 ACK 决策
+        //   在 MessageManager 里，宿主只回报 UI 事实，§6 Phase 2-2。）
         host.MessageAcked += id =>
         {
-            try { Core.Ack(id, "popup_displayed"); }
+            try { _messaging?.NotifyDisplayed(id); }
             catch (Exception ex) { AgentLog.Write("回报 popup_displayed 失败：" + ex.Message); }
         };
 
         // 关窗 / 自动关闭 / Alt+F4（含页面点「知道了」）→ 这些未读按「已读」回报
         host.Dismissed += id =>
         {
-            try { Core.Ack(id, "read"); }
+            try { _messaging?.NotifyDismissed(id); }
             catch (Exception ex) { AgentLog.Write("回报已读失败：" + ex.Message); }
         };
+
+        // 消息已经投给页面（页面正在渲染它）→ 告诉 Core，别再为它触发原生通知兜底；
+        // 终态仍由页面 web.ack 或关窗给出。
+        host.MessageHandedToPage += id =>
+        {
+            try { _messaging?.NotifyDisplayDeferred(id, "已投给页面"); }
+            catch (Exception ex) { AgentLog.Write("回报「已投给页面」失败：" + ex.Message); }
+        };
+
+        // 本地正式界面加载失败（shell\ 被改名 → 404 那类）：立刻用原生通知把库里
+        // 「还没显示过」的消息提醒掉，不等 20 秒的超时兜底。
+        host.LocalPageFailed += OnLocalPageFailed;
+
+        // 页面就绪时补齐「还没显示过」的消息 —— 来源是 Core 的 MessageStore，
+        // 所以进程重启前遗留的也在其中（§6 Phase 2-3 / 测试 C）。
+        host.ReplaySource = TakePendingForReplay;
 
         // ── 页面 → 宿主：每一条都落到原来那套逻辑上，语义不变 ──
         host.Bridge.ReplyReceived += OnReplyRequested;
@@ -369,6 +413,7 @@ public partial class App : Application
     {
         _ = Task.Run(async () =>
         {
+            var ticks = 0;
             while (!IsSystemShuttingDown)
             {
                 try
@@ -390,6 +435,17 @@ public partial class App : Application
                 catch (Exception ex)
                 {
                     AgentLog.Write("show.request 轮询异常（继续）：" + ex.Message);
+                }
+
+                // ★ Phase 2：每 5 秒扫一次「消息落盘后迟迟没被任何界面处理」的情况
+                //   （WebView2「没报错但页面永远不就绪」）→ 触发原生通知兜底。
+                //   挂在这条已有的轮询上，不另起定时器；headless 实例在这之前就 return 了
+                //   （没有界面可显示，那条路径由「无法显示」终态覆盖）。
+                if (++ticks >= 5)
+                {
+                    ticks = 0;
+                    try { _messaging?.SweepDisplayTimeouts(DateTime.UtcNow); }
+                    catch (Exception ex) { AgentLog.Write("兜底提醒扫描异常（继续）：" + ex.Message); }
                 }
 
                 try { await Task.Delay(TimeSpan.FromSeconds(1)); }
@@ -761,6 +817,16 @@ public partial class App : Application
         {
             try { Core.ReportSessionState(); }
             catch (Exception ex) { AgentLog.Write("上线时上报会话状态失败：" + ex.Message); }
+
+            // Phase 2：把「已决策但没交给传输层」的 ACK 补发一遍
+            // （交给传输层时抛过异常的那种；断线期间入队的那部分由 Outbox 自己补发）
+            try
+            {
+                var resent = _messaging?.FlushPendingAcks() ?? 0;
+                if (resent > 0)
+                    AgentLog.Write($"[MSG] 上线后补发 {resent} 条待发 ACK");
+            }
+            catch (Exception ex) { AgentLog.Write("补发待发 ACK 失败（下次上线再试）：" + ex.Message); }
         }
 
         Dispatcher.Invoke(() =>
@@ -772,14 +838,20 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 收到新消息（Core 的强类型 <see cref="MessageFrame"/>，取代原来的裸 <c>JsonElement</c>）。
+    /// 收到新消息（Phase 2 起订阅的是 <see cref="MessageManager.MessageReceived"/>：
+    /// 消息**已经落盘**，这里只负责「把它画出来」，并把 UI 事实回报给 Core）。
     ///
-    /// ⚠ 回调体**逐字保留**：下面这行 <c>var el = frame.Raw;</c> 是 Phase 1 的过渡桥，
-    ///   让这段（以及页面投递那段）一个字符都不用改 —— Phase 1 的验收前提是行为完全等价
-    ///   （§8.1：不得把重构当调试手段）。
-    ///   注意 <c>messageId = el.GetInt64()</c> 这行读的是**整个帧**而不是 <c>idEl</c>
-    ///   （既有笔误，见 docs/BUG-PC-REALTIME.md 的嫌疑点），本次搬家**刻意不动它**：
-    ///   修它属于行为变更，要单独一轮、单独验证。
+    /// 与 Phase 1 的差别只有三处，其余逐字保留：
+    /// <list type="number">
+    ///   <item>消息不是连接层直推的，而是 Core 落盘之后再交过来的（顺序保证：先持久化后显示）；</item>
+    ///   <item>headless 分支不再发服务端不认识的 <c>"delivered"</c>，改为如实回报「无法显示」
+    ///     由 <see cref="MessageManager"/> 决定 ack（§2.7-④ / §7E-14）；</item>
+    ///   <item>窗口建不起来 / WebView2 不可用时，走原生通知回落而不是静默丢掉。</item>
+    /// </list>
+    ///
+    /// ⚠ 下面这行 <c>var el = frame.Raw;</c> 仍是给页面的原始帧（字段原样透传，含 history），
+    ///   与 Phase 1 一致；<c>messageId</c> 直接读强类型字段（原实现里那处对整帧调
+    ///   <c>GetInt64()</c> 的笔误已随之消失，见 docs/BUG-PC-REALTIME.md）。
     /// </summary>
     private void OnMessageReceived(MessageFrame frame)
     {
@@ -787,28 +859,36 @@ public partial class App : Application
 
         Dispatcher.Invoke(() =>
         {
-            // ★ 原来这里是：
-            //     if (el.TryGetProperty("message_id", out var idEl) && …) messageId = el.GetInt64();
-            //   笔误 —— 取出来的是 idEl，却对**整个帧对象 el** 调 GetInt64()。
-            //   对 Object 调 GetInt64() 会抛 InvalidOperationException，而这段在回调**最前面**
-            //   （连 headless 分支都在它后面），于是**每收到一条消息这里就炸**：
-            //   异常从 WS 接收循环冒出去，连接看着还在、实际已经不再收消息 ——
-            //   表现就是日志里没有 ← message、重开窗口走 HTTP 历史才看得到。
-            //   现在直接读强类型字段，这个坑连同它的表现一起消失。
             var messageId = frame.MessageId;
             var autoClose = frame.AutoCloseSeconds ?? 0;
 
             if (IsHeadless)
             {
-                // 登录前没有交互式桌面，弹窗显示不出来。如实回报「已送达」——
-                // 谎报 popup_displayed 会让网页端显示一个根本不存在过的状态。
-                AgentLog.Write($"headless：收到消息 {messageId}，无人登录无法显示弹窗，回报 delivered");
-                Core.Ack(messageId, "delivered");
+                // 登录前没有交互式桌面，弹窗显示不出来。ACK 决策在 Core：这里只如实回报
+                // 「本机无法显示」→ Core 记 NotDisplayed 并回报 device_received。
+                // ⚠ 原实现这里发的是服务端不认识的状态 "delivered"（rank=-1，纯 no-op）。
+                AgentLog.Write($"headless：收到消息 {messageId}，无人登录无法显示弹窗"
+                             + " → 如实回报 device_received（不再发非法的 delivered）");
+                _messaging?.NotifyDisplayUnavailable(messageId, "headless：无人登录，没有可显示的桌面");
                 return;
             }
 
             var host = EnsureHost();
-            if (host is null) return;
+            if (host is null)
+            {
+                // 界面根本建不起来（异常已在 EnsureHost 里记过日志）→ 同样是「无法显示」的终态。
+                // 消息已经在 Core 落盘，界面修好后还能重放 —— 这就是 ACK 与 UI 解耦的意义。
+                _messaging?.NotifyDisplayUnavailable(messageId, "界面创建失败");
+                return;
+            }
+
+            // WebView2 这条腿**确定**不可用（缺 Runtime，已退到 WPF 提示页）→ 直接用
+            // 原生通知提醒，并把结果如实回报给 Core（§6 Phase 2-5）。
+            if (host.WebViewUnavailable)
+            {
+                NotifyFallback(frame.MessageId, frame.SenderName, frame.Content, "WebView2 不可用");
+                return;
+            }
 
             // 有消息来了 → 回到全屏强提醒形态，把整帧推给页面去渲染。
             // popup_displayed **不在这里回报**：等页面 web.ack
@@ -816,6 +896,83 @@ public partial class App : Application
             host.ShowPopup();
             host.PushMessage(el, autoClose);
         });
+    }
+
+    /// <summary>
+    /// Core 的消息生命周期变化 → 宿主日志。
+    ///
+    /// 这一行是「ACK 决策确实发生在 Core」的现场证据：排查「消息收到没显示 / 显示了没 ack」
+    /// 这类问题时，日志里能直接看到 <c>Persisted → Displayed → AckSent</c>（或
+    /// <c>NotDisplayed → AckSent</c>）这条链，不必再靠猜。
+    /// </summary>
+    private void OnDeliveryStateChanged(MessageDeliveryStateChangedArgs e) =>
+        AgentLog.Write($"[APP] message_id={e.MessageId} 投递状态={e.State}（{e.Detail}）");
+
+    /// <summary>
+    /// Core 要求兜底提醒：消息落盘后在超时窗口内**没有任何界面处理过**它
+    /// （WebView2「没报错但页面永远不就绪」那种情况）。
+    ///
+    /// 这是 Core 与 UI 解耦之后仍然能提醒到用户的最后一段路：用托盘原生通知提醒，
+    /// 并如实回报（弹得出去 → <c>popup_displayed</c>；弹不出去 → <c>device_received</c>）。
+    /// </summary>
+    private void OnDisplayFallbackRequired(MessageRecord record, string reason) =>
+        NotifyFallback(record.MessageId, record.SenderName, record.Content, reason);
+
+    /// <summary>
+    /// 本地正式界面加载失败（例如 exe 目录下 <c>shell\</c> 被改名 → 404）：
+    /// 立刻把库里「还没显示过」的消息用原生通知提醒掉，不必干等超时兜底
+    /// （用户等 20 秒才收到通知 vs 1 秒内收到，差别很大）。
+    /// </summary>
+    private void OnLocalPageFailed(string detail)
+    {
+        var messaging = _messaging;
+        if (messaging is null)
+            return;
+
+        foreach (var record in messaging.PendingForReplay())
+            NotifyFallback(record.MessageId, record.SenderName, record.Content,
+                "本地界面加载失败（" + detail + "）");
+    }
+
+    /// <summary>
+    /// 用原生通知提醒一条上不了界面的消息，并**如实**回报结果：
+    /// 弹得出去 → <c>NotifyFallbackDisplayed</c>（Core 回报 <c>popup_displayed</c>）；
+    /// 弹不出去（没有托盘 / headless）→ <c>NotifyDisplayUnavailable</c>
+    /// （Core 回报 <c>device_received</c>，不谎报弹窗）。§8.11 方案 (a)。
+    /// </summary>
+    private void NotifyFallback(long messageId, string? sender, string? content, string reason)
+    {
+        var shown = false;
+        try { shown = _fallback?.Notify(sender, content, reason) ?? false; }
+        catch (Exception ex) { AgentLog.Write("原生通知回落异常（按未提醒处理）：" + ex.Message); }
+
+        if (shown)
+            _messaging?.NotifyFallbackDisplayed(messageId, reason);
+        else
+            _messaging?.NotifyDisplayUnavailable(messageId, reason + "（原生通知也不可用）");
+    }
+
+    /// <summary>
+    /// 页面就绪时给壳的补齐清单：Core 里「还没显示过」的消息（原始帧 + auto_close_seconds）。
+    /// 超过 50 条只取最近的 —— 更老的让页面自己走 HTTP 拉历史（壳模式下的既有做法）。
+    /// </summary>
+    private IReadOnlyList<(JsonElement Message, int AutoClose)> TakePendingForReplay()
+    {
+        var result = new List<(JsonElement Message, int AutoClose)>();
+        var messaging = _messaging;
+        if (messaging is null)
+            return result;
+
+        foreach (var record in messaging.PendingForReplay())
+        {
+            if (record.Raw.ValueKind != JsonValueKind.Object)
+                continue;
+            result.Add((record.Raw, record.AutoCloseSeconds));
+        }
+
+        if (result.Count > 0)
+            AgentLog.Write($"壳：页面就绪，从 Core 的 MessageStore 取到 {result.Count} 条未显示消息");
+        return result;
     }
 
     /// <summary>

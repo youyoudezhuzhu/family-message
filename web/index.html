@@ -7,9 +7,9 @@
 <title>家庭消息 · 控制台</title>
 <!-- 版本号用于破浏览器缓存：静态资源不带版本号时，升级后浏览器会继续用缓存的旧前端，
      表现为「升级了但界面没变化」。改前端后记得同步改这里的 v= -->
-<link rel="stylesheet" href="static/tokens.css?v=0.14.0">
-<link rel="stylesheet" href="static/style.css?v=0.14.0">
-<link rel="stylesheet" href="static/shell.css?v=0.14.0">
+<link rel="stylesheet" href="static/tokens.css?v=0.15.0">
+<link rel="stylesheet" href="static/style.css?v=0.15.0">
+<link rel="stylesheet" href="static/shell.css?v=0.15.0">
 <!-- 首屏前定好明暗，避免深色系统下先闪一下白 -->
 <script>
 (function () {
@@ -164,11 +164,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
         <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-home-filled"/></svg>
         <span class="nav-item__label">首页</span>
       </button>
-      <button class="nav-item" type="button" data-page="messages" title="消息" aria-label="消息">
-        <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-chat"/></svg>
-        <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-chat-filled"/></svg>
-        <span class="nav-item__label">消息</span>
-      </button>
       <button class="nav-item" type="button" data-page="devices" title="设备" aria-label="设备">
         <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-desktop"/></svg>
         <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-desktop-filled"/></svg>
@@ -190,13 +185,10 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
   <!-- ══ 主内容区 ═══════════════════════════════════════════════ -->
   <main class="main" id="main">
 
-    <!-- ── 首页：问候 + 在线设备 + 最近消息 + 发送消息（输入框在底部）── -->
+    <!-- ── 首页：在线设备 + 家庭消息（整条群聊流，主页内直接滚） + 发送区 ──
+         顶部原本的问候区（「早上好 …」+「N 台电脑在线…」）已按需求整块去掉：
+         设备数量在下面「在线设备」标题右边已经写着，问候语是重复信息。 -->
     <section class="page" id="page-home">
-      <div class="page__head">
-        <h2 class="page__title" id="home-greeting">你好</h2>
-        <p class="page__sub" id="home-sub">一条消息进家庭群聊，家里所有电脑都会看到。</p>
-      </div>
-
       <section class="section" aria-labelledby="t-online">
         <div class="section__head">
           <h3 class="section__title" id="t-online">在线设备</h3>
@@ -210,45 +202,36 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
         </div>
       </section>
 
-      <!-- 消息记录在前、发送框在后：像聊天应用一样从上往下读，输入框在底部 -->
+      <!-- 消息记录在前、发送框在后：像聊天应用一样从上往下读，输入框在底部。
+           整条群聊流都渲染在这里（不再只放最近 3 条），容器自己可上下滚动，
+           所以不需要「查看全部」跳到别的页面。 -->
       <section class="section" aria-labelledby="t-recent">
         <div class="section__head">
-          <h3 class="section__title" id="t-recent">最近消息</h3>
-          <button class="btn btn--subtle" id="home-more">查看全部</button>
+          <h3 class="section__title" id="t-recent">家庭消息</h3>
+          <span class="card__hint" id="home-msg-count"></span>
         </div>
-        <div class="chat-list chat-list--compact" id="home-recent"></div>
+        <div class="chat-list chat-list--compact chat-scroll" id="home-recent"
+             tabindex="0" aria-label="家庭消息，可上下滚动查看全部"></div>
         <div class="empty" id="home-recent-empty">
           <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
           <span class="empty__title">还没有消息</span>
-          <span class="empty__hint">在下面写一条，发进家庭群聊，所有设备都能看到。</span>
+          <span class="empty__hint">在下面写一条，所有设备都能看到。</span>
         </div>
       </section>
 
-      <section class="card" aria-labelledby="t-compose">
-        <div class="card__head">
-          <h3 class="card__title" id="t-compose">发送消息</h3>
-          <span class="card__hint">家庭群聊</span>
-        </div>
-
-        <div class="field">
-          <label class="field-label" for="content">消息内容</label>
-          <textarea class="text-input" id="content" rows="3" placeholder="说点什么……" maxlength="2000"></textarea>
-          <span class="field-support">Ctrl/⌘ + Enter 快速发送</span>
-        </div>
-
-        <div class="compose__quick" id="quick" role="group" aria-label="快捷短语"></div>
-
-        <!-- 群聊模型：没有「发送给」—— 消息进一个共享空间，所有设备都能看到，
-             谁说的完全靠昵称区分。所以这一行只有 昵称 + 发送。 -->
+      <!-- 发送区：和 PC 端回复栏（web/shell 的 .reply）同构的一条横向行 ——
+           左「昵称」· 中「输入框（吃掉剩余宽度，最宽）」· 右「发送」。
+           群聊模型下没有「发送给」，消息进一个共享空间，谁说的靠昵称区分，
+           所以只需要这三个控件；输入框是单行，回车即发送（见 app.js 事件绑定）。 -->
+      <section class="card card--compose" aria-label="发送区">
         <div class="compose__bar">
           <div class="compose__sender">
             <div class="combo" id="sender-sel" aria-label="发送人"></div>
           </div>
-          <span class="compose__group-hint">
-            <svg class="icon" aria-hidden="true"><use href="#i-chat"/></svg>
-            <span>发进家庭群聊，所有已注册设备都能看到</span>
-          </span>
-          <button class="btn btn--primary compose__send" id="btn-send">
+          <input class="text-input compose__input" id="content" type="text"
+                 placeholder="写点什么，回车发送……" maxlength="2000"
+                 autocomplete="off" aria-label="消息内容">
+          <button class="btn btn--primary compose__send" id="btn-send" type="button">
             <svg class="btn__icon" aria-hidden="true"><use href="#i-send"/></svg>
             <span>发送</span>
           </button>
@@ -257,26 +240,9 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
       </section>
     </section>
 
-    <!-- ── 消息记录：一条统一的群聊流（不按设备分组、不做设备筛选）───── -->
-    <section class="page" id="page-messages" hidden>
-      <div class="page__head">
-        <h2 class="page__title">消息记录</h2>
-        <p class="page__sub">家庭群聊的全部消息，网页发出的和 PC 回复的都在这里，按时间顺序。</p>
-      </div>
-      <div class="section__head">
-        <h3 class="section__title">全部消息</h3>
-        <button class="btn btn--subtle" id="btn-history">
-          <svg class="btn__icon" aria-hidden="true"><use href="#i-history"/></svg>
-          <span>更早</span>
-        </button>
-      </div>
-      <div class="chat-list" id="log"></div>
-      <div class="empty" id="log-empty">
-        <svg class="icon icon--lg" aria-hidden="true"><use href="#i-chat"/></svg>
-        <span class="empty__title">还没有消息</span>
-        <span class="empty__hint">在首页的「发送消息」里写一条，所有设备都会看到。</span>
-      </div>
-    </section>
+    <!-- ── 消息记录页已删除 ────────────────────────────────────────
+         首页的「家庭消息」直接渲染整条群聊流并且可滚动，这个二级页面
+         和左侧导航的「消息」项一起去掉（见 app.js 里 PAGES 的说明）。 -->
 
     <!-- ── 设备 ───────────────────────────────────────────────── -->
     <section class="page" id="page-devices" hidden>
@@ -449,11 +415,6 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
         <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-home-filled"/></svg>
         <span class="nav-item__label">首页</span>
       </button>
-      <button class="bottom-nav__item" type="button" data-page="messages" title="消息" aria-label="消息">
-        <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-chat"/></svg>
-        <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-chat-filled"/></svg>
-        <span class="nav-item__label">消息</span>
-      </button>
       <button class="bottom-nav__item" type="button" data-page="devices" title="设备" aria-label="设备">
         <svg class="icon nav-item__icon nav-item__icon--regular" aria-hidden="true"><use href="#i-desktop"/></svg>
         <svg class="icon nav-item__icon nav-item__icon--filled" aria-hidden="true"><use href="#i-desktop-filled"/></svg>
@@ -587,8 +548,8 @@ html[data-shell="1"] .shell-boot .progress-ring { margin-top: var(--spacing-xs, 
 </div>
 
 <!-- 壳桥：必须在 app.js 之前加载（app.js 会在 boot() 里按 FM_SHELL.enabled 分流） -->
-<script src="static/chat.js?v=0.14.0"></script>
-<script src="static/shell.js?v=0.14.0"></script>
-<script src="static/app.js?v=0.14.0"></script>
+<script src="static/chat.js?v=0.15.0"></script>
+<script src="static/shell.js?v=0.15.0"></script>
+<script src="static/app.js?v=0.15.0"></script>
 </body>
 </html>

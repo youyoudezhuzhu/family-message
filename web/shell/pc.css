@@ -275,12 +275,41 @@ html[data-view="settings"] #v-settings { display: flex; }
 /* ── 5. 全屏强提醒（popup）─────────────────────────────────────
      最新一条 = 最大字号的视觉焦点（chat.js 渲染的气泡，只放大）；
      更早的弱化成单行字幕，只做上下文，不跟主条抢注意力。 */
-.stage--popup { padding: var(--spacing-xl) var(--spacing-2xl); }
+.stage--popup { padding: clamp(24px, 4vh, 64px) clamp(24px, 4vw, 96px); }
+
+/* 全屏强提醒要真「大」：
+   之前这条直接从 client 照搬（固定 14/22px 字号 + 1080px 上限），结果在
+   2048×1104 的满屏上就成了「缩在中间的小网页」——用户原话「好像是另一套 UI」。
+   强提醒的意义就是远看也能读，所以字号与内容宽度都随视口走。 */
 .chat-list--popup {
   margin: auto;                 /* margin:auto 而不是 justify-content:center：
                                    内容比容器高时不会被裁掉顶部 */
-  width: 100%; max-width: var(--content-max);
-  gap: var(--spacing-md);
+  width: 100%;
+  max-width: min(88vw, 1400px); /* 比 client 的 --content-max 宽，别再缩在中间 */
+  gap: var(--spacing-lg);
+}
+
+/* 最新一条 = 视觉焦点：字号随视口放大（远看也能读） */
+.chat-list--popup > :last-child .chat-bubble {
+  font-size: clamp(22px, 2.6vw, 44px);
+  line-height: 1.35;
+  padding: clamp(14px, 1.4vw, 28px) clamp(18px, 1.8vw, 36px);
+}
+.chat-list--popup > :last-child .chat-name {
+  font-size: clamp(14px, 1.1vw, 20px);
+}
+.chat-list--popup > :last-child .chat-time {
+  font-size: clamp(12px, 0.9vw, 16px);
+}
+
+/* 更早的消息弱化成单行字幕：只给上下文，不跟主条抢注意力 */
+.chat-list--popup > :not(:last-child) { opacity: 0.55; }
+.chat-list--popup > :not(:last-child) .chat-bubble {
+  font-size: clamp(13px, 1vw, 17px);
+  padding: var(--spacing-sm) var(--spacing-md);
+}
+.chat-list--popup > :not(:last-child) .chat-avatar {
+  width: 24px; height: 24px;
 }
 
 .chat-row--prev { opacity: .66; }

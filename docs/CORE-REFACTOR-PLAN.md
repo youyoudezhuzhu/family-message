@@ -494,7 +494,22 @@ pc-agent/
 **验收标准**
 - 行为等价：连接/断线重连/心跳/收消息/回复/截图/关机/解锁与重构前一致（回归清单：`tools/probe_robustness.py`、`tools/test_bidirectional.py`、`tools/diag_realtime.py`、`tools/test_screenshot.py`、`tools/test_unlock.py`）。
 - 依赖判据（可机械检查）：
-  `grep -rnE "WebView2|System\.Windows|Dispatcher|System\.Windows\.Forms|<javascript|Html" pc-agent/FamilyAgent.Core/` → **输出为空**。
+  判据分两层（第一版写法把注释和字符串也算进去了，会误报 —— 已收严）：
+
+  ```bash
+  # 第 1 层（决定性）：Core 的 using 与 csproj 引用里不许出现 UI 类型
+  grep -rhn '^using' pc-agent/FamilyAgent.Core/ --include='*.cs' | sed 's/.*using //' | sort -u
+  #   → 只允许 System.* 与 FamilyAgent.Core.*
+  grep -nE 'PackageReference|UseWPF|UseWindowsForms' pc-agent/FamilyAgent.Core/FamilyAgent.Core.csproj
+  #   → 输出为空（Core 连一个 PackageReference 都不该有）
+
+  # 第 2 层（补充）：代码行里不许出现 UI 类型 —— 但要**排除注释行**
+  grep -rnE "WebView2|System\.Windows|Dispatcher|System\.Windows\.Forms" \
+       pc-agent/FamilyAgent.Core/ --include='*.cs' | grep -v '/bin/\|/obj/' | grep -vE ':\s*///?'
+  #   → 输出为空
+  #   （注释和日志文案里出现这些词是允许的，甚至是有价值的 —— 比如
+  #     「WebView2 不可用时回落到原生通知」这种说明。判的是依赖，不是字面量。）
+  ```
 - 单测（在 Linux CI 上跑）：`ConnectionEpochTests`（旧连接 dispose 在新连接 publish 之后调用时，`IsConnected` 仍为 true、不会触发假的 `ConnectionStateChanged(false)`）。
 - 编译判据：`dotnet build pc-agent/FamilyAgent.Core/FamilyAgent.Core.csproj` 可在 `ubuntu-latest` 通过。
 

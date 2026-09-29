@@ -9,7 +9,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>FamilyAgent</AssemblyName>
     <RootNamespace>FamilyAgent</RootNamespace>
-    <Version>0.14.0</Version>
+    <Version>0.15.0</Version>
 
     <!-- WFO0003：WinForms 分析器建议改用 Application.SetHighDpiMode 取代 app.manifest 里的
          DPI 声明 —— 那是 WinForms 应用的写法。本项目是 WPF（只借了 WinForms 的 NotifyIcon），

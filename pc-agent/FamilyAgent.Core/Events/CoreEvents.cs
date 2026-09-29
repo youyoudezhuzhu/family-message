@@ -1,3 +1,4 @@
+using FamilyAgent.Core.Messaging;
 using FamilyAgent.Core.Transport;
 
 namespace FamilyAgent.Core.Events;
@@ -34,10 +35,11 @@ namespace FamilyAgent.Core.Events;
 /// </list>
 ///
 /// ⚠ §3.3 里还有 <c>MessageDeliveryStateChanged</c> 与统一的 <c>CommandReceived</c>
-///   （命令族信封 + <c>respond</c> 回执回调）—— 它们分别属于 Phase 2（MessageManager
-///   接管 ACK 决策）和 Phase 3（CommandRouter 接管命令派发）。Phase 1 是**纯搬运 +
-///   依赖倒置**，不合并现有那三个命令事件：合并会动到宿主侧的回调分工，
-///   而「行为完全等价」是这一阶段的验收前提（§8.1）。
+///   （命令族信封 + <c>respond</c> 回执回调）：<c>MessageDeliveryStateChanged</c> 已在
+///   **Phase 2** 落地（见下面的 <see cref="MessageDeliveryStateChangedArgs"/>，由
+///   <c>Messaging.MessageManager</c> 抛出）；统一的 <c>CommandReceived</c> 仍属 Phase 3
+///   （CommandRouter 接管命令派发）。Phase 1 是**纯搬运 + 依赖倒置**，不合并现有那三个
+///   命令事件：合并会动到宿主侧的回调分工，而「行为完全等价」是那一阶段的验收前提（§8.1）。
 /// </summary>
 public sealed class ConnectionStateChangedArgs
 {
@@ -65,4 +67,38 @@ public sealed class ConnectionStateChangedArgs
 
     /// <summary>等价于原 <c>ConnectionChanged</c> 的 <c>bool connected</c> 参数。</summary>
     public bool Connected => State == ConnectionState.Connected;
+}
+
+/// <summary>
+/// 一条消息的本地生命周期变化（§3.3 的 <c>MessageDeliveryStateChanged</c>，
+/// Phase 2 由 <c>Messaging.MessageManager</c> 抛出）。
+///
+/// 它同时承担了两件事：
+/// <list type="number">
+///   <item><b>收到的消息</b>的显示/已读推进 —— 取代原 <c>WebHostWindow.MessageAcked</c> →
+///     <c>App.xaml.cs:302-305</c> 直接发 <c>ack</c> 的做法（决策搬进 Core）；</item>
+///   <item><b>本机回复</b>被服务端受理（<c>reply_ack</c>）—— 那条路径仍是
+///     <c>ConnectionManager.ReplyAcked</c>，Phase 2 未动。</item>
+/// </list>
+///
+/// <see cref="DeliveryState.AckSent"/> 只在这个事件流里出现（不落盘）：用它把
+/// 「显示了」和「ack 已交出去」分开看得见 —— 出问题时能一眼判断题在哪一段。
+/// </summary>
+public sealed class MessageDeliveryStateChangedArgs
+{
+    public MessageDeliveryStateChangedArgs(long messageId, DeliveryState state, string detail)
+    {
+        MessageId = messageId;
+        State = state;
+        Detail = detail;
+    }
+
+    /// <summary>服务端 <c>message_id</c>（本机记账主键）。</summary>
+    public long MessageId { get; }
+
+    /// <summary>变化后的状态。</summary>
+    public DeliveryState State { get; }
+
+    /// <summary>给日志/界面看的中文说明（例如「已落盘（进程崩溃也不会丢）」「ack:popup_displayed」）。</summary>
+    public string Detail { get; }
 }

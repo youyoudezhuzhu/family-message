@@ -336,7 +336,7 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   to { opacity: 1; transform: none; }
 }
 
-/* ── Chip（设备多选 / 快捷短语）──────────────────────────────── */
+/* ── Chip（截图页等处的选择胶囊）───────────────────────────── */
 .chip {
   display: inline-flex; align-items: center; gap: var(--spacing-sm);
   height: 32px; padding: 0 var(--spacing-md);
@@ -357,15 +357,6 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   color: var(--fluent-color-primary);
 }
 .chip[aria-disabled="true"] { opacity: .6; }
-/* 快捷短语：Fluent 的「subtle chip」—— 有淡底和圆角，读起来是 chip 而不是蓝色文字链接 */
-.chip--suggestion {
-  background: var(--fluent-fill-control);
-  border-color: transparent;
-  color: var(--fluent-color-text-secondary);
-  font-weight: 400;
-}
-.chip--suggestion:hover { background: var(--fluent-fill-control-hover, var(--fluent-color-surface-tertiary)); color: var(--fluent-color-text); }
-.chip--suggestion:active { color: var(--fluent-color-primary); }
 .chip .icon { width: 14px; height: 14px; }
 
 /* ── 在线状态指示（小型 Presence，不用夸张大圆点）───────────── */
@@ -636,23 +627,22 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 .progress-ring--sm { width: 14px; height: 14px; border-width: 2px; }
 
 /* ── 8. 首页 · 发送区 ──────────────────────────────────────────
-   群聊模型：只有 昵称 + 发送，没有「发送给」设备选择（消息进共享空间，
-   所有设备都能看到）。中间那行是群聊语义的说明文案。 */
-.compose__quick { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); }
+   和 PC 端回复栏（web/shell 的 .reply）同构的**一条横向行**：
+   左「昵称下拉」· 中「输入框（吃掉剩余宽度，最宽的一个）」· 右「发送」。
+   群聊模型：没有「发送给」，消息进共享空间，所有设备都能看到，谁说的靠昵称区分，
+   所以卡片没有标题行，也没有快捷短语 —— 这一行就是全部。 */
 .compose__bar {
-  display: flex; align-items: center; gap: var(--spacing-sm); flex-wrap: wrap;
-  padding-top: var(--spacing-md);
-  border-top: 1px solid var(--fluent-color-border-subtle);
+  display: flex; align-items: center; gap: var(--spacing-sm);
+  flex-wrap: nowrap;
 }
 .compose__sender { width: 168px; flex: 0 0 auto; }
-.compose__group-hint {
-  display: inline-flex; align-items: center; gap: var(--spacing-sm);
-  flex: 1 1 220px; min-width: 0;
-  font: var(--font-caption); color: var(--fluent-color-text-secondary);
-}
-.compose__group-hint .icon { width: 16px; height: 16px; flex: 0 0 auto; color: var(--fluent-color-text-tertiary); }
-.compose__send { margin-left: auto; }
+/* 输入框占满中间剩余宽度：flex-basis 0 + width auto，避免和 .text-input 的
+   width:100% 叠加后把发送按钮挤出容器（横向溢出的经典来源） */
+.compose__input { flex: 1 1 0; width: auto; min-width: 0; }
+.compose__send { flex: 0 0 auto; }
 .compose__hint { font: var(--font-caption); color: var(--fluent-color-text-secondary); min-height: 16px; }
+/* 发送区卡片：标题行没了，四周留白与内部间距按 PC 端回复栏的手感收紧一档 */
+.card--compose { padding: var(--spacing-md); gap: var(--spacing-xs); }
 
 /* ── 10. 截图 ───────────────────────────────────────────────── */
 .shot-picks { display: flex; flex-wrap: wrap; gap: var(--spacing-sm); }
@@ -829,11 +819,10 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
   .dialog__head { padding: var(--spacing-lg) var(--spacing-lg) var(--spacing-sm); }
   .dialog__body { padding: 0 var(--spacing-lg) var(--spacing-lg); }
   .dialog__actions { padding: var(--spacing-md) var(--spacing-lg) var(--spacing-xl); }
-  .compose__sender { width: 100%; flex: 1 1 100%; }
-  /* 窄屏下「发送人」「群聊说明」「发送」变成上下几行 —— 群聊说明文案在窄屏
-     收起（首页卡片标题旁的「家庭群聊」已经在说同一件事），别挤成三行。 */
-  .compose__group-hint { display: none; }
-  .compose__send { margin-left: 0; width: 100%; }
+  /* 发送区：≤760 仍是与 PC 端同构的单行（昵称 · 输入 · 发送），
+     只把昵称收窄一点给输入框让位；真正挤不下时（≤640）才允许换行，
+     见文件末尾的 640 断点。 */
+  .compose__sender { width: 132px; flex: 0 0 auto; }
   .dev-grid, .dev-strip { grid-template-columns: 1fr; }
   .dev__acts .btn { flex: 1 1 calc(50% - var(--spacing-sm)); }
   .xm-form .combo { flex: 1 1 100%; }
@@ -856,11 +845,27 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 }
 
 
-/* ── 8b. 群聊气泡（网页端「消息」页 / 首页「最近消息」/ PC 端客户端窗口 共用） ──
+/* ── 8b. 群聊气泡（首页「家庭消息」/ PC 端客户端窗口 共用） ──
    组件本体在 static/chat.js，两端调的是同一份。别人发的靠左，自己发的靠右。
    靠右只认「昵称 == 我的本地昵称」，不认 device_id —— 群聊里设备不是身份。 */
 .chat-list { display: flex; flex-direction: column; gap: var(--spacing-lg); }
 .chat-list--compact { gap: var(--spacing-md); }
+
+/* 首页「家庭消息」：整条群聊流直接在首页滚，不再跳「消息」页。
+   高度按视口给（dvh，手机上地址栏收起/展开时不会算错），底部留一点内边距
+   让最后一条气泡不贴边；overscroll-behavior: contain 防止滚到边界后
+   继续带动整页滚动（在手机上手感差别很明显）。 */
+.chat-scroll {
+  max-height: min(60dvh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--spacing-xs) var(--spacing-xs) var(--spacing-sm) 2px;
+  border-radius: var(--radius-medium);
+  scrollbar-width: thin;
+}
+/* 消息行不参与压缩：滚动的应该是容器，而不是把每条气泡挤扁 */
+.chat-scroll > * { flex: 0 0 auto; }
+.chat-scroll:focus-visible { outline: 2px solid var(--fluent-color-primary); outline-offset: 2px; }
 
 .chat-row { display: flex; align-items: flex-start; gap: var(--spacing-sm); }
 .chat-row--out { flex-direction: row-reverse; }
@@ -914,4 +919,11 @@ textarea.text-input { resize: vertical; min-height: 76px; display: block; font: 
 @media (max-width: 640px) {
   .chat-main { max-width: 82%; }
   .chat-avatar { width: 28px; height: 28px; }
+
+  /* 发送区：这一档真的挤不下一行了，允许换行 ——
+     第一行「昵称（撑开） + 发送」，输入框整宽落到第二行（order:3）。
+     读序仍是 昵称 → 输入 → 发送，且不重叠、不横向溢出。 */
+  .compose__bar { flex-wrap: wrap; }
+  .compose__sender { flex: 1 1 auto; width: auto; min-width: 0; }
+  .compose__input { flex: 1 1 100%; order: 3; }
 }

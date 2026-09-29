@@ -24,6 +24,12 @@
  *     · 设备页完整保留（截图 / 远程关机 / 远程解锁 / 在线状态一律没动）
  *     · 「与某台设备的对话」弹窗随设备间投递语义一起去掉：消息只有一个共同空间
  *
+ * 追加（发送区收成一行，纯表现层）：首页底部的发送卡片去掉标题行 / 快捷短语 /
+ *   「Ctrl+Enter」提示 / 群聊说明，只剩与 PC 端回复栏同构的一条横向行 ——
+ *   左昵称下拉 · 中输入框（占满中间最宽）· 右发送。输入框改单行 <input>，
+ *   裸回车即发送（组字中的回车不算，见文件末尾的事件绑定）；
+ *   请求体、API 路径、字段校验一律没动。
+ *
  * 追加（WebView2 壳模式，纯分支，不动上面任何东西）：
  *   PC 端改成「WebView2 壳加载这个页面」，同一个网页既能当浏览器控制台，
  *   也能当原生应用界面（含全屏消息弹窗）。壳的判定、桥协议、弹窗视图全在
@@ -39,7 +45,6 @@
    逐设备状态表（created / server_received / device_received / popup_displayed / read）
    及其颜色映射已随「设备间投递」模型一起删除。 */
 const STATUS_SENT = { cls: 'status--sent', icon: 'check', label: '已发送' };
-const QUICK = ['下来吃饭了', '该睡觉了', '有人找你', '快出来一下', '开会中，勿扰'];
 
 /* 裸端口访问时 BASE=""；走飞牛网关时 BASE="/app/family-message"。 */
 const BASE = (() => {
@@ -64,7 +69,10 @@ const api = async (path, opts = {}) => {
   return res.json();
 };
 
-let state = { config: null, devices: [], messages: [], limit: 30 };
+/* limit 就是「首页一次拉多少条」—— 首页现在自己就是完整列表（可滚动），
+   不再有「查看全部」跳转，所以直接要服务端允许的上限 200
+   （main.py 的 api_messages 里 limit = min(limit, 200)）。 */
+let state = { config: null, devices: [], messages: [], limit: 200 };
 
 /* ══════════════════════════════════════════════════════════════
    A. 表现层
@@ -113,8 +121,11 @@ mqDark.addEventListener('change', () => {
   if (loadMode() === 'system') { applyMode('system', false); renderModeRow(); }
 });
 
-/* ── A2. NavigationView 路由（纯前端切页，不涉及任何后端路由）── */
-const PAGES = ['home', 'messages', 'devices', 'shot', 'settings'];
+/* ── A2. NavigationView 路由（纯前端切页，不涉及任何后端路由）──
+   「消息」页已删除：首页的「家庭消息」直接渲染整条群聊流并且可滚动，
+   所以导航里不再需要第二个看消息的入口。localStorage 里残留的
+   'messages'（老版本存下的当前页）会由 go() 兜底回首页，不会白屏。 */
+const PAGES = ['home', 'devices', 'shot', 'settings'];
 const PAGE_KEY = 'fm.page';
 let currentPage = 'home';
 
@@ -156,21 +167,10 @@ function loadPage() {
 function openNavDrawer() { $('app-shell').classList.add('nav-open'); }
 function closeNavDrawer() { $('app-shell').classList.remove('nav-open'); }
 
-/* ── A3. 首页问候语（按时间给一句话，家庭应用不用 KPI）─────── */
-function greetingText() {
-  const h = new Date().getHours();
-  if (h < 5) return '夜深了';
-  if (h < 9) return '早上好';
-  if (h < 12) return '上午好';
-  if (h < 14) return '中午好';
-  if (h < 18) return '下午好';
-  if (h < 23) return '晚上好';
-  return '夜深了';
-}
-
-function renderGreeting() {
-  $('home-greeting').textContent = greetingText();
-}
+/* ── A3. （原「首页问候语」区块已删除）─────────────────────────
+   首页顶部那句「早上好 / 夜深了 …」和「N 台电脑在线，发一条消息它们都会看到。」
+   整块去掉了 —— 设备数量在「在线设备」标题右边已经写着，问候语属于重复信息。
+   greetingText() / renderGreeting() 一并删掉，避免留下没人调的死代码。 */
 
 /* ── A4. 图标（Fluent System Icons 内联 SVG 精灵）────────────── */
 function icon(name, cls = 'icon') {
@@ -445,17 +445,6 @@ document.addEventListener('click', () => {
 async function bootConsole() {
   state.config = await api('/api/config');
   renderNameSelectors();
-  renderGreeting();
-
-  $('quick').innerHTML = '';
-  QUICK.forEach((q) => {
-    const b = document.createElement('button');
-    b.className = 'chip chip--suggestion';
-    b.type = 'button';
-    b.textContent = q;
-    b.onclick = () => { $('content').value = q; $('content').focus(); };
-    $('quick').appendChild(b);
-  });
 
   await Promise.all([loadDevices(), loadMessages(), loadVersion(), loadXiaomi()]);
   connectWS();
@@ -507,12 +496,6 @@ function renderHomeDevices() {
   $('home-dev-empty').hidden = state.devices.length > 0;
   $('home-dev-count').textContent = state.devices.length
     ? `${online.length} 台在线 · 共 ${state.devices.length} 台` : '';
-
-  $('home-sub').textContent = state.devices.length === 0
-    ? '还没有设备接入。在 Windows PC 上跑起 Family Agent 就会出现在这里。'
-    : (online.length
-        ? `${online.length} 台电脑在线，发一条消息它们都会看到。`
-        : '电脑都不在线，消息会在它们上线后送到。');
 
   list.forEach((d) => {
     const el = document.createElement('button');
@@ -922,14 +905,23 @@ function chatOrder(list) {
   return (list || []).slice().sort((a, b) => (Number(a.id) || 0) - (Number(b.id) || 0));
 }
 
-/** 滚到最新一条。消息页没显示时不动（群聊/首页渲染不该把页面拽走） */
+/** 滚到最新一条。
+    列表容器自己可滚动（#home-recent），所以直接把它滚到底；
+    首页没显示时不动（别的页面渲染不该把滚动位置拽走）。 */
 function scrollLogToEnd() {
-  const log = $('log');
-  if (!log) return;
-  const sec = log.closest('section');
-  if (!sec || sec.hidden) return;
-  const last = log.lastElementChild;
-  if (last) last.scrollIntoView({ block: 'end' });
+  const box = $('home-recent');
+  if (!box) return;
+  const page = box.closest('.page');
+  if (page && page.hidden) return;
+  box.scrollTop = box.scrollHeight;
+}
+
+/** 列表当前是不是贴在底部（留 24px 容差）。
+    用户往上翻看历史时不能硬把他拽回底部 —— 新消息只在「本来就在底部」时才跟随。 */
+function isLogAtBottom() {
+  const box = $('home-recent');
+  if (!box) return true;
+  return box.scrollHeight - box.scrollTop - box.clientHeight < 24;
 }
 
 async function loadMessages(opts) {
@@ -940,11 +932,12 @@ async function loadMessages(opts) {
 function upsertMessage(msg) {
   const i = state.messages.findIndex((m) => m.id === msg.id);
   if (i >= 0) state.messages[i] = msg; else state.messages.push(msg);
-  renderMessages(true);
+  // 新消息只在用户没往上翻的时候才贴到底（否则保持他正在看的位置）
+  renderMessages(isLogAtBottom());
 }
 
 /** 一条消息的 DOM —— 直接交给共用的群聊组件（static/chat.js）。
-    网页端「消息」页、首页「最近消息」、PC 端客户端窗口因此长得**完全一样**：
+    网页端首页「家庭消息」、PC 端客户端窗口因此长得**完全一样**：
     别人发的靠左，自己发的靠右。
     靠右只认「昵称 == 我当前用的昵称」（群聊模型：空间里完全以昵称区分），
     不看 device_id —— 设备不是身份。 */
@@ -952,22 +945,21 @@ function buildMsgEl(m) {
   return FMChat.row(m, { myName: currentSender(), status: STATUS_SENT });
 }
 
+/** 首页即完整消息列表：整条群聊流都长在这里，容器自己可滚动上下看全部，
+    所以没有二级「消息」页、也没有「查看全部」。
+    顺序仍是聊天阅读顺序：旧 → 新，最新的在最下面。
+    toEnd === false 时保持用户当前看的位置（重画会把 scrollTop 归零，
+    所以按「距底部多少像素」还原）。 */
 function renderMessages(toEnd) {
-  const box = $('log');
-  box.textContent = '';
-  $('log-empty').hidden = state.messages.length > 0;
-  chatOrder(state.messages).forEach((m) => box.appendChild(buildMsgEl(m)));
-  renderHomeRecent();
-  if (toEnd !== false) scrollLogToEnd();
-}
-
-/** 首页只放最近 3 条（同样按聊天顺序：旧→新），完整列表在「消息」页 */
-function renderHomeRecent() {
   const box = $('home-recent');
+  const fromBottom = box.scrollHeight - box.scrollTop - box.clientHeight;
   box.textContent = '';
-  const list = chatOrder(state.messages).slice(-3);
+  const list = chatOrder(state.messages);
   $('home-recent-empty').hidden = list.length > 0;
+  $('home-msg-count').textContent = list.length ? `共 ${list.length} 条` : '';
   list.forEach((m) => box.appendChild(buildMsgEl(m)));
+  if (toEnd !== false) scrollLogToEnd();
+  else box.scrollTop = Math.max(0, box.scrollHeight - box.clientHeight - fromBottom);
 }
 
 /* ── B8. 截图页 ──────────────────────────────────────────────── */
@@ -1643,10 +1635,10 @@ $('btn-send').onclick = sendMessage;
 $('btn-refresh').onclick = () => {
   Promise.all([loadDevices(), loadMessages()]).then(() => snack('已刷新'));
 };
-$('btn-history').onclick = () => { state.limit += 30; loadMessages({ keepScroll: true }); };
-$('home-more').onclick = () => go('messages');
 
-/* 导航（左导航 + 底部导航共用同一套 data-page 按钮） */
+/* 导航（左导航 + 底部导航共用同一套 data-page 按钮）。
+   注意：绑定写在这两处导航的**查询结果**上，删掉「消息」项后这里自然只剩 4 项，
+   不会留下指向已删元素的监听。 */
 document.querySelectorAll('[data-page]').forEach((b) => {
   b.onclick = () => go(b.dataset.page);
 });
@@ -1657,8 +1649,14 @@ $('nav-scrim').onclick = closeNavDrawer;
 
 $('shot-again').onclick = fetchShot;
 
+/* 发送区是单行输入框，回车即发送（与 PC 端回复栏一致：pc.js 里也是裸 Enter）。
+   中文输入法组字中的那次回车是「确认候选」，不能当成发送 —— isComposing /
+   keyCode 229 的判断专门挡这一下。Ctrl/⌘+Enter 保留，快发习惯不用改。 */
 $('content').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) sendMessage();
+  if (e.key !== 'Enter') return;
+  if (e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  sendMessage();
 });
 
 $('btn-settings').onclick = () => go('settings');
