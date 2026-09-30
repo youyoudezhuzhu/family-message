@@ -390,6 +390,38 @@ def main() -> int:
             check("该灰点是 §4.4 的灰兜底色（浅色 #5A5A5A）",
                   eq_hex_vs_rgb("#5A5A5A", combo["swatch"]), f"{combo['swatch']} vs {want}")
 
+            # ── F2. 远程解锁入口策略：只有离线才拦，会话状态只做二次确认 ──────
+            # 用户实测反馈：PC 锁屏时网页端点不动「远程解锁」。旧策略把
+            # windows_state != locked/logon_screen 当成禁用条件，而状态由心跳上报、
+            # 可能滞后十几秒（同一台机器还有 headless / 交互式两个实例可能报旧值）
+            # ⇒ 用户明明锁着屏也没法验证这条路。现在只拦离线，状态改成"说清事实 +
+            # 让用户确认"，PC 侧凭据是否就绪才是真正决定能不能解锁的因素。
+            section("F2 远程解锁入口策略（只有离线才拦）")
+            pol = pageA.evaluate("""() => {
+              const P = window.FM_UNLOCK_POLICY || {};
+              const call = (fn, d) => { try { return P[fn](d); } catch (e) { return 'EXC:' + e; } };
+              return {
+                offline_block:  call('blockReason', { online: false, windows_state: 'locked' }),
+                locked_block:   call('blockReason', { online: true,  windows_state: 'locked' }),
+                unlocked_block: call('blockReason', { online: true,  windows_state: 'unlocked' }),
+                unknown_block:  call('blockReason', { online: true,  windows_state: 'unknown' }),
+                locked_warn:    call('warnReason',  { online: true,  windows_state: 'locked' }),
+                logon_warn:     call('warnReason',  { online: true,  windows_state: 'logon_screen' }),
+                unlocked_warn:  call('warnReason',  { online: true,  windows_state: 'unlocked' }),
+                unknown_warn:   call('warnReason',  { online: true,  windows_state: 'unknown' }),
+              };
+            }""")
+            check("离线仍拦（按钮禁用）", "离线" in (pol.get("offline_block") or ""), str(pol))
+            check("已锁屏 / 登录界面：不拦、也不弹确认",
+                  pol.get("locked_block") == "" and pol.get("locked_warn") == ""
+                  and pol.get("logon_warn") == "", str(pol))
+            check("显示未锁屏：不拦，但要二次确认并说明原因",
+                  pol.get("unlocked_block") == "" and "未锁屏" in (pol.get("unlocked_warn") or ""),
+                  str(pol))
+            check("状态未知：不拦，但要二次确认",
+                  pol.get("unknown_block") == "" and "会话状态" in (pol.get("unknown_warn") or ""),
+                  str(pol))
+
             # 发一条消息（灰临时）
             go_home(pageA)
             pageA.fill("#content", "我是新浏览器，还没选昵称")

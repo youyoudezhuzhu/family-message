@@ -210,15 +210,31 @@ async def main() -> int:
             else:
                 check("场景5 过期令牌", True, "（未传 db 路径，跳过直接查库校验）")
 
-            # ══════ 场景 1：已登录的设备无需解锁 ══════
+            # ══════ 场景 1：已登录(unlocked) 时请求解锁 —— **现在允许**（v0.20.3 起）══════
+            # 原来这里期待 409。改成允许的原因：会话状态由心跳上报、可能滞后，
+            # 同一台机器还有 headless/交互式两个实例可能报出旧值 —— 用户明明锁着屏
+            # 却点不动按钮，"没法验证这条路"比"点一下失败"糟得多。
+            # 现在的分工：服务端只在**离线**时拦（场景 4），状态只作为 advisory 提示，
+            # 界面据此二次确认；真正能不能解锁由 PC 侧凭据是否就绪决定。
             await a.set_state("unlocked")
             await asyncio.sleep(0.8)
             dev = (await c.get(f"/api/devices/{DEV_A}")).json()
             check("心跳可更新会话状态 → unlocked", dev.get("windows_state") == "unlocked",
                   f"windows_state={dev.get('windows_state')}")
             r = await c.post(f"/api/devices/{DEV_A}/unlock")
-            check("场景1 已登录时请求解锁 → 409", r.status_code == 409,
-                  f"HTTP {r.status_code} {r.json().get('detail', '') if r.status_code != 200 else ''}")
+            check("场景1 已登录时仍可下发解锁请求 → 200", r.status_code == 200,
+                  f"HTTP {r.status_code} {r.text[:120]}")
+            body = r.json() if r.status_code == 200 else {}
+            check("场景1 返回 advisory 提示（说明当前显示未锁屏）",
+                  "未锁屏" in (body.get("advisory") or ""),
+                  f"advisory={body.get('advisory')!r}")
+            # PC 用中间态 armed 应答：请求不结单、不记失败、不污染后面的限流场景
+            fr = await a.wait_for("unlock_request", timeout=4)
+            check("场景1 解锁请求已下发到设备", bool(fr), "收到 unlock_request")
+            if fr:
+                await a.send({"type": "unlock_result", "request_id": fr["request_id"],
+                              "status": "armed", "reason": "ok"})
+                await asyncio.sleep(0.4)
 
         # ══════ 场景 4：设备离线 ══════
         await asyncio.sleep(0.5)

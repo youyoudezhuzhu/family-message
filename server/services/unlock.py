@@ -101,19 +101,34 @@ def can_unlock(device: Optional[dict], online: bool) -> tuple[bool, str]:
 
     前端也有一份同样的判断（用于按钮可用性），但**后端这份是权威** ——
     前端隐藏按钮只是体验优化，不能当安全边界（需求 §13）。
+
+    ★ 只有**离线**才拦。Windows 会话状态**不再**当闸门，只用 <see cref="advisory">
+      提示一句，原因：
+        · 状态由心跳上报，可能滞后十几秒；
+        · 同一台机器可能有两个实例（登录前的 headless / 登录后的交互式），
+          曾报出"未锁屏"的旧值 —— 用户明明锁着屏却怎么都点不动按钮；
+        · 真正决定"能不能解锁"的是 PC 侧（凭据就绪才回 armed），
+          服务端再拿一个可能过期的状态挡在门口，只会挡住用户验证这条路。
+      事实仍然如实返回（见 advisory），由界面提示 + 用户二次确认拍板。
     """
     if not device:
         return False, "设备不存在"
     if not online:
         return False, "设备离线，无法下发解锁请求"
+    return True, ""
 
-    state = (device.get("windows_state") or "unknown").strip().lower()
+
+def advisory(device: Optional[dict]) -> str:
+    """给调用方的**提示**（不是拦截）：当前会话状态与该不该解锁不一致时说清楚。
+
+    locked / logon_screen 是"正该解锁"的状态，返回空串。
+    """
+    state = ((device or {}).get("windows_state") or "unknown").strip().lower()
     if state in UNLOCKABLE_STATES:
-        return True, ""
+        return ""
     if state == "unlocked":
-        return False, "Windows 已登录，无需解锁"
-    # unknown / 空：PC 还没上报会话状态（老版本 Agent，或刚上线还没心跳）
-    return False, "尚未获取到 Windows 会话状态，请稍候重试"
+        return "系统显示这台电脑未锁屏（可能是状态还没刷新，或电脑确实没锁）"
+    return "还没拿到这台电脑的 Windows 会话状态"
 
 
 # ══════════════════════════════════════════════════════════════

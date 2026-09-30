@@ -611,7 +611,10 @@ async def api_device_unlock(device_id: str):
         "request_id": req["request_id"],
         "expires_at": req["expires_at"],
     })
-    return {"ok": True, "request_id": req["request_id"], "expires_at": req["expires_at"]}
+    # advisory：会话状态与该不该解锁不一致时的**提示**（不是拦截）——
+    # 状态由心跳上报、可能滞后；是否真解锁由 PC 侧凭据就绪与否决定。
+    return {"ok": True, "request_id": req["request_id"],
+            "expires_at": req["expires_at"], "advisory": unlock_svc.advisory(dev)}
 
 
 @app.get("/api/xiaomi/status", dependencies=[WebAuth])

@@ -242,7 +242,7 @@ PC 侧另有本地重放缓存）。应答用 `unlock_result`（§5），`status
 | POST | `/api/devices/{id}/screenshot` | 请求截图，返回图片（带鉴权，不是公开 URL） |
 | POST | `/api/devices/{id}/wake` | 执行该 PC 绑定的米家开关动作（默认「开」） |
 | POST | `/api/devices/{id}/shutdown` | 让 PC Agent 关机（离线返回 409） |
-| POST | `/api/devices/{id}/unlock` | 远程解锁（返回 `request_id` / `expires_at`；下发失败 409） |
+| POST | `/api/devices/{id}/unlock` | 远程解锁（返回 `request_id` / `expires_at` / `advisory`；**离线**才 409） |
 | GET | `/api/nicknames` | 昵称整表（`?status=active`；空库返回 `{"nicknames": []}`，**不建任何行**） |
 | POST | `/api/nicknames` | 新建 `{display_name}`，201；撞名 **409 `NICKNAME_ALREADY_EXISTS` + `existing_nickname_id`** |
 | PATCH | `/api/nicknames/{nickname_id}` | 改名 `{display_name}`；撞名 **409 `NAME_TAKEN`**；不存在 404 |
@@ -298,6 +298,11 @@ created → server_received → device_received → popup_displayed → read
 - `unlock` 是**条件能力**（Phase 2 起）：只有本机**存好解锁凭据且校验通过**时才上报
   （`IUnlockGuard.Ready`）——"有实现"与"能用"是两件事，凭据没配就上报等于给网页端一个
   点了必然失败的按钮。用户在 PC 设置页存/清凭据后，下次心跳/重连即生效。
+
+  ⚠ **网页端的解锁入口不受这个能力位限制**：能力位只描述"PC 自报能不能做"，
+  入口是否出现由 `device.unlock` 权限决定。用户要的正是"锁屏时点一下，看 PC 怎么答" ——
+  所以凭据没配时照样能点，PC 回 `failed/no_credential`，界面把原因说清楚
+  （`unlock_result.reason` 有中文映射）。
   收到解锁请求时本机回 `armed/ok`（凭据就绪，等 Credential Provider 真正施加解锁）
   或 `failed/no_credential`（没配凭据 / 处于失败冷却中）；**真正解锁要等 Phase 3**。
 - 客户端收到**不支持**的命令必须回终态错误（`event{kind=shutdown_failed}` /

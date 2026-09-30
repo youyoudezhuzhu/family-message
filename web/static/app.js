@@ -564,14 +564,32 @@ function unlockPending(id) {
   return !!st && (st.phase === 'sending' || st.phase === 'waiting');
 }
 
-/** 不能解锁的原因（空串 = 可以解锁） */
+/**
+ * 不能解锁的原因（空串 = 可以下发）。
+ *
+ * ★ 只有**离线**才真拦。Windows 会话状态**不再**用来禁用按钮，只用来提示：
+ *   · 状态来自心跳，可能滞后十几秒；
+ *   · 同一台机器可能有两个实例（登录前的 headless / 登录后的交互式），
+ *     曾经因此报出一个"未锁屏"的旧值，按钮灰着、用户想验证都没法验证；
+ *   · 需求就是"能验证这条路" —— 显示不准的状态挡在门口比点一下失败更糟。
+ *   于是改成：仍可点，但先二次确认（见 unlockWarnReason / doUnlock）。
+ */
 function unlockBlockReason(d) {
   if (!d.online) return '设备离线，无法远程解锁';
-  const s = d.windows_state || 'unknown';
-  if (s === 'unlocked') return '已登录，无需解锁';
-  if (s === 'unknown') return 'Windows 会话状态未知，暂时不能解锁';
-  return '';                                     // locked / logon_screen 才允许解锁
+  return '';
 }
+
+/** 需要二次确认的原因（空串 = 直接下发，不用确认） */
+function unlockWarnReason(d) {
+  const s = d.windows_state || 'unknown';
+  if (s === 'unlocked') return '系统显示这台电脑未锁屏（可能是状态还没刷新，或电脑确实没锁）';
+  if (s === 'unknown') return '还没拿到这台电脑的 Windows 会话状态';
+  return '';                                     // locked / logon_screen：正是该解锁的时候
+}
+
+/* 诊断用句柄（和 window.FM_PC 同一用途）：测试直接调这两个纯函数，
+   免得为了验"按钮该不该灰"去造一整套设备数据。 */
+window.FM_UNLOCK_POLICY = { blockReason: unlockBlockReason, warnReason: unlockWarnReason };
 
 function buildWinStateBadge(raw) {
   const key = WIN_STATE[raw] ? raw : 'unknown';
@@ -587,14 +605,14 @@ function buildWinStateBadge(raw) {
   return el;
 }
 
-/** 卡片上的说明行：进行中的文案优先，其次是「为什么点不了」 */
+/** 卡片上的说明行：进行中的文案优先，其次是「为什么要你确认一次」 */
 function unlockNoteFor(d) {
   const st = unlockState.get(d.device_id);
   if (st && st.note) return { kind: st.kind, text: st.note };
   if (!d.online) return null;                    // 「离线」状态行已经说了，不重复
-  const s = d.windows_state || 'unknown';
-  if (s === 'unknown') return { kind: 'info', text: 'Windows 会话状态未知，无法远程解锁' };
-  return null;                                   // 已登录 / 可解锁：会话徽标已经说清楚
+  const warn = unlockWarnReason(d);
+  if (warn) return { kind: 'info', text: warn + '；仍可下发一次请求' };
+  return null;                                   // 已锁屏 / 登录界面：会话徽标已经说清楚
 }
 
 function fillDevNote(node, info) {
@@ -680,11 +698,17 @@ function renderDevices() {
     // 不用和「发送」一样的实心主按钮。没有 device.unlock 权限时整个入口不出现。
     if (unlockUIAvailable()) {
       const why = unlockBlockReason(d);
+      const warn = unlockWarnReason(d);
       const pending = unlockPending(d.device_id);
       const ub = mkBtn('远程解锁', 'lock-open', 'btn--secondary', () => doUnlock(d));
       ub.dataset.unlockBtn = d.device_id;
+      // ★ 只有离线（或请求进行中）才禁用 —— 会话状态显示不准时也给用户一条验证的路，
+      //   点下去先二次确认，而不是给一个永远灰着的按钮。
       ub.disabled = !!why || pending;
-      ub.title = why || `向「${d.name}」下发一次性解锁请求（PC 用本机 Windows 凭据解锁）`;
+      ub.title = why
+        ? why
+        : `向「${d.name}」下发一次性解锁请求（PC 用本机 Windows 凭据解锁）`
+          + (warn ? `\n注意：${warn}。仍可下发，会先请你确认。` : '');
       if (pending) {
         // 请求进行中：图标换成小进度环，按钮锁住防连点
         ub.querySelector('.btn__icon').replaceWith(
@@ -802,8 +826,23 @@ function onUnlockTimeout(id, requestId) {
 /** 点击「远程解锁」：沿用当前 Web 会话下发，不需要再输一次口令 */
 async function doUnlock(d) {
   if (unlockPending(d.device_id)) return;
+
   const why = unlockBlockReason(d);
   if (why) { snack(why, { error: true }); return; }
+
+  // 会话状态和"该不该解锁"不一致时，只说清事实让用户拍板 —— 状态可能滞后，
+  // 而且用户可能就是想验证这条路（"电脑没锁"不该让按钮变成点不动的摆设）。
+  const warn = unlockWarnReason(d);
+  if (warn) {
+    const go = await confirmDialog({
+      title: '仍然下发解锁请求？',
+      body: warn + '。仍然下发一次解锁请求吗？',
+      okText: '下发请求',
+      danger: true,
+      iconName: 'i-lock-open',
+    });
+    if (!go) return;
+  }
 
   setUnlockPhase(d.device_id, 'sending', '正在发送解锁请求…', { kind: 'pending' });
   try {
