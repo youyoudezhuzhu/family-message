@@ -631,6 +631,81 @@ def require(perm):
 
 ---
 
+## 18. Phase 3：Credential Provider（真正施加解锁）
+
+### 18.1 为什么只能是它
+锁屏时**没有任何受支持的 API 能"把会话解开"**：`UnlockWorkstation` 只对当前在输入桌面上的
+进程有效；会话 0 的进程受会话隔离限制，`SendInput` 注入不到 Winlogon 安全桌面；
+`WTSDisconnectSession` 是断开不是解锁。唯一被 Windows 支持、且能拿到"用户实际输入的东西"
+的机制是 **Credential Provider（CP）** —— 它由 LogonUI 以 **SYSTEM** 身份加载到登录界面
+（安全桌面）进程里，可以替用户提交一次登录 ⇒ 会话真正解锁。
+
+### 18.2 已核实的事实（写死，免得后面又猜）
+- **CP 的 DLL 不需要代码签名**（Windows 不校验 Authenticode；只有"看起来像 IOC"的观感问题）。
+- CP 必须导出 `DllGetClassObject` / `DllCanUnloadNow`，并注册两处注册表：
+  `HKLM\SOFTWARE\Classes\CLSID\{GUID}\InprocServer32`（含 `ThreadingModel=Apartment`）
+  与 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{GUID}`。
+- DLL 放在**管理员可写、普通用户不可写**的目录（`%ProgramFiles%\FamilyAgent\`）。
+- **凭据文件天然可用**：Phase 2 存的是 **DPAPI LocalMachine** + 固定熵，
+  LogonUI 是 SYSTEM ⇒ 同一台机器上解得开（这正是当初选 LocalMachine 的原因）。
+- `ICredentialProviderEvents::CredentialsChanged` **必须在 STA 线程上调用** ——
+  工作线程要 `PostMessage` 到本 provider 创建的消息窗口，再由窗口过程里调（参考实现
+  PsyChip/hodor（MIT）就是这么做的；本实现按同样思路自己写，不抄代码）。
+
+### 18.3 设计（fail-closed）
+**平时完全隐形**：没有 armed 时 `GetCredentialCount` 返回 **0** ⇒ 锁屏界面与今天一模一样
+（不会多出一个空 tile，也不会自动登录）。
+
+**只有"被点名解锁"时才出现**：
+1. PC 端 Guard 收到服务端 `unlock_request` 且协议/凭据都过 → 回 `armed/ok`
+   **并在 `%ProgramData%\FamilyAgent\unlock-arm.json` 写一张一次性凭证**
+   `{request_id, nonce, user, expires_unix}`（TTL 120 秒）；
+2. CP 的工作线程每 500ms 看一眼这张凭证：出现且**新鲜**且**nonce 没见过** →
+   在 STA 线程发 `CredentialsChanged`；
+3. LogonUI 重新枚举 → provider 返回 **1 个凭据**（`pbAutoLogonWithDefault=TRUE`）→
+   立即 `GetSerialization`；
+4. CP 现场解密凭据 + `KerbInteractiveUnlockLogonPack` 打成 LSA blob →
+   `CPGSR_RETURN_CREDENTIAL_FINISHED` → Windows 完成登录 ⇒ **锁开了**；
+5. 凭证**一次性**：消费后立刻删除；失败也在 `ReportResult` 里删（下次不该再自动尝试）；
+6. 审计：`%ProgramData%\FamilyAgent\cp.log` 记"读到凭证 / 打包成功 / 结果码"（**不含口令**）。
+
+**安全边界（如实写清）**：
+- 凭证里带的是**服务端签发的一次性 nonce** ⇒ 外部无法凭空解锁；
+- 反过来说，**用户自己会话里的进程**在 TTL 窗口内读到该凭证也能触发一次解锁 ——
+  这是本机权限模型内的可接受残余风险（那类进程本来就能键盘记录），写进文档不藏。
+- CP 的每个 COM 方法 **try/catch + 极短超时**：任何异常/超时都退回"0 个凭据"，
+  绝不让 LogonUI 卡住或抛（那会导致登录界面异常，是最坏后果）。
+
+### 18.4 交付物
+| # | 东西 | 位置 |
+|---|---|---|
+| 1 | CP 源码（单个 .cpp + .def + build.bat） | `cp/`（新目录） |
+| 2 | 构建：CI 上 `cl.exe` 编译（本地没有 MSVC） | `.github/workflows/build-cp.yml`，产物附到 Release |
+| 3 | 安装/卸载/自检：`FamilyAgent.exe --install-cp / --uninstall-cp / --cp-selftest` | 宿主（需管理员，复用既有的提权模式） |
+| 4 | armed 凭证的写入与消费 | Core `UnlockArming`（+ 单测）+ 宿主 Guard 接线 |
+| 5 | 解锁结果回传 | 观察到 `SessionUnlock` 且在 TTL 内 → 回 `success`；超时 → 回 `failed/timeout` |
+
+### 18.5 验证清单（**真机必做，无法在 NAS 上代跑**）
+1. `--cp-selftest`（提权）：读凭据 → DPAPI 解密 → 打包 KBL blob，全链路打印结果
+   → 这一步**不碰登录界面**，先证明逻辑对；
+2. `--install-cp` 后**先锁屏解锁一次**确认登录界面正常（没多出空 tile、能正常登录）；
+3. 网页端点「远程解锁」→ 屏幕应真的亮起；观察 `cp.log` 与 `app.log`；
+4. 失败路径：故意把口令改错 → 应看到一次失败提示且**不会反复重试**（凭证已消费）。
+5. **回滚（一条命令）**：`FamilyAgent.exe --uninstall-cp`（删两个注册表键 + 删 DLL）；
+   若登录界面已异常：安全模式或用 Windows 安装盘进命令行删
+   `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{GUID}`
+   与 `HKLM\SOFTWARE\Classes\CLSID\{GUID}`。
+
+### 18.6 决策点（推荐值）
+| 决策 | 推荐 | 理由 |
+|---|---|---|
+| CP 用 C++ 还是 .NET | **C++（原生，无运行时依赖）** | LogonUI 里加载 .NET 运行时脆弱；原生 DLL 是行业惯例 |
+| 平时是否显示 tile | **不显示**（未 armed ⇒ 0 个凭据） | 锁屏界面与今天一致，行为可预期 |
+| armed 的触发 | **服务端 nonce + 一次性 + 120s TTL** | 外部无法伪造；本地残余风险最小 |
+| 失败后 | **立刻删除凭证**（单次机会） | 不反复尝试，避免把账户打到锁定 |
+
+---
+
 ## 17. Phase 2 进度（滚动更新）
 
 - **2026-09-29 · 第 1 步完成 ✅**：凭据存取的**平台无关抽象**已进 Core ——

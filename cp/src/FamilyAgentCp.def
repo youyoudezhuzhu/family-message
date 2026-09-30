@@ -1,0 +1,5 @@
+LIBRARY FamilyAgentCp
+EXPORTS
+    DllGetClassObject
+    DllCanUnloadNow
+    FamilyAgentCpSelfTest

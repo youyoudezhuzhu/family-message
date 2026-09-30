@@ -1,0 +1,75 @@
+name: Build Credential Provider
+
+# Phase 3（远程解锁）：CP 是原生 C++ DLL，NAS 上没有 MSVC —— 编译只在 CI 上做。
+# 推 tag 时把 DLL 附到同一个 Release（PC 端 exe / NAS 端 fpk 由别的 workflow 出）。
+on:
+  push:
+    paths: ['cp/**', '.github/workflows/build-cp.yml']       # 任意分支（迭代期不必污染 main）
+    tags: ['v*']
+  pull_request:
+    paths: ['cp/**']
+  workflow_dispatch:
+
+jobs:
+  build-cp:
+    name: 编译 CP（windows-latest + MSVC）
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 准备 MSVC 环境（vswhere → vcvars64）
+        shell: cmd
+        run: |
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set VSPATH=%%i
+          if not defined VSPATH ( echo ✗ 找不到 VS 安装 & exit /b 1 )
+          echo VSPATH=%VSPATH%
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          echo VSPATH=%VSPATH%>> "%GITHUB_ENV%"
+          echo CL_READY=1>> "%GITHUB_ENV%"
+
+      - name: 编译
+        shell: cmd
+        run: |
+          call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+          call cp\build.bat
+          if errorlevel 1 exit /b 1
+
+      - name: 自检导出（加载 DLL、看导出表）
+        shell: pwsh
+        run: |
+          $dll = "cp/out/FamilyAgentCp.dll"
+          if (-not (Test-Path $dll)) { throw "没产出 DLL" }
+          $size = (Get-Item $dll).Length
+          Write-Host "DLL 大小：$size 字节"
+          # 用 dumpbin 看导出表（DllGetClassObject / DllCanUnloadNow / FamilyAgentCpSelfTest）
+          $dumpbin = Get-ChildItem "$env:VSPATH\VC\Tools\MSVC" -Recurse -Filter dumpbin.exe |
+                     Where-Object { $_.FullName -like "*Hostx64\x64*" } | Select-Object -First 1
+          & $dumpbin.FullName /exports $dll | Out-String | Write-Host
+          $exports = (& $dumpbin.FullName /exports $dll | Out-String)
+          foreach ($need in @("DllGetClassObject", "DllCanUnloadNow", "FamilyAgentCpSelfTest")) {
+            if ($exports -notmatch $need) { throw "导出表里没有 $need" }
+            Write-Host "✓ 导出 $need"
+          }
+          # 32 位/64 位确认（必须是 x64，LogonUI 是 64 位进程）
+          $headers = & $dumpbin.FullName /headers $dll | Out-String
+          if ($headers -match "8664 machine") { Write-Host "✓ x64" } else { throw "DLL 不是 x64" }
+          (Get-FileHash $dll -Algorithm SHA256).Hash | Tee-Object -FilePath cp/out/FamilyAgentCp.dll.sha256
+          "size=$size" | Out-File -Append cp/out/build-info.txt -Encoding utf8
+
+      - name: 存 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FamilyAgentCp
+          path: |
+            cp/out/FamilyAgentCp.dll
+            cp/out/FamilyAgentCp.dll.sha256
+          if-no-files-found: error
+
+      - name: 附到 Release（仅 tag）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            cp/out/FamilyAgentCp.dll
+            cp/out/FamilyAgentCp.dll.sha256
