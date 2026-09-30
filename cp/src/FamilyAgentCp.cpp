@@ -163,8 +163,10 @@ static bool TryGetJsonInt(const std::string& json, const char* key, long long& o
     return true;
 }
 
-static std::vector<BYTE> Base64Decode(const std::string& in)
+static std::vector<BYTE> Base64Decode(const std::wstring& in)
 {
+    // ⚠ 别把 wstring 硬转 string 再解（wchar_t→char 会 C4244，ASCII 之外还会截断）——
+    //   直接按 wchar_t 走表。
     static const signed char tbl[256] = { /* 'A'-'Z','a'-'z','0'-'9','+','/' */
         -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
         -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,52,53,54,55,56,57,58,59,60,61,-1,-1,-1,-1,-1,-1,
@@ -177,8 +179,10 @@ static std::vector<BYTE> Base64Decode(const std::string& in)
     };
     std::vector<BYTE> out;
     int val = 0, bits = -8;
-    for (unsigned char ch : in)
+    for (wchar_t wc : in)
     {
+        if (wc > 255) continue;                    // 非 ASCII 直接跳过
+        unsigned char ch = (unsigned char)wc;
         if (ch == '=') break;
         signed char d = tbl[ch];
         if (d < 0) continue;                       // 跳过空白/换行
@@ -235,8 +239,7 @@ static bool LoadCredential(std::wstring& user, std::wstring& secret)
     if (!TryGetJsonString(json, "User", user) || user.empty()) { LogLine(L"[store] 凭据文件没有 User"); return false; }
     if (!TryGetJsonString(json, "ProtectedSecretBase64", b64) || b64.empty()) { LogLine(L"[store] 凭据文件没有密文"); return false; }
 
-    std::string narrow(b64.begin(), b64.end());
-    std::vector<BYTE> cipher = Base64Decode(narrow);
+    std::vector<BYTE> cipher = Base64Decode(b64);
     if (cipher.empty()) { LogLine(L"[store] 密文 base64 解不开"); return false; }
 
     DATA_BLOB in { (DWORD)cipher.size(), cipher.data() };
