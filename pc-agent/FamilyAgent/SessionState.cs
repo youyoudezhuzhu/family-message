@@ -117,46 +117,122 @@ public static class SessionState
     ///   ③ OpenInputDesktop 成功 → unlocked
     ///   ④ 失败且 ERROR_ACCESS_DENIED(5) → locked
     ///   ⑤ 其它失败 → unknown
+    ///
+    /// ★ v0.20.2 起先把**原始信号**收进 <see cref="Diag"/> 再判定（<see cref="Diagnose"/>）——
+    ///   同一份信号既能判状态、又能原样写进日志/设置页。用户报「状态不对」时，
+    ///   看一眼诊断行就知道是哪一步判歪了，不用猜。
+    ///   「是不是锁屏」= ③④：有交互会话但拿不到输入桌面（那就是锁屏/安全桌面）；
+    ///   是否有**已登录用户**由 `WTSQuerySessionInformation(WTSUserName)` 直接问系统，
+    ///   不再靠猜 —— 锁屏与"没人登录"这两种都会拿不到输入桌面，必须靠它区分。
     /// </summary>
-    private static string DetectCore()
+    private static string DetectCore() => Diagnose().State;
+
+    /// <summary>一次检测的全部原始信号（状态由它推导，日志/设置页也用它）。</summary>
+    public sealed record Diag(
+        bool Headless,
+        uint SessionId,
+        uint ActiveConsoleSessionId,
+        bool Interactive,
+        string LoggedInUser,
+        bool InputDesktop,
+        int Win32Error,
+        string State)
     {
-        if (App.IsHeadless)
-            return LogonScreen;
-
-        if (!InInteractiveSession())
-            return LogonScreen;
-
-        var handle = OpenInputDesktop(0, false, DesktopSwitchDesktop);
-        if (handle != IntPtr.Zero)
-        {
-            CloseDesktop(handle);        // ★ 不关就是句柄泄漏
-            return Unlocked;
-        }
-
-        var err = Marshal.GetLastWin32Error();
-        return err == ErrorAccessDenied ? Locked : Unknown;
+        public string Describe() =>
+            $"headless={Headless} session={SessionId} active={ActiveConsoleSessionId} "
+            + $"interactive={Interactive} user={(LoggedInUser.Length == 0 ? "-" : LoggedInUser)} "
+            + $"input_desktop={(InputDesktop ? "ok" : "拿不到")} err={Win32Error} → {State}";
     }
 
     /// <summary>
-    /// 本进程是否运行在交互式会话里。
-    /// 会话 0（服务 / SYSTEM 计划任务）没有交互式桌面，按「登录界面」处理。
+    /// 真实检测一次并返回全部信号。**保证不抛异常**（调用方是心跳循环，
+    /// 这里抛出去会被当成"心跳发不出去"而强制重连，属于误伤）。
     /// </summary>
-    private static bool InInteractiveSession()
+    public static Diag Diagnose()
     {
-        if (!ProcessIdToSessionId((uint)Environment.ProcessId, out var sessionId))
-            return false;
+        bool headless = false;
+        uint sessionId = 0, active = NoActiveSession;
+        var interactive = false;
+        var user = "";
+        var desktopOk = false;
+        var err = 0;
+        var state = Unknown;
 
-        // 没有任何活动控制台会话（理论上只会出现在无人登录的裸机/服务环境）
-        if (WTSGetActiveConsoleSessionId() == NoActiveSession)
-            return false;
+        try
+        {
+            headless = App.IsHeadless;
 
-        return sessionId != 0;
+            _ = ProcessIdToSessionId((uint)Environment.ProcessId, out sessionId);
+            active = WTSGetActiveConsoleSessionId();
+            interactive = !headless && sessionId != 0 && active != NoActiveSession;
+
+            // 已登录用户名：锁屏与"没人登录"都会拿不到输入桌面，靠这个区分
+            user = interactive ? LoggedInUserOf(sessionId) : "";
+
+            var handle = OpenInputDesktop(0, false, DesktopSwitchDesktop);
+            if (handle != IntPtr.Zero)
+            {
+                CloseDesktop(handle);        // ★ 不关就是句柄泄漏
+                desktopOk = true;
+            }
+            else
+            {
+                err = Marshal.GetLastWin32Error();
+            }
+
+            state = headless || !interactive
+                ? LogonScreen
+                : desktopOk
+                    ? Unlocked
+                    : err == ErrorAccessDenied && user.Length > 0
+                        ? Locked             // 有人登录 + 输入桌面被安全桌面占着 = 锁屏
+                        : err == ErrorAccessDenied
+                            ? LogonScreen    // 拿不到桌面且没有登录用户 = 停在登录界面
+                            : Unknown;
+        }
+        catch (Exception ex)
+        {
+            state = Unknown;
+            AgentLog.Write("会话状态检测异常（按 unknown 上报）：" + ex.Message);
+        }
+
+        return new Diag(headless, sessionId, active, interactive, user, desktopOk, err, state);
+    }
+
+    /// <summary>
+    /// 问系统「这个会话里登录的是谁」。空串 = 没有已登录用户（登录界面 / 会话 0）。
+    /// 只读、无副作用；失败一律返回空串（按"没人登录"处理，不猜）。
+    /// </summary>
+    private static string LoggedInUserOf(uint sessionId)
+    {
+        IntPtr buffer = IntPtr.Zero;
+        try
+        {
+            if (!WTSQuerySessionInformationW(IntPtr.Zero, sessionId, WtsUserName, out buffer, out var bytes))
+                return "";
+            if (buffer == IntPtr.Zero || bytes <= 2)
+                return "";
+            var name = Marshal.PtrToStringUni(buffer) ?? "";
+            return name.Trim();
+        }
+        catch (Exception)
+        {
+            return "";
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero)
+            {
+                try { WTSFreeMemory(buffer); } catch { /* 释放失败不致命 */ }
+            }
+        }
     }
 
     /// <summary>重新检测；状态变了才写日志并抛 <see cref="Changed"/>。线程安全。</summary>
     public static void Refresh(string why)
     {
-        var state = Detect();
+        var diag = Diagnose();
+        var state = diag.State;
         var changed = false;
 
         lock (Gate)
@@ -171,7 +247,8 @@ public static class SessionState
         if (!changed)
             return;
 
-        AgentLog.Write($"Windows 会话状态 → {state}（{why}）");
+        // ★ 带上全部原始信号：以后用户说「状态不对」，这行日志就是现场
+        AgentLog.Write($"[SESSION] {why} → {diag.Describe()}");
         RaiseChanged(state);
     }
 
@@ -251,4 +328,15 @@ public static class SessionState
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool ProcessIdToSessionId(uint dwProcessId, out uint pSessionId);
+
+    // WTSUserName = 5（wtsapi32.h 的 WTS_INFO_CLASS 枚举值，勿改）
+    private const int WtsUserName = 5;
+
+    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSQuerySessionInformationW(
+        IntPtr hServer, uint sessionId, int wtsInfoClass, out IntPtr ppBuffer, out int pBytesReturned);
+
+    [DllImport("wtsapi32.dll")]
+    private static extern void WTSFreeMemory(IntPtr pMemory);
 }

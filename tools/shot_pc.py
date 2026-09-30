@@ -125,6 +125,15 @@ BRIDGE = r"""
           detail: CFG.unlock_detail || '',
         }, CFG.unlock || {}));
         break;
+
+      /* 开机自启修复（v0.20.2）：页面只发动作，真实落地情况由宿主回 host.autostart */
+      case 'web.autostart_repair':
+        dispatch(Object.assign({
+          type: 'host.autostart',
+          ok: CFG.autostart_ok !== false,
+          state: CFG.autostart_state || '',
+        }, CFG.autostart_reply || {}));
+        break;
     }
   }
 
@@ -504,9 +513,18 @@ def case_settings(browser, base):
     cfg = {"mode": "settings", "history": CONVO,
            "unlock": {"configured": True, "user": "PC-01\\用户", "verified_at": "2026-09-29 18:20:00",
                       "locked_out": False, "failures_left": 3, "can_unlock": True},
+           # v0.20.2：自启的真实状态 + 会话诊断（这两个就是"状态不对"时的现场）——
+           # ★ 必须放进 runtime / hello 载荷**里面**（页面从 host.runtime 读），放顶层读不到
+           # 点「修复开机自启」后宿主回的"修复后"状态（把「登录前」那半个也装上）
+           "autostart_reply": {"ok": True, "pre_login": True,
+                               "state": "登录时(Run 项) + 登录时(计划任务) + 开机即启动(登录前)"},
            "runtime": {"version": "cs-0.13.4", "runtime": "153.0.4234.48", "platform": "Windows 10.0.26100",
                        "device_id": "pc_shufang", "device_name": "书房电脑",
                        "server": "http://192.168.1.50:18801", "enroll_configured": True, "autostart": True,
+                       "autostart_state": "登录时(Run 项) + 登录时(计划任务)",
+                       "session_state": "locked",
+                       "session_diag": "headless=False session=1 active=1 interactive=True user=PC-01 "
+                                       "input_desktop=拿不到 err=5 → locked",
                        "theme_mode": "light",
                        "log_path": r"C:\Users\<用户名>\AppData\Roaming\FamilyAgent\app.log",
                        "config_path": r"C:\Users\<用户名>\AppData\Roaming\FamilyAgent\config.json"},
@@ -515,7 +533,7 @@ def case_settings(browser, base):
                      "device_id": "pc_shufang", "device_name": "书房电脑",
                      "reply_names": ["爸爸", "妈妈", "朵朵"], "reply_name": "爸爸",
                      "enroll_configured": True, "autostart": True}}
-    c = Case(browser, base, cfg, width=1180, height=1780, name="settings").wait()
+    c = Case(browser, base, cfg, width=1180, height=1980, name="settings").wait()
     check(c.view() == "settings", "起始视图 = settings（由 hello.mode 决定）")
     check(c.page.evaluate("window.__types()[0]") == "web.ready", "先发 web.ready")
 
@@ -586,6 +604,33 @@ def case_settings(browser, base):
           "口令随消息交给宿主（凭据文件只有宿主能碰）", json.dumps(after["msg"], ensure_ascii=False))
     check(after["passAfter"] == "", "宿主回 ok 后页面立刻清空口令框", after["passAfter"])
 
+    print("\n[settings] 自启真实状态 + 会话诊断（v0.20.2）")
+    a = c.page.evaluate("""() => ({
+        autostartState: document.querySelector('#set-autostart-state').textContent,
+        autostartInfo: document.querySelector('#info-autostart').textContent,
+        session: document.querySelector('#info-session').textContent,
+        diag: document.querySelector('#info-session-diag').textContent,
+        hasRepair: !!document.getElementById('autostart-repair'),
+    })""")
+    check("Run 项" in a["autostartState"],
+          "开机自启显示**真实**落地情况（不是开关意图）", json.dumps(a, ensure_ascii=False))
+    check(a["session"] == "已锁屏", "会话状态显示「已锁屏」", a["session"])
+    check("input_desktop" in a["diag"] and "→ locked" in a["diag"],
+          "会话诊断带原始信号（用户报状态不对时的现场）", a["diag"])
+    check(a["hasRepair"] is True, "「修复开机自启」按钮在")
+
+    print("\n[settings] 点「修复开机自启」→ 发 web.autostart_repair → 状态更新 + 提示")
+    rep = c.page.evaluate("""() => {
+        document.querySelector('#autostart-repair').click();
+        return { count: window.__count('web.autostart_repair'),
+                 state: document.querySelector('#set-autostart-state').textContent,
+                 hint: document.querySelector('#autostart-hint').textContent };
+    }""")
+    check(rep["count"] == 1, "点击发出 web.autostart_repair", json.dumps(rep, ensure_ascii=False))
+    check("开机即启动" in rep["state"],
+          "修复后状态里出现「开机即启动(登录前)」", json.dumps(rep, ensure_ascii=False))
+    check("已生效" in rep["hint"], "提示写「已生效」", rep["hint"])
+
     info = c.page.evaluate("""() => ({
         version: document.querySelector('#info-version').textContent,
         runtime: document.querySelector('#info-runtime').textContent,
@@ -629,6 +674,7 @@ def case_settings(browser, base):
     c.wait(150)
     c.page.evaluate("document.querySelector('#settings-hint').textContent = ''")
     c.page.evaluate("document.querySelector('#unlock-hint').textContent = ''")
+    c.page.evaluate("document.querySelector('#autostart-hint').textContent = ''")
     # Playwright 点按钮时会自动把元素滚进视口 —— 截图前滚回顶部，整页都在画面里
     c.page.evaluate("document.querySelector('.stage--settings').scrollTop = 0")
     check(c.page.evaluate("document.querySelector('.stage--settings').scrollTop") == 0,

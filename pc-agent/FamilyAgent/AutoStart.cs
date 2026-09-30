@@ -38,6 +38,18 @@ public static class AutoStart
     private const string LogonTask = "FamilyAgent-Logon";
     private const string BootTask = "FamilyAgent-Boot";
 
+    /// <summary>
+    /// Windows 自己的「启动项账本」：任务管理器 → 启动应用 里禁用过一项，
+    /// 禁用状态记在这里（<b>不是</b> Run 键本身）。
+    ///
+    /// ⚠ 这是「Run 键明明写着、开机却不起」最常见的原因：只重写 Run 键
+    ///   **改不动这本账**，那一条永远是"已禁用"。所以启用时顺手把这里的记录删掉
+    ///   （删除 = 回到"没意见"，Windows 就会照 Run 键执行）。
+    ///   值格式 12 字节，前 4 字节 03 = 已禁用、02/06 = 已启用。
+    /// </summary>
+    private const string StartupApprovedRun =
+        @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+
     // 记录「已经用哪个 exe 路径注册过」。
     // 用途：避免每次开机都重建计划任务 —— Boot 任务是 SYSTEM 身份，重建要提权，
     // 每次都重建就等于每次开机弹一次 UAC。路径变了（升级换目录）才重建。
@@ -48,12 +60,59 @@ public static class AutoStart
     /// 自启的落地情况。UI 用它告诉用户「登录前」那一半到底有没有生效 ——
     /// 不能只回一个 bool，否则用户没法知道开机自启是不是"只成功了一半"。
     /// </summary>
-    public sealed record Status(bool RunKey, bool LogonTask, bool BootTask)
+    public sealed record Status(bool RunKey, bool LogonTask, bool BootTask,
+                               string RunTarget = "", bool StartupDisabled = false)
     {
         public bool Any => RunKey || LogonTask || BootTask;
 
         /// <summary>登录前（仅开机、无人登录）也能启动 —— 只有 ONSTART 计划任务做得到。</summary>
         public bool PreLogin => BootTask;
+
+        /// <summary>
+        /// Run 项指向的是**别的 exe**（升级换过目录、或盘符变了）—— 这种情况
+        /// "开机自启"看起来开着，实际起的可能是桌面上的旧副本，或者干脆起不来
+        /// （旧副本被删了）。每次启动都会按当前路径重写，这里只用于如实报告。
+        /// </summary>
+        public bool RunTargetIsStale =>
+            RunKey && RunTarget.Length > 0 && !RunTargetMatchesSelf;
+
+        private bool? _matchesSelf;
+
+        internal bool RunTargetMatchesSelf
+        {
+            get => _matchesSelf ??= RunTargetMatches();
+            init => _matchesSelf = value;
+        }
+
+        private bool RunTargetMatches()
+        {
+            try
+            {
+                var self = Environment.ProcessPath;
+                if (string.IsNullOrEmpty(self))
+                    return true;                      // 拿不到自身路径就不乱下判断
+                var target = RunTarget.Trim().Trim('"');
+                return string.Equals(
+                    Path.GetFullPath(target), Path.GetFullPath(self),
+                    StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        /// <summary>目标 exe 还在不在（在的东西才起得来）。</summary>
+        public bool RunTargetExists
+        {
+            get
+            {
+                if (RunTarget.Length == 0)
+                    return false;
+                try { return File.Exists(RunTarget.Trim().Trim('"')); }
+                catch { return false; }
+            }
+        }
 
         public string Describe()
         {
@@ -63,7 +122,13 @@ public static class AutoStart
             if (RunKey) parts.Add("登录时(Run 项)");
             if (LogonTask) parts.Add("登录时(计划任务)");
             if (BootTask) parts.Add("开机即启动(登录前)");
-            return string.Join(" + ", parts);
+            var text = string.Join(" + ", parts);
+            if (StartupDisabled)
+                text += "（⚠ 被 Windows 标成「已禁用」，实际不会启动 —— 重开一次自启即可修好）";
+            else if (RunTargetIsStale)
+                text += "（⚠ Run 项指向的是另一个 exe："
+                      + (RunTargetExists ? "旧副本" : "文件已不存在") + "）";
+            return text;
         }
     }
 
@@ -73,18 +138,37 @@ public static class AutoStart
 
     public static Status Query()
     {
-        var run = false;
+        var target = "";
+        var disabled = false;
+
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey, false);
-            run = key?.GetValue(ValueName) is string s && s.Length > 0;
+            if (key?.GetValue(ValueName) is string s)
+                target = s;
         }
         catch
         {
             // 读不到就是没启用，不外抛
         }
 
-        return new Status(run, TaskExists(LogonTask), TaskExists(BootTask));
+        try
+        {
+            using var approved = Registry.CurrentUser.OpenSubKey(StartupApprovedRun, false);
+            if (approved?.GetValue(ValueName) is byte[] state && state.Length >= 4)
+                disabled = state[0] == 0x03 || state[0] == 0x07;   // 3/7 = 已禁用
+        }
+        catch
+        {
+            // 拿不到这本账就当"没被禁用"（别因此谎报"你被禁用了"）
+        }
+
+        return new Status(
+            RunKey: target.Length > 0,
+            LogonTask: TaskExists(LogonTask),
+            BootTask: TaskExists(BootTask),
+            RunTarget: target,
+            StartupDisabled: disabled);
     }
 
     private static bool TaskExists(string name)
@@ -139,6 +223,9 @@ public static class AutoStart
             return Query();
         }
 
+        // ★ 先清掉 Windows 的「已禁用」记录：不清的话 Run 键写了也白写
+        ClearDisabledFlag();
+
         WriteRunKey(exe);
 
         // 已注册且 exe 路径没变 → 跳过，不重复建任务
@@ -157,8 +244,58 @@ public static class AutoStart
         return Query();
     }
 
-    // ── 已注册路径标记 ──
+    /// <summary>
+    /// 清掉 Windows 启动项账本里的「已禁用」记录（见 <see cref="StartupApprovedRun"/>）。
+    /// 只在**启用**自启时调用：删除 = 回到"系统没意见"，Windows 就会照 Run 键执行。
+    /// </summary>
+    private static void ClearDisabledFlag()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(StartupApprovedRun, true);
+            if (key is null)
+                return;                                  // 这本账都还没有 = 没被禁用过
 
+            if (key.GetValue(ValueName) is byte[])
+            {
+                key.DeleteValue(ValueName, false);
+                AgentLog.Write("已清掉 Windows 启动项里的「已禁用」记录"
+                             + "（否则 Run 键写着也不会启动）");
+            }
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("清启动项禁用记录失败（Run 键仍会写）：" + ex.Message);
+        }
+    }
+
+    /// <summary>
+    /// 「修复开机自启」：把 Run 项按**当前** exe 路径重写、清掉禁用记录、
+    /// 并把两个计划任务重建一次（SYSTEM 那个需要提权，会弹一次 UAC）。
+    /// 给设置页的按钮用 —— 用户看到状态不对时不必自己猜哪里没生效。
+    /// </summary>
+    public static Status Repair()
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe))
+            return Query();
+
+        ClearDisabledFlag();
+        WriteRunKey(exe);
+
+        // 强制重建两个任务（不看标记）：标记本身也可能与现状不符
+        if (RegisterLogonTask(exe))
+            SetMarker(LogonMarker, exe);
+
+        if (RegisterBootTask(exe, allowElevation: true))
+            SetMarker(BootMarker, exe);
+
+        var status = Query();
+        AgentLog.Write($"自启修复完成：{status.Describe()}");
+        return status;
+    }
+
+    // ── 已注册路径标记 ──
     private static string Marker(string name)
     {
         try

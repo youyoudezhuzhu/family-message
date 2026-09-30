@@ -206,6 +206,14 @@
             <input type="checkbox" id="set-autostart">
             <span>开机后自动运行，静默待在托盘里</span>
           </label>
+          <!-- 真实落地情况（不是"开关开着没有"）：Run 项 / 计划任务 / 是否被 Windows 标成已禁用 -->
+          <span class="field-support" id="set-autostart-state">正在读取实际状态…</span>
+          <div class="form-inline">
+            <button class="btn btn--secondary btn--sm" id="autostart-repair" type="button">修复开机自启</button>
+            <span class="field-support">发现上面写着「未启用」或「已禁用」时点它：会按当前 exe 重写启动项，
+              必要时弹一次管理员授权把「登录前也能启动」那半个装好。</span>
+          </div>
+          <p class="hint" id="autostart-hint"></p>
         </div>
 
         <div class="form-row">
@@ -322,6 +330,9 @@
           <div class="kv__row"><dt>本机名称</dt><dd id="info-device">—</dd></div>
           <div class="kv__row"><dt>本机 ID</dt><dd id="info-device-id">—</dd></div>
           <div class="kv__row"><dt>服务端</dt><dd id="info-server">—</dd></div>
+          <div class="kv__row"><dt>Windows 会话</dt><dd id="info-session">—</dd></div>
+          <div class="kv__row"><dt>会话诊断</dt><dd class="mono" id="info-session-diag">—</dd></div>
+          <div class="kv__row"><dt>开机自启</dt><dd id="info-autostart">—</dd></div>
         </dl>
       </div>
 

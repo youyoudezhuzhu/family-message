@@ -73,6 +73,31 @@ public sealed class JsBridge
             //   注册口令配过没有、开机自启开着没有（口令本身**不**过桥，这是本机机密）
             enroll_configured = cfg is not null && !string.IsNullOrWhiteSpace(cfg.EnrollToken),
             autostart = cfg is not null && cfg.AutoStart,
+            // ★ 自启的**真实落地情况**（不是"打算"）：Run 项 / 两个计划任务 /
+            //   是否被 Windows 标成「已禁用」/ Run 项是不是指着别的 exe。
+            //   用户报"开机自启不生效"时，这一行就是现场（以前只给配置意图，等于没法诊断）。
+            autostart_state = AutoStart.Query().Describe(),
+            // ★ 会话状态 + 原始信号（headless / session / 登录用户 / 输入桌面 / err）：
+            //   "是不是锁屏"一眼可查，也直接写进日志。
+            session_state = SessionState.Current,
+            session_diag = SessionState.Diagnose().Describe(),
+        });
+    }
+
+    /// <summary>自启修复/查询的回执（页面「修复开机自启」按钮）。</summary>
+    public void PostAutoStartStatus(AutoStart.Status status)
+    {
+        Send(new
+        {
+            type = "host.autostart",
+            ok = status.Any,
+            state = status.Describe(),
+            run_key = status.RunKey,
+            logon_task = status.LogonTask,
+            boot_task = status.BootTask,
+            pre_login = status.PreLogin,
+            startup_disabled = status.StartupDisabled,
+            target_stale = status.RunTargetIsStale,
         });
     }
 
@@ -251,6 +276,9 @@ public sealed class JsBridge
             server = cfg is null ? "" : cfg.ServerUrl,
             enroll_configured = cfg is not null && !string.IsNullOrWhiteSpace(cfg.EnrollToken),
             autostart = cfg is not null && cfg.AutoStart,
+            autostart_state = AutoStart.Query().Describe(),
+            session_state = SessionState.Current,
+            session_diag = SessionState.Diagnose().Describe(),
             theme_mode = cfg is null || string.IsNullOrWhiteSpace(cfg.ThemeMode) ? "system" : cfg.ThemeMode,
             log_path = AgentLog.FilePath,
             config_path = AgentConfig.FilePath,
@@ -607,6 +635,14 @@ public sealed class JsBridge
                         return;
                     }
                     ServerChanged?.Invoke(url, GetString(root, "enroll_token"));
+                    break;
+                }
+
+                // ── 开机自启：一键修复（重写 Run 项 + 清禁用记录 + 重建两个计划任务）──
+                case "web.autostart_repair":
+                {
+                    var status = AutoStart.Repair();
+                    PostAutoStartStatus(status);
                     break;
                 }
 

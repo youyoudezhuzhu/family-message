@@ -176,6 +176,10 @@
     names: [], myName: '',
     server: '', version: '—', theme: 'system', runtime: '', platform: '',
     enroll: null, autostart: null,
+    /* 自启的**真实落地情况**（宿主读注册表/计划任务得来，不是"开关开着没有"） */
+    autostartState: '',
+    /* Windows 会话状态 + 原始信号（判断"是不是锁屏"的现场） */
+    sessionState: '', sessionDiag: '',
     logPath: '', configPath: '',
     connected: null,
     list: [], popup: [], lastNewId: null,
@@ -807,6 +811,12 @@
     var auto = $('set-autostart');
     if (auto) auto.checked = (S.autostart === true);
 
+    /* 自启的**真实**状态 + 会话诊断（"状态不对"时这两个地方就是现场） */
+    setText('set-autostart-state', S.autostartState || '—');
+    setText('info-autostart', S.autostartState || '—');
+    setText('info-session', SESSION_LABEL[S.sessionState] || S.sessionState || '—');
+    setText('info-session-diag', S.sessionDiag || '—');
+
     var theme = $('set-theme');
     if (theme) theme.value = S.theme;
 
@@ -835,6 +845,14 @@
      口令只在点「保存 / 测试」的那一瞬间从输入框读出来交给宿主；宿主不回显、
      页面也不留（成功后立刻清空输入框）。凭据文件只有宿主能碰（DPAPI + 文件 ACL），
      页面拿到的永远只是状态事实。 */
+  /** Windows 会话状态的显示名（与服务端/网页端同一套语义） */
+  var SESSION_LABEL = {
+    'unlocked': '已登录（未锁屏）',
+    'locked': '已锁屏',
+    'logon_screen': 'Windows 登录界面（无人登录）',
+    'unknown': '未知',
+  };
+
   function refreshUnlock() { post({ type: 'web.unlock_status' }); }
 
   function unlockOp(action) {
@@ -882,6 +900,28 @@
       var userEl = $('set-unlock-user');
       if (userEl && d.user && document.activeElement !== userEl) userEl.value = d.user;
     }
+  }
+
+  /**
+   * 自启修复 / 状态回执：把**真实**落地情况写到界面上（不猜）。
+   * 「登录前也能启动」那半个需要管理员授权 —— 没授权就只装上了"登录时"那半，如实说明。
+   */
+  function onAutoStart(d) {
+    if (!d || typeof d !== 'object') return;
+
+    if (typeof d.state === 'string') S.autostartState = d.state;
+    if (typeof d.ok === 'boolean') S.autostart = d.ok;
+    if (typeof d.pre_login === 'boolean') S.preLogin = d.pre_login;
+
+    setText('set-autostart-state', S.autostartState || '—');
+    setText('info-autostart', S.autostartState || '—');
+    var auto = $('set-autostart');
+    if (auto && typeof d.ok === 'boolean') auto.checked = d.ok;
+
+    var text = (d.ok === true ? '已生效：' : '还没生效：') + (d.state || '—');
+    if (d.ok === true && d.pre_login === false)
+      text += '　（「登录前也能启动」需要管理员授权；没授权就只管登录时启动）';
+    setHint('autostart-hint', text, d.ok === true ? 'ok' : 'warn');
   }
 
   function saveSettings() {
@@ -944,6 +984,9 @@
     if (typeof d.server === 'string') S.server = d.server;
     if (typeof d.enroll_configured === 'boolean') S.enroll = d.enroll_configured;
     if (typeof d.autostart === 'boolean') S.autostart = d.autostart;
+    if (typeof d.autostart_state === 'string') S.autostartState = d.autostart_state;
+    if (typeof d.session_state === 'string') S.sessionState = d.session_state;
+    if (typeof d.session_diag === 'string') S.sessionDiag = d.session_diag;
     if (d.theme_mode) { S.theme = d.theme_mode; applyTheme(d.theme_mode); }
     if (d.log_path) S.logPath = String(d.log_path);
     if (d.config_path) S.configPath = String(d.config_path);
@@ -1361,6 +1404,7 @@
     /* 共享昵称（§7 Phase 4）：整份状态 / 操作回执 / 服务端错误 —— 都是免刷新重画的入口 */
     'host.nickname': onNickname,
     'host.unlock_credential': onUnlockCredential,
+    'host.autostart': onAutoStart,
     'host.nickname_result': onNicknameResult,
     'host.nickname_error': onNicknameError,
   };
@@ -1378,6 +1422,9 @@
     S.platform = d.platform || '';
     if (typeof d.enroll_configured === 'boolean') S.enroll = d.enroll_configured;
     if (typeof d.autostart === 'boolean') S.autostart = d.autostart;
+    if (typeof d.autostart_state === 'string') S.autostartState = d.autostart_state;
+    if (typeof d.session_state === 'string') S.sessionState = d.session_state;
+    if (typeof d.session_diag === 'string') S.sessionDiag = d.session_diag;
     nickSetTable(d.color_table, d.pool_version);   // ★ v0.19：宿主 hello 里带的权威色表
     setThemeChoice(d.theme_mode || 'system');
 
@@ -1429,6 +1476,13 @@
     if (uPass) uPass.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); unlockOp('save'); }
     });
+
+    /* 开机自启：一键修复（重写 Run 项 + 清 Windows 的"已禁用"记录 + 重建计划任务） */
+    var repair = $('autostart-repair');
+    if (repair) repair.onclick = function () {
+      setHint('autostart-hint', '正在修复：重写启动项、必要时申请管理员授权…', '');
+      post({ type: 'web.autostart_repair' });
+    };
 
     /* 共享昵称块（§7 Phase 4）：新建 / 刷新 / 回车提交 */
     var ncreate = $('nick-create-btn'); if (ncreate) ncreate.onclick = createNick;
