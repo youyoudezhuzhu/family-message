@@ -61,7 +61,7 @@ static const DWORD    kArmTtlSkew   = 5;      // 允许 5 秒时钟偏差
 static const int      kPollMs       = 500;    // 轮询 arm 凭证的间隔
 
 // provider 级字段（锁屏上那行说明文字）
-static const CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR_FIELDID kFieldMessage = 0;
+static const DWORD kFieldMessage = 0;                 // CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR_FIELDID = DWORD
 static const GUID kFieldMessageGuid =
     { 0xA1B2C3D4, 0x1111, 0x2222, { 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA } };
 
@@ -263,21 +263,37 @@ static bool LoadCredential(std::wstring& user, std::wstring& secret)
 
 static HRESULT GetSessionLogonId(LUID* out)
 {
-    // 解锁场景要把"当前控制台会话"的 LogonId 放进 KERB 结构里（Windows 官方示例同款做法）
+    // 解锁场景要把"当前控制台会话"的登录 LUID 放进 KERB 结构里。
+    // 拿法：WTSQueryUserToken（需要 SYSTEM + SE_TCB —— LogonUI 正好有）
+    //       → GetTokenInformation(TokenStatistics) → AuthenticationId 就是 LUID。
+    // ⚠ WTSINFOEX 里**没有** LogonId 字段（第一版写错了，CI 直接报 C2039），别再走那条路。
     DWORD session = WTSGetActiveConsoleSessionId();
     if (session == 0xFFFFFFFF) return E_FAIL;
-    PWTSINFOEX info = nullptr; DWORD bytes = 0;
-    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, session, WTSSessionInfoEx,
-                                     (LPWSTR*)&info, &bytes))
+
+    HANDLE token = nullptr;
+    if (!WTSQueryUserToken(session, &token))
         return HRESULT_FROM_WIN32(GetLastError());
-    HRESULT hr = E_FAIL;
-    if (info && info->Level == WTS_INFO_CLASS::WTSInfoExLevel1)
-    {
-        *out = info->Data.WTSInfoExLevel1.LogonId;
-        hr = S_OK;
-    }
-    WTSFreeMemory(info);
-    return hr;
+
+    TOKEN_STATISTICS stats;
+    DWORD need = 0;
+    BOOL ok = GetTokenInformation(token, TokenStatistics, &stats, sizeof(stats), &need);
+    CloseHandle(token);
+    if (!ok) return HRESULT_FROM_WIN32(GetLastError());
+
+    *out = stats.AuthenticationId;
+    return S_OK;
+}
+
+/// SHStrDupW 的替身（避免为它多带一个依赖；行为一致：CoTaskMemAlloc + 拷贝）。
+static HRESULT CoTaskMemDupW(PCWSTR src, PWSTR* out)
+{
+    if (!out || !src) return E_INVALIDARG;
+    size_t bytes = (wcslen(src) + 1) * sizeof(wchar_t);
+    auto* p = (PWSTR)CoTaskMemAlloc(bytes);
+    if (!p) return E_OUTOFMEMORY;
+    memcpy(p, src, bytes);
+    *out = p;
+    return S_OK;
 }
 
 static void InitUnicodeString(UNICODE_STRING& us, const std::wstring& s)
@@ -429,7 +445,7 @@ public:
     IFACEMETHODIMP GetStringValue(DWORD dwFieldID, PWSTR* ppwsz) override
     {
         if (!ppwsz || dwFieldID != kFieldMessage) return E_INVALIDARG;
-        return SHStrDupW(L"正在远程解锁…", ppwsz);
+        return CoTaskMemDupW(L"正在远程解锁…", ppwsz);
     }
 
     IFACEMETHODIMP GetBitmapValue(DWORD, HBITMAP*) override { return E_NOTIMPL; }
@@ -612,7 +628,7 @@ public:
         d->dwFieldID = kFieldMessage;
         d->cpft = CPFT_LARGE_TEXT;
         d->guidFieldType = kFieldMessageGuid;
-        if (FAILED(SHStrDupW(L"远程解锁", &d->pszLabel)))
+        if (FAILED(CoTaskMemDupW(L"远程解锁", &d->pszLabel)))
         {
             CoTaskMemFree(d);
             return E_OUTOFMEMORY;
@@ -805,8 +821,10 @@ private:
     LONG _ref = 1;
 };
 
-extern "C" __declspec(dllexport) HRESULT STDAPICALLTYPE DllGetClassObject(
-    REFCLSID rclsid, REFIID riid, void** ppv)
+// ⚠ 用 SDK 自己的声明形状（STDAPI = EXTERN_C HRESULT STDAPICALLTYPE）：
+//   objbase.h 已经声明过 DllGetClassObject，写成 `extern "C" __declspec(dllexport)` 会
+//   报 C2375「redefinition; different linkage」（CI 实测）。导出交给 .def 文件。
+STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
 {
     if (!ppv) return E_POINTER;
     *ppv = nullptr;
@@ -818,7 +836,7 @@ extern "C" __declspec(dllexport) HRESULT STDAPICALLTYPE DllGetClassObject(
     return hr;
 }
 
-extern "C" __declspec(dllexport) HRESULT STDAPICALLTYPE DllCanUnloadNow()
+STDAPI DllCanUnloadNow(void)
 {
     return (InterlockedCompareExchange(&g_objects, 0, 0) == 0) ? S_OK : S_FALSE;
 }
