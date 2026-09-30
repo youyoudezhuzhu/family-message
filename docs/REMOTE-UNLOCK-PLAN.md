@@ -790,6 +790,14 @@ def require(perm):
     新界面会把这句写在设置页（`⚠ Run 项指向的是另一个 exe：文件已不存在`），
     每次启动也会按当前路径重写 Run 项，所以换目录后启动一次即可自愈。
 
+- **2026-09-30 · Phase 3 落地（v0.21.0）**：CP 本体（`cp/`，原生 C++，CI 编译）、
+  宿主 `--install-cp / --uninstall-cp / --cp-selftest`、一次性 arm 凭证（Core `UnlockArming`，
+  120s TTL + 单测）、armed 之后按会话状态补 `success`/`timeout`、CP DLL 随 zip 发布。
+  **待真机验收**（NAS 上无法代跑）：先 `--cp-selftest`（不碰登录界面）→ `--install-cp`
+  → 锁屏一次确认界面正常 → 网页端点解锁看屏幕是否真亮。验收清单见 §18.5。
+  另外把回执改成如实三分（`no_credential` / `cp_missing` / `armed`）——
+  起因是辉哥真机日志里"界面说正在解锁、其实没人动"。
+
 - **待做（按 §16.2 清单顺序）**：
   1. ~~Windows 侧 `DpapiSecretProtector`~~ ✅（第 2 步）
   2. ~~`LogonUser` 校验实现~~ ✅（第 3 步）
