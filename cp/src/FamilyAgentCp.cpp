@@ -622,7 +622,9 @@ public:
         *ppcpfd = nullptr;
         if (dwIndex != kFieldMessage) return E_INVALIDARG;
 
-        auto* d = (CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*)CoTaskMemAlloc(sizeof(*d));
+        auto* d = (CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR*)
+            CoTaskMemAlloc(sizeof(CREDENTIAL_PROVIDER_FIELD_DESCRIPTOR));
+        // ⚠ 别写 sizeof(*d)：d 是 auto*，初始化式里引用 d 会 C3536（CI 实测）
         if (!d) return E_OUTOFMEMORY;
         ZeroMemory(d, sizeof(*d));
         d->dwFieldID = kFieldMessage;
