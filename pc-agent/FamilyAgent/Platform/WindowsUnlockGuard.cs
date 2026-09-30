@@ -1,6 +1,7 @@
 using System;
 using FamilyAgent.Core.Commands;
 using FamilyAgent.Core.Commands.Abstractions;
+using FamilyAgent.Core.Diagnostics;
 using FamilyAgent.Core.Protocol.Frames;
 
 namespace FamilyAgent.Platform;
@@ -30,6 +31,7 @@ public sealed class WindowsUnlockGuard : IUnlockGuard
 {
     private readonly Func<bool> _ready;
     private readonly Func<bool> _canApply;
+    private readonly Func<string, string, bool>? _arm;
 
     /// <param name="ready">"凭据已配好且未冷却"的现算来源（一般传 <c>UnlockCredentials.Ready</c>）。</param>
     /// <param name="canApply">
@@ -37,10 +39,17 @@ public sealed class WindowsUnlockGuard : IUnlockGuard
     /// （一般传 <c>CredentialProviderProbe.IsInstalled</c>）。默认 false：
     /// 没有它就只能如实回 <c>cp_missing</c>，不能回 <c>armed</c> 让网页端白等。
     /// </param>
-    public WindowsUnlockGuard(Func<bool>? ready = null, Func<bool>? canApply = null)
+    /// <param name="arm">
+    /// 决定回 <c>armed</c> 时写"一次性 arm 凭证"（<c>(requestId, nonce) =&gt; 写好没有</c>），
+    /// CP 会来消费它。写不进去就不能回 armed —— 那会变成"界面说正在解锁、其实没人动"，
+    /// 所以返回 false 时如实回 <c>cp_error</c>。
+    /// </param>
+    public WindowsUnlockGuard(Func<bool>? ready = null, Func<bool>? canApply = null,
+                              Func<string, string, bool>? arm = null)
     {
         _ready = ready ?? (() => false);   // 没接线时保持"不能解锁"= 今天的行为
         _canApply = canApply ?? (() => false);
+        _arm = arm;
     }
 
     /// <inheritdoc />
@@ -77,9 +86,20 @@ public sealed class WindowsUnlockGuard : IUnlockGuard
         if (!Ready)
             return reply;
 
-        return CanApply
-            ? new UnlockReply(reply.RequestId, UnlockReply.StatusArmed, UnlockReply.ReasonOk)
-            : new UnlockReply(reply.RequestId, UnlockReply.StatusFailed, UnlockReply.ReasonCpMissing);
+        if (!CanApply)
+            return new UnlockReply(reply.RequestId, UnlockReply.StatusFailed, UnlockReply.ReasonCpMissing);
+
+        // 要回 armed 了 —— 必须先把一次性 arm 凭证写下去，否则 CP 不会动。
+        // 写不进去就如实说 cp_error（"界面说正在解锁、其实没人动"是最坏的体验）。
+        var nonce = UnlockGuard.ReadStringValue(request.Raw, "nonce") ?? "";
+        if (_arm is null || !_arm(reply.RequestId, nonce))
+        {
+            AgentLog.Write($"✗ 解锁请求 {reply.RequestId} 无法写入 arm 凭证 → cp_error");
+            return new UnlockReply(reply.RequestId, UnlockReply.StatusFailed, UnlockReply.ReasonCpError);
+        }
+
+        AgentLog.Write($"✓ 解锁请求 {reply.RequestId} 已武装（arm 凭证已写，等 CP 消费）");
+        return new UnlockReply(reply.RequestId, UnlockReply.StatusArmed, UnlockReply.ReasonOk);
     }
 
     /// <summary>

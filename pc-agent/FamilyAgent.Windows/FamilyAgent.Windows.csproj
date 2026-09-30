@@ -18,7 +18,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>FamilyAgent.Windows</AssemblyName>
     <RootNamespace>FamilyAgent.Windows</RootNamespace>
-    <Version>0.20.3</Version>
+    <Version>0.21.0</Version>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
     <DebugType>none</DebugType>

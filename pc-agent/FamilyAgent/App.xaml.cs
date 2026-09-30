@@ -118,6 +118,15 @@ public partial class App : Application
         // 不能建窗口也不能建托盘图标，所以只维持连接。
         IsHeadless = HasArg(e.Args, "--headless");
 
+        // ── Phase 3：CP 管理命令（--install-cp / --uninstall-cp / --cp-selftest）──────
+        // 处理完直接退出，不进主流程（不能因为"顺便"就把 Agent 也拉起来）。
+        // 三件事都要管理员（写 HKLM + %ProgramFiles%），不是管理员就用 runas 拉起自己。
+        if (TryRunCredentialProviderCommand(e.Args))
+        {
+            Shutdown();
+            return;
+        }
+
         // ── 单实例：第二个实例不再静默退出 ──────────────────────────────
         // ★ 这里原来是 `new Mutex(true, @"Global\FamilyAgent.SingleInstance", ...)`，
         //   两个毛病：
@@ -208,7 +217,16 @@ public partial class App : Application
                 () => UnlockCredentials.Current.Ready,
                 // 只有 Phase 3 的 Credential Provider 装上了才可能真解锁；没装就如实回
                 // cp_missing（而不是 armed 让网页端白等到超时）。
-                FamilyAgent.Windows.Unlock.CredentialProviderProbe.IsInstalled));
+                FamilyAgent.Windows.Unlock.CredentialProviderProbe.IsInstalled,
+                // 要回 armed 了 → 先把一次性 arm 凭证写下去（CP 消费它才会真去提交凭据）。
+                // 写不进去返回 false，Guard 会如实回 cp_error 而不是谎报"正在解锁"。
+                (requestId, nonce) =>
+                {
+                    var user = UnlockCredentials.Current.Status().User ?? "";
+                    var wrote = Arming.Arm(requestId, nonce, user);
+                    if (wrote) _armedAtUtc = DateTime.UtcNow;
+                    return wrote;
+                }));
 
         // UI 静态依赖（App.IsHeadless / SessionState.Current）在 Phase 1 收进 IPlatformInfo，
         // Windows 侧实现只做包装（Platform/WindowsPlatformInfo.cs），行为不变（§Phase 1-3）
@@ -227,6 +245,13 @@ public partial class App : Application
         _router = new CommandRouter(Core, capabilities, Config.DeviceId);
         _router.Attach(Core);
         _router.ScreenshotHandled += OnScreenshotHandled;
+
+        // ── Phase 3：armed 之后的**真实结果**要补报 ──────────────────────
+        // armed 只说明"凭据已交给 CP"；锁到底开了没有，看会话状态。TTL 内没动静就如实回超时。
+        SessionState.Changed += OnSessionStateForUnlock;
+        _unlockWatch = new System.Timers.Timer(5000) { AutoReset = true };
+        _unlockWatch.Elapsed += (_, _) => CheckUnlockOutcomeTimeout();
+        _unlockWatch.Start();
 
         // ── 消息生命周期与 ACK 决策（Phase 2）──────────────────────────
         // 收到 → 归一 message_id → **本地落盘** → 发事件 → 交界面显示 → 等界面回报事实
@@ -337,6 +362,117 @@ public partial class App : Application
         catch (Exception ex)
         {
             AgentLog.Write("提示两版并存失败（不影响退出）：" + ex.Message);
+        }
+    }
+
+    // ── Phase 3：一次性 arm 凭证 + CP 管理命令 ─────────────────────────────
+    //
+    // arm 凭证放在与凭据同一个目录（%ProgramData%\FamilyAgent\unlock-arm.json），
+    // 因为 CP 也是从这个目录读凭据 —— 一处路径两头对齐，少一个能写岔的地方。
+
+    private static readonly FamilyAgent.Core.Unlock.UnlockArming Arming = new(
+        System.IO.Path.Combine(
+            System.IO.Path.GetDirectoryName(UnlockCredentials.DefaultCredentialPath) ?? ".",
+            "unlock-arm.json"));
+
+    private System.Timers.Timer? _unlockWatch;
+
+    /// <summary>
+    /// armed 之后的**真实结果**：会话状态变成"已解锁"就补一条 <c>success/ok</c>。
+    /// armed 本身只说"凭据已交出、CP 即将提交"，不代表锁开了 —— 网页端要的是后者。
+    /// </summary>
+    private void OnSessionStateForUnlock(string state)
+    {
+        var pending = _router?.PendingUnlockRequestId;
+        if (pending is null || state != "unlocked")
+            return;
+
+        AgentLog.Write($"[unlock] 会话已解锁 → 补回 success（{pending}）");
+        Dispatcher.Invoke(() =>
+        {
+            _router!.ReportUnlockOutcome(pending, UnlockReply.StatusSuccess, UnlockReply.ReasonOk);
+            Arming.Disarm();
+        });
+    }
+
+    /// <summary>TTL 内没看到解锁 → 如实回 failed/timeout（不让网页端一直等）。</summary>
+    private void CheckUnlockOutcomeTimeout()
+    {
+        var pending = _router?.PendingUnlockRequestId;
+        if (pending is null)
+            return;
+        if ((DateTime.UtcNow - _armedAtUtc).TotalSeconds < FamilyAgent.Core.Unlock.ArmRecord.TtlSeconds)
+            return;
+
+        AgentLog.Write($"[unlock] armed 后 {FamilyAgent.Core.Unlock.ArmRecord.TtlSeconds}s 内没解锁"
+                     + $" → 补回 failed/timeout（{pending}）");
+        Dispatcher.Invoke(() =>
+        {
+            _router!.ReportUnlockOutcome(pending, UnlockReply.StatusFailed, UnlockReply.ReasonTimeout);
+            Arming.Disarm();
+        });
+    }
+
+    private DateTime _armedAtUtc;
+
+    /// <summary>
+    /// CP 管理命令：<c>--install-cp</c> / <c>--uninstall-cp</c> / <c>--cp-selftest</c>。
+    /// 返回 true = 本进程只干这件事，主流程不用走了。
+    ///
+    /// WPF 没有控制台，所以结果同时写日志与 <c>%ProgramData%\FamilyAgent\cp-cmd-last.txt</c>；
+    /// 交互式下再弹一个消息框（双击运行也看得到）。
+    /// </summary>
+    private static bool TryRunCredentialProviderCommand(string[] args)
+    {
+        string? op = null, arg = null;
+        if (HasArg(args, "--install-cp")) { op = "安装"; arg = "--install-cp"; }
+        else if (HasArg(args, "--uninstall-cp")) { op = "卸载"; arg = "--uninstall-cp"; }
+        else if (HasArg(args, "--cp-selftest")) { op = "自检"; arg = "--cp-selftest"; }
+        if (op is null || arg is null)
+            return false;
+
+        if (!FamilyAgent.Windows.Unlock.CredentialProviderInstaller.IsElevated)
+        {
+            AgentLog.Write($"[cp] {op}需要管理员权限 → 用 runas 重新拉起自己（会弹一次 UAC）");
+            if (FamilyAgent.Windows.Unlock.CredentialProviderInstaller.TryRelaunchElevated(arg))
+                return true;      // 已经交给提权后的那个进程，本进程退出
+            ReportCpResult($"✗ {op}需要管理员权限，但提权被拒。\r\n请右键「以管理员身份运行」本程序，再试一次。");
+            return true;
+        }
+
+        var (ok, detail) = op switch
+        {
+            "安装" => FamilyAgent.Windows.Unlock.CredentialProviderInstaller.Install(),
+            "卸载" => FamilyAgent.Windows.Unlock.CredentialProviderInstaller.Uninstall(),
+            _ => FamilyAgent.Windows.Unlock.CredentialProviderInstaller.SelfTest(),
+        };
+
+        var registered = FamilyAgent.Windows.Unlock.CredentialProviderProbe.IsInstalled();
+        ReportCpResult($"{(ok ? "✓" : "✗")} {op}完成（凭据提供程序已注册={registered}）\r\n\r\n{detail}");
+        AgentLog.Write($"[cp] {op}结束：ok={ok} 已注册={registered}");
+        return true;
+    }
+
+    /// <summary>命令结果：写日志 + 写文件 +（交互式下）弹框。</summary>
+    private static void ReportCpResult(string text)
+    {
+        AgentLog.Write("[cp] " + text.Replace("\r\n", " | "));
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(UnlockCredentials.DefaultCredentialPath) ?? ".";
+            System.IO.Directory.CreateDirectory(dir);
+            System.IO.File.WriteAllText(System.IO.Path.Combine(dir, "cp-cmd-last.txt"),
+                $"{DateTime.Now:yyyy-MM-dd HH:mm:ss}\r\n{text}\r\n", new System.Text.UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            AgentLog.Write("[cp] 写结果文件失败：" + ex.Message);
+        }
+
+        if (!IsHeadless)
+        {
+            try { MessageBox.Show(text, "家庭消息 · 凭据提供程序", MessageBoxButton.OK, MessageBoxImage.Information); }
+            catch (Exception) { /* 弹不出来不影响结果已写文件 */ }
         }
     }
 

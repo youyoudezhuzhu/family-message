@@ -66,10 +66,6 @@ jobs:
             cp/out/FamilyAgentCp.dll.sha256
           if-no-files-found: error
 
-      - name: 附到 Release（仅 tag）
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            cp/out/FamilyAgentCp.dll
-            cp/out/FamilyAgentCp.dll.sha256
+      # ⚠ 故意**不**在这里往 Release 附资产：Release 的资产清单由
+      #   build-windows-agent.yml 一处负责（zip + DLL + sha256 一起附），
+      #   两个 workflow 都附同一个文件名会打架。

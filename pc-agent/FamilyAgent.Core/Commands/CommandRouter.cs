@@ -327,10 +327,30 @@ public sealed class CommandRouter
         try
         {
             _channel.UnlockResult(requestId, status, reason);
+            // armed = 已武装、等 CP 提交凭据 ⇒ 记下来，等宿主观察到会话解锁（或 TTL 到期）补终态
+            if (status == UnlockReply.StatusArmed)
+                PendingUnlockRequestId = requestId;
         }
         catch (Exception ex)
         {
             AgentLog.Write($"✗ 回 unlock_result 失败（{requestId}）：{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 最后一次回了 <c>armed</c> 的请求 —— Phase 3 里 armed 只是"已武装、CP 即将提交凭据"，
+    /// **真正解开与否要等会话状态变化**，所以宿主需要知道该给哪个请求补一条终态结果。
+    /// </summary>
+    public string? PendingUnlockRequestId { get; private set; }
+
+    /// <summary>
+    /// 补发解锁的终态结果（Phase 3）：宿主观察到会话解锁 → <c>success/ok</c>；
+    /// TTL 内没解锁 → <c>failed/timeout</c>。补完就把 pending 清掉（不会重复发）。
+    /// </summary>
+    public void ReportUnlockOutcome(string requestId, string status, string reason)
+    {
+        TrySendUnlockResult(requestId, status, reason);
+        if (PendingUnlockRequestId == requestId)
+            PendingUnlockRequestId = null;
     }
 }

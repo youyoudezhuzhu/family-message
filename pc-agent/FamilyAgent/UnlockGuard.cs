@@ -235,6 +235,12 @@ public static class UnlockGuard
         return expiresAt <= DateTimeOffset.UtcNow;
     }
 
+    /// <summary>
+    /// 给平台层（Phase 3 的 Guard）复用同一套取值口径 —— 免得它自己再解一遍 JSON，
+    /// 两处解析出不一样的 nonce。
+    /// </summary>
+    internal static string ReadStringValue(JsonElement root, string name) => ReadString(root, name);
+
     private static string ReadString(JsonElement root, string name)
     {
         if (root.ValueKind != JsonValueKind.Object)
