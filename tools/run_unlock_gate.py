@@ -11,14 +11,16 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-REPO = Path("/vol1/1000/workspace/family-message")
-VENV_PY = "/vol1/@apphome/hermes-agent/data/venv/bin/python"
+# 仓库根：优先取环境变量，否则按本文件位置推（不写任何个人路径 —— 隐私门禁会拦）
+REPO = Path(os.environ.get("FM_REPO") or Path(__file__).resolve().parents[1])
+VENV_PY = os.environ.get("FM_VENV_PY", sys.executable)
 PORT = 18899
 
 sys.path.insert(0, str(REPO / "tools"))
