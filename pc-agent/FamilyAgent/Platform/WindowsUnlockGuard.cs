@@ -29,11 +29,18 @@ namespace FamilyAgent.Platform;
 public sealed class WindowsUnlockGuard : IUnlockGuard
 {
     private readonly Func<bool> _ready;
+    private readonly Func<bool> _canApply;
 
     /// <param name="ready">"凭据已配好且未冷却"的现算来源（一般传 <c>UnlockCredentials.Ready</c>）。</param>
-    public WindowsUnlockGuard(Func<bool>? ready = null)
+    /// <param name="canApply">
+    /// "本机现在真的能把锁解开吗"的现算来源 —— 即 Phase 3 的 Credential Provider 是否已安装
+    /// （一般传 <c>CredentialProviderProbe.IsInstalled</c>）。默认 false：
+    /// 没有它就只能如实回 <c>cp_missing</c>，不能回 <c>armed</c> 让网页端白等。
+    /// </param>
+    public WindowsUnlockGuard(Func<bool>? ready = null, Func<bool>? canApply = null)
     {
         _ready = ready ?? (() => false);   // 没接线时保持"不能解锁"= 今天的行为
+        _canApply = canApply ?? (() => false);
     }
 
     /// <inheritdoc />
@@ -63,9 +70,35 @@ public sealed class WindowsUnlockGuard : IUnlockGuard
         if (reply.Reason != UnlockReply.ReasonNoCredential)
             return reply;
 
-        // 协议过了：凭据就绪 → armed（等 Phase 3 施加解锁）；没就绪 → 保持 no_credential
-        return Ready
+        // 协议过了：分三种如实回，**不谎报**
+        //   ① 凭据没就绪                → no_credential（界面："PC 尚未配置解锁凭据"）
+        //   ② 凭据就绪但缺解锁组件       → cp_missing（界面："请求到了、凭据有、缺组件"）
+        //   ③ 两者都有                  → armed（等 Credential Provider 完成解锁）
+        if (!Ready)
+            return reply;
+
+        return CanApply
             ? new UnlockReply(reply.RequestId, UnlockReply.StatusArmed, UnlockReply.ReasonOk)
-            : reply;
+            : new UnlockReply(reply.RequestId, UnlockReply.StatusFailed, UnlockReply.ReasonCpMissing);
+    }
+
+    /// <summary>
+    /// 本机现在真能把锁解开（Phase 3 组件在不在）。**不影响能力上报** ——
+    /// 能力位描述的是"这台机器能不能参与解锁"，而 cp_missing 恰恰是"参与了但差最后一环"，
+    /// 用户需要看到这句话，所以入口照常给。
+    /// </summary>
+    public bool CanApply
+    {
+        get
+        {
+            try
+            {
+                return _canApply();
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
     }
 }

@@ -696,6 +696,25 @@ def require(perm):
   - 结论（写清楚，免得用户以为是自己填错）：**MSA + PIN 场景下"用口令远程解锁"这条路
     本身不通**，正解是 Phase 3 的 Credential Provider（它拿的是登录界面上用户实际输入的东西）。
 
+- **2026-09-30 · 真机日志反馈驱动的三处修正（v0.20.4）**：
+  1. **应答不再谎报 `armed`**：用户真机测试时，凭据已配好（`[CAP]` 里能见到 `unlock`）、
+     请求也到了（日志有 `unlock_request`），但本机还没有能施加解锁的组件 —— 原来回 `armed`
+     让网页端一直等到超时，用户看到的是"没反应"。现在凭据就绪但组件缺失时回
+     `failed/cp_missing`（Core 新增 `UnlockReply.ReasonCpMissing`），
+     界面文案点明"请求到了、凭据有、缺组件"。`CredentialProviderProbe`（`FamilyAgent.Windows`）
+     只读注册表探测 CP 是否注册，Phase 3 装上即自动转成 `armed`。
+  2. **删掉一句会误导的日志**：Phase 1 的 `UnlockGuard` 在协议校验通过后写
+     "…但本机尚未配置解锁凭据 → no_credential"，凭据落地后就成了假话（真机日志里被抓到：
+     同一秒先写这句话、再发 `armed/ok`）。改成"交由平台层判定凭据与解锁组件"。
+  3. **登录计划任务也要提权注册**：真机日志里 `schtasks 建任务 FamilyAgent-Logon 返回 1`
+     —— `RunLevel=HighestAvailable` 的任务**注册本身就需要管理员**，以前只在用户主动
+     开自启/点修复时才提权重试，"修复"里登录任务那条还是不提权的。现在 `Repair()` 与
+     `Apply(allowElevation:true)` 对两个任务都提权重试。
+  - 另：日志确认了 **Run 项指向已删除的旧 exe** 是"开机自启不生效"的真实原因
+    （用户习惯把 zip 反复解压成 `FamilyAgent-win-x64(N)` 多副本、旧目录被删）——
+    新界面会把这句写在设置页（`⚠ Run 项指向的是另一个 exe：文件已不存在`），
+    每次启动也会按当前路径重写 Run 项，所以换目录后启动一次即可自愈。
+
 - **待做（按 §16.2 清单顺序）**：
   1. ~~Windows 侧 `DpapiSecretProtector`~~ ✅（第 2 步）
   2. ~~`LogonUser` 校验实现~~ ✅（第 3 步）

@@ -544,6 +544,8 @@ const UNLOCK_REASON = {
   replay:        '该请求已被使用过',
   not_mine:      '设备不匹配',
   bad_action:    '请求类型不合法',
+  cp_missing:    'PC 已收到请求、凭据也已就绪，但本机还缺「真正施加解锁」的组件'
+                 + '（Credential Provider 阶段）—— 请等这一步做完',
   cp_error:      'PC 端解锁组件出错',
   timeout:       'PC 响应超时',
   ok:            'PC 已完成解锁',
@@ -588,8 +590,13 @@ function unlockWarnReason(d) {
 }
 
 /* 诊断用句柄（和 window.FM_PC 同一用途）：测试直接调这两个纯函数，
-   免得为了验"按钮该不该灰"去造一整套设备数据。 */
-window.FM_UNLOCK_POLICY = { blockReason: unlockBlockReason, warnReason: unlockWarnReason };
+   免得为了验"按钮该不该灰"去造一整套设备数据。reason 表也放出来，
+   让测试能断言"每个机器码都有中文说法"（新增码忘了加映射 = 用户看到英文码）。 */
+window.FM_UNLOCK_POLICY = {
+  blockReason: unlockBlockReason,
+  warnReason: unlockWarnReason,
+  reason: UNLOCK_REASON,
+};
 
 function buildWinStateBadge(raw) {
   const key = WIN_STATE[raw] ? raw : 'unknown';

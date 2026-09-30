@@ -422,6 +422,16 @@ def main() -> int:
                   pol.get("unknown_block") == "" and "会话状态" in (pol.get("unknown_warn") or ""),
                   str(pol))
 
+            # 机器码 → 中文说法的映射：漏一个用户就会看到英文码
+            reasons = pageA.evaluate("() => (window.FM_UNLOCK_POLICY || {}).reason || {}")
+            need = ("no_credential", "expired", "replay", "not_mine", "bad_action",
+                    "cp_missing", "cp_error", "timeout", "ok")
+            missing = [k for k in need if not reasons.get(k)]
+            check("每个解锁 machine code 都有中文说法（含 cp_missing）",
+                  not missing, f"缺：{missing} / 现有：{sorted(reasons)}")
+            check("cp_missing 的说法点明「缺组件」，不是叫用户重试",
+                  "组件" in (reasons.get("cp_missing") or ""), str(reasons.get("cp_missing")))
+
             # 发一条消息（灰临时）
             go_home(pageA)
             pageA.fill("#content", "我是新浏览器，还没选昵称")

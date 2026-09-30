@@ -303,8 +303,13 @@ created → server_received → device_received → popup_displayed → read
   入口是否出现由 `device.unlock` 权限决定。用户要的正是"锁屏时点一下，看 PC 怎么答" ——
   所以凭据没配时照样能点，PC 回 `failed/no_credential`，界面把原因说清楚
   （`unlock_result.reason` 有中文映射）。
-  收到解锁请求时本机回 `armed/ok`（凭据就绪，等 Credential Provider 真正施加解锁）
-  或 `failed/no_credential`（没配凭据 / 处于失败冷却中）；**真正解锁要等 Phase 3**。
+  收到解锁请求后本机**按三种情况如实回**（不谎报）：
+  · 凭据没就绪 → `failed/no_credential`；
+  · 凭据就绪但没装 Credential Provider（Phase 3 组件）→ `failed/cp_missing`
+    —— 复用 `armed` 会让网页端一直等到超时，用户看到的是"没反应"，所以单列一个码；
+  · 两者都有 → `armed/ok`（由 CP 完成解锁）；
+  · 协议不过（过期/重放/不属于我/动作不对）→ 原样回对应码。
+  **真正把锁解开要等 Phase 3**。
 - 客户端收到**不支持**的命令必须回终态错误（`event{kind=shutdown_failed}` /
   `screenshot_response{error}`），**不允许超时静默**。
 

@@ -42,6 +42,16 @@ public sealed class UnlockReply
     public const string ReasonNoCredential = "no_credential";
 
     public const string ReasonCpError = "cp_error";
+
+    /// <summary>
+    /// 凭据已就绪，但本机**还没有能真正施加解锁的组件**（Phase 3 的 Credential Provider 未安装）。
+    ///
+    /// 新增这个取值而不是复用 <c>armed</c>：<c>armed</c> 的语义是"校验通过、等待解锁完成"，
+    /// 而 Phase 2 阶段既没有组件去完成它，回 armed 只会让网页端一直等、最后超时 ——
+    /// 用户看到的是"没反应"。如实回这个码，界面就能说清"请求到了、凭据有、缺组件"。
+    /// </summary>
+    public const string ReasonCpMissing = "cp_missing";
+
     public const string ReasonTimeout = "timeout";
     public const string ReasonOk = "ok";
 
@@ -50,6 +60,6 @@ public sealed class UnlockReply
     /// <summary>armed | success | failed</summary>
     public string Status { get; }
 
-    /// <summary>expired | replay | not_mine | bad_action | no_credential | cp_error | timeout | ok</summary>
+    /// <summary>expired | replay | not_mine | bad_action | no_credential | cp_missing | cp_error | timeout | ok</summary>
     public string Reason { get; }
 }

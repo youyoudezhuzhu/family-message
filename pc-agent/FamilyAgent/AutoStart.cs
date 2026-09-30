@@ -231,7 +231,7 @@ public static class AutoStart
         // 已注册且 exe 路径没变 → 跳过，不重复建任务
         if (!TaskExists(LogonTask) || Marker(LogonMarker) != exe)
         {
-            if (RegisterLogonTask(exe))
+            if (RegisterLogonTask(exe, allowElevation))
                 SetMarker(LogonMarker, exe);
         }
 
@@ -283,8 +283,9 @@ public static class AutoStart
         ClearDisabledFlag();
         WriteRunKey(exe);
 
-        // 强制重建两个任务（不看标记）：标记本身也可能与现状不符
-        if (RegisterLogonTask(exe))
+        // 强制重建两个任务（不看标记）：标记本身也可能与现状不符。
+        // 两个都需要管理员：登录任务用 HighestAvailable、开机任务跑 SYSTEM ✓ 都提权。
+        if (RegisterLogonTask(exe, allowElevation: true))
             SetMarker(LogonMarker, exe);
 
         if (RegisterBootTask(exe, allowElevation: true))
@@ -365,7 +366,7 @@ public static class AutoStart
 
     // ── 登录时：计划任务（比 Run 项可靠，且能拿最高权限）──
 
-    private static bool RegisterLogonTask(string exe)
+    private static bool RegisterLogonTask(string exe, bool allowElevation)
     {
         string sid;
         try
@@ -422,7 +423,25 @@ public static class AutoStart
         if (RegisterFromXml(LogonTask, xml, elevated: false))
             return true;
 
-        AgentLog.Write("建登录计划任务失败（Run 项仍然生效，不影响常规开机自启）");
+        // ★ 登录计划任务用的是 RunLevel=HighestAvailable，**注册它本身就需要管理员**
+        //   （实测 schtasks 返回 1，日志见 v0.20.4 抓到的现场）。以前这里只写一句"失败"
+        //   就放弃了，于是自启永远只剩 Run 项那一半 —— 用户主动开自启/点修复时才提权重试。
+        if (!allowElevation)
+        {
+            AgentLog.Write("建登录计划任务失败（Run 项仍然生效，不影响常规开机自启）。"
+                         + "要把它也装好：在设置里点一次「修复开机自启」（会弹一次 UAC）。");
+            return false;
+        }
+
+        AgentLog.Write("建登录计划任务需要管理员权限（RunLevel=HighestAvailable），"
+                     + "提权重试（会弹一次 UAC）…");
+        if (RegisterFromXml(LogonTask, xml, elevated: true))
+        {
+            AgentLog.Write("登录计划任务已启用（经提权）");
+            return true;
+        }
+
+        AgentLog.Write("登录计划任务仍未启用（Run 项仍然生效，不影响常规开机自启）");
         return false;
     }
 

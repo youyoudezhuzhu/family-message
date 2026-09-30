@@ -6,6 +6,7 @@ using System.Text;
 using FamilyAgent.Core.Unlock;
 using FamilyAgent.Windows.Secrets;
 using FamilyAgent.Windows.Security;
+using FamilyAgent.Windows.Unlock;
 using Xunit;
 
 namespace FamilyAgent.Windows.Tests;
@@ -196,6 +197,20 @@ public sealed class WindowsPlatformTests
 
         Assert.False(ok);
         Assert.NotNull(v.LastFailureReason);
+    }
+
+    [Fact]
+    public void 凭据提供程序探针_只读且如实()
+    {
+        if (NotWindows()) return;
+
+        // GUID 必须是固定形状（Phase 3 的安装器与这里共用同一个常量，写岔就装了个孤儿组件）
+        Assert.Matches(@"^\{[0-9A-Fa-f-]{36}\}$", CredentialProviderProbe.ProviderGuid);
+
+        // CI/开发机上没装这个 CP → 必须如实返回 false（不抛异常、不猜）
+        var installed = CredentialProviderProbe.IsInstalled();
+        Assert.False(installed,
+            "这台机器竟然注册了远程解锁 CP —— 若确实装了 Phase 3 组件，这条判据要跟着改。");
     }
 
     [Fact]

@@ -204,7 +204,11 @@ public partial class App : Application
         var capabilities = new PlatformCapabilities(
             screenshot: new WindowsScreenshotProvider(),
             power: new WindowsPowerProvider(delay => Dispatcher.Invoke(() => ExecuteShutdown(delay))),
-            unlock: new WindowsUnlockGuard(() => UnlockCredentials.Current.Ready));
+            unlock: new WindowsUnlockGuard(
+                () => UnlockCredentials.Current.Ready,
+                // 只有 Phase 3 的 Credential Provider 装上了才可能真解锁；没装就如实回
+                // cp_missing（而不是 armed 让网页端白等到超时）。
+                FamilyAgent.Windows.Unlock.CredentialProviderProbe.IsInstalled));
 
         // UI 静态依赖（App.IsHeadless / SessionState.Current）在 Phase 1 收进 IPlatformInfo，
         // Windows 侧实现只做包装（Platform/WindowsPlatformInfo.cs），行为不变（§Phase 1-3）
